@@ -1,0 +1,201 @@
+{
+  "current_parameters": {
+    "universe_filters": {
+      "min_market_cap": 123.0
+    }
+  },
+  "default_parameters": {
+    "cup_depth_max": 0.7,
+    "cup_depth_min": 0.05,
+    "decline_amount_max_ratio": 0.5,
+    "handle_period_max": 13,
+    "handle_period_min": 1,
+    "history_buffer_days": 50,
+    "ma5_trend_days": 14,
+    "ma_trend_min_valid_points": 10,
+    "ma_trend_window": 5,
+    "rapid_ascent_days": 12,
+    "rapid_decline_days": 12,
+    "recent_low_lookback_days": 18,
+    "right_rim_search_days": 13,
+    "rim_interval_max": 250,
+    "rim_interval_min": 45,
+    "rim_price_match_pct": 0.05,
+    "safety_level_depth_ratio": 0.5,
+    "top_n": 50,
+    "universe_filters": {
+      "min_market_cap": null
+    }
+  },
+  "schema": {
+    "properties": {
+      "cup_depth_max": {
+        "description": "杯深的最大百分比。",
+        "type": "number",
+        "x_display_name": "杯深最大值",
+        "x_group": "杯体相关",
+        "x_max": 0.8,
+        "x_min": 0.5,
+        "x_step": 0.01
+      },
+      "cup_depth_min": {
+        "description": "杯深的最小百分比。",
+        "type": "number",
+        "x_display_name": "杯深最小值",
+        "x_group": "杯体相关",
+        "x_max": 0.15,
+        "x_min": 0.03,
+        "x_step": 0.01
+      },
+      "decline_amount_max_ratio": {
+        "description": "快速下跌阶段总成交额，相对快速上涨阶段总成交额允许的最大比例。",
+        "type": "number",
+        "x_display_name": "下跌成交额上限系数",
+        "x_group": "第4轮-成交额",
+        "x_max": 2.0,
+        "x_min": 0.0,
+        "x_step": 0.01
+      },
+      "handle_period_max": {
+        "description": "杯柄整理期允许的最长交易日数。",
+        "type": "integer",
+        "x_display_name": "杯柄最大天数",
+        "x_group": "杯柄",
+        "x_max": 30,
+        "x_min": 15
+      },
+      "handle_period_min": {
+        "description": "杯柄整理期至少维持的交易日数。",
+        "type": "integer",
+        "x_display_name": "杯柄最小天数",
+        "x_group": "杯柄",
+        "x_max": 8,
+        "x_min": 1
+      },
+      "history_buffer_days": {
+        "description": "计算所需历史数据时额外增加的缓冲天数。",
+        "type": "integer",
+        "x_display_name": "历史缓冲天数",
+        "x_group": "基础设置",
+        "x_max": 300,
+        "x_min": 0
+      },
+      "ma5_trend_days": {
+        "description": "判断左侧杯沿前短期均线方向时使用的交易日天数。",
+        "type": "integer",
+        "x_display_name": "MA5趋势检查天数",
+        "x_group": "其他",
+        "x_max": 30,
+        "x_min": 10
+      },
+      "ma_trend_min_valid_points": {
+        "description": "进行趋势判断时，均线至少需要的有效数据点数量。",
+        "type": "integer",
+        "x_display_name": "趋势最少有效点",
+        "x_group": "其他",
+        "x_max": 200,
+        "x_min": 1
+      },
+      "ma_trend_window": {
+        "description": "用于判断价格趋势的均线周期天数。",
+        "type": "integer",
+        "x_display_name": "趋势均线窗口",
+        "x_group": "其他",
+        "x_max": 60,
+        "x_min": 1
+      },
+      "rapid_ascent_days": {
+        "description": "快速上涨阶段交易日长度。",
+        "type": "integer",
+        "x_display_name": "快速上涨天数",
+        "x_group": "杯体相关",
+        "x_max": 120,
+        "x_min": 1
+      },
+      "rapid_decline_days": {
+        "description": "快速下跌阶段交易日长度。",
+        "type": "integer",
+        "x_display_name": "快速下跌天数",
+        "x_group": "杯体相关",
+        "x_max": 120,
+        "x_min": 1
+      },
+      "recent_low_lookback_days": {
+        "description": "判断当前收盘价是否处于近期低位时，向前回看的交易日天数。",
+        "type": "integer",
+        "x_display_name": "最近低点检查天数",
+        "x_group": "第5轮-价格质量",
+        "x_max": 120,
+        "x_min": 1
+      },
+      "right_rim_search_days": {
+        "description": "右侧杯沿向左搜索局部高点时使用的窗口天数。",
+        "type": "integer",
+        "x_display_name": "右杯沿搜索天数",
+        "x_group": "杯沿相关",
+        "x_max": 60,
+        "x_min": 1
+      },
+      "rim_interval_max": {
+        "description": "两个杯沿高点之间的最多交易日数。",
+        "type": "integer",
+        "x_display_name": "两个杯沿间隔最大天数",
+        "x_group": "杯沿相关",
+        "x_max": 365,
+        "x_min": 180
+      },
+      "rim_interval_min": {
+        "description": "两个杯沿高点之间的最少交易日数。",
+        "type": "integer",
+        "x_display_name": "两个杯沿间隔最小天数",
+        "x_group": "杯沿相关",
+        "x_max": 60,
+        "x_min": 30
+      },
+      "rim_price_match_pct": {
+        "description": "右侧杯沿价格与左侧杯沿价格的最大允许差异比例（例如 0.05 = 5%）。",
+        "type": "number",
+        "x_display_name": "杯沿价格匹配度",
+        "x_group": "杯沿相关",
+        "x_max": 0.1,
+        "x_min": 0.03,
+        "x_step": 0.01
+      },
+      "safety_level_depth_ratio": {
+        "description": "安全水位在杯深中的位置比例；值越高，对价格站稳要求越高。",
+        "type": "number",
+        "x_display_name": "安全水位杯深比例",
+        "x_group": "第5轮-价格质量",
+        "x_max": 1.0,
+        "x_min": 0.0,
+        "x_step": 0.01
+      },
+      "top_n": {
+        "description": "最多输出候选数量。",
+        "type": "integer",
+        "x_display_name": "最多输出数量",
+        "x_group": "输出设置"
+      },
+      "universe_filters": {
+        "properties": {
+          "min_market_cap": {
+            "description": "最小流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
+            "type": [
+              "number",
+              "null"
+            ],
+            "x_display_name": "最小流通市值阈值",
+            "x_group": "股票池过滤",
+            "x_unit": "yuan"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "type": "object"
+  },
+  "screener_id": "cup_handle_v4",
+  "updated_at": "2026-06-06T05:17:28Z",
+  "updated_by": "test",
+  "version": 1
+}

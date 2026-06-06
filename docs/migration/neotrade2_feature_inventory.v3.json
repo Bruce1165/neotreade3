@@ -1,0 +1,1617 @@
+[
+  {
+    "feature_id": "nt2.assistant.analysis",
+    "feature_name": "Assistant Analysis APIs",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "提供老鸭头池共性分析、标签汇总、基线评估、日对比、五图参数覆盖和通用 assistant query 等分析接口。",
+    "run_logic": "前端 Assistant 页按不同分析任务调用 `/api/assistant/*`，后端聚合数据库查询、规则模型与参数覆盖逻辑形成分析结果。",
+    "data_sources": [
+      "stock_data.db",
+      "screener classes and parameters",
+      "assistant rule definitions"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.assistant.baseline-eval",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant LaoYaTou Baseline Evaluation",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "对老鸭头基线筛选做样本数、命中数、召回率和信号分布评估。",
+    "run_logic": "前端调用 `/api/assistant/lao-ya-tou/baseline-eval`，后端动态加载 screener 并对多个标签日期做 baseline 命中评估。",
+    "data_sources": [
+      "stock_data.db",
+      "screeners directory",
+      "lao_ya_tou labels tables"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.daily-compare",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant LaoYaTou Daily Compare",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "对比指定交易日我方筛选结果与通达信上传结果，输出交集、独有和准确率指标。",
+    "run_logic": "前端通过 `/api/assistant/lao-ya-tou/daily-compare` 请求，后端可自动运行当日筛选，并把我方结果与上传文件做集合比较。",
+    "data_sources": [
+      "stock_data.db",
+      "TDX upload files",
+      "current screener outputs"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.five-flags-parameter-overrides",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant Five Flags Parameter Overrides",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "比较五图筛选器当前参数与默认参数的差异，展示被覆盖的参数项。",
+    "run_logic": "前端调用 `/api/assistant/five-flags/parameter-overrides`，后端读取各筛选器 schema/default 与当前 profile，输出 override 差异。",
+    "data_sources": [
+      "config/screeners/*.json",
+      "market_phase_profiles.json",
+      "screener parameter schemas"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.label-summary",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant LaoYaTou Label Summary",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "统计老鸭头标签数据的日期覆盖、行数、去重股票数和最近标签日期分布。",
+    "run_logic": "前端调用 `/api/assistant/lao-ya-tou/label-summary`，后端按日期过滤条件汇总标签表。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou labels tables"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.pool-commonalities",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant LaoYaTou Pool Commonalities",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "分析老鸭头股票池的规模、覆盖区间、收益分布、Top 文件和行业共性。",
+    "run_logic": "前端通过 `/api/assistant/lao-ya-tou/pool-commonalities` 请求，后端按处理状态和日期范围对股票池做聚合统计。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou_pool",
+      "price performance summary"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.query-router",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant Query Router",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "按自然语言关键词把 assistant 请求路由到股票池共性或参数差异分析能力。",
+    "run_logic": "前端工具模式可发起 `/api/assistant/query`，后端根据 message 关键词判断需要调用哪些 assistant 分析子能力并拼装返回。",
+    "data_sources": [
+      "assistant message payload",
+      "pool commonality analysis",
+      "parameter override analysis"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.assistant.rules-analyze",
+    "parent_feature_id": "nt2.assistant.analysis",
+    "granularity": "subfeature",
+    "feature_name": "Assistant Rules Analyze",
+    "domain": "assistant",
+    "status": "identified_from_code",
+    "definition": "对输入股票执行规则法则分析，返回 facts、候选模型、trace 与 explanation text。",
+    "run_logic": "前端交易法则页调用 `/api/assistant/rules/analyze`，后端根据 `codes/horizon/date/models` 计算本地 facts、选择模型并生成可追溯说明。",
+    "data_sources": [
+      "stock_data.db",
+      "rule definitions",
+      "strategy model logic"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/Assistant.tsx",
+      "frontend/src/api/index.ts"
+    ]
+  },
+  {
+    "feature_id": "nt2.calendar.trade-day-services",
+    "feature_name": "Trading Calendar Services",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "提供交易日历查询、指定日期是否为交易日的判断，并支撑筛选器默认日期回退。",
+    "run_logic": "前端和后端通过 `/api/calendar`、`/api/trading-day` 调用交易日服务，底层使用 `scripts/trading_calendar.py` 和行情库中的交易日期。",
+    "data_sources": [
+      "stock_data.db daily_prices",
+      "scripts/trading_calendar.py"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/trading_calendar.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/trading_calendar.py",
+      "frontend/src/App.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.cup-handle.alignment-and-compare",
+    "parent_feature_id": "nt2.cup-handle.lab",
+    "granularity": "subfeature",
+    "feature_name": "Cup Handle Alignment And V4 Compare",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "比较 V4 与 V4.2 强化池的同日对齐、数量变化和质量变化，并支持透明化过程比对。",
+    "run_logic": "前端调用 `/api/cup-handle-lab/alignment`、`/api/cup-handle-lab/v4-pool-compare` 和 `/api/cup-handle-lab/diff`，后端聚合同日基池、强化池与差异结果。",
+    "data_sources": [
+      "stock_data.db screener_results",
+      "research/predictive_cup/output/v4_2_base_hardened_daily_diff.csv",
+      "research/predictive_cup/output daily pool snapshots"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.cup-handle.daily-brief-and-audit",
+    "parent_feature_id": "nt2.cup-handle.lab",
+    "granularity": "subfeature",
+    "feature_name": "Cup Handle Daily Brief And Audit",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "生成每日学习小结、规则审计和移除样本示例，用于解释当天研究调整。",
+    "run_logic": "前端读取 `/api/cup-handle-lab/daily-brief` 与 `/api/cup-handle-lab/audit`，后端从 replay/audit CSV 与策略审计结果中生成小结。",
+    "data_sources": [
+      "research/predictive_cup/output audit csv files",
+      "research/predictive_cup/output daily brief inputs"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.cup-handle.feedback-and-retrain",
+    "parent_feature_id": "nt2.cup-handle.lab",
+    "granularity": "subfeature",
+    "feature_name": "Cup Handle Feedback And Retrain Trigger",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "记录结构化反馈问卷、查询反馈历史，并支持查看重训练运行和手动触发重训练。",
+    "run_logic": "前端调用 `/api/cup-handle-lab/feedback` GET/POST 维护问卷反馈，通过 `/api/cup-handle-lab/retrain/runs` 与 `/api/cup-handle-lab/retrain/trigger` 管理重训练流程。",
+    "data_sources": [
+      "stock_data.db cup lab feedback tables",
+      "retrain runs registry",
+      "manual retrain request payload"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.cup-handle.lab",
+    "feature_name": "Cup Handle Lab",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "提供咖啡杯柄实验室的摘要、日度池、候选股、对齐分析、diff、审计、反馈和重训练触发。",
+    "run_logic": "前端 Cup Lab 页面通过一组 `/api/cup-handle-lab/*` 接口读取实验室快照、对齐与反馈数据，后端整合本地快照、CSV/JSON 历史与数据库信号。",
+    "data_sources": [
+      "stock_data.db",
+      "research/predictive_cup/output/*",
+      "本地 cup lab snapshot/history 文件",
+      "用户反馈记录"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx",
+      "tests/test_cup_handle_lab_whitebox.py",
+      "research/predictive_cup/scripts"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx",
+      "tests/test_cup_handle_lab_whitebox.py",
+      "research/predictive_cup"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.cup-handle.stock-and-watch-pool",
+    "parent_feature_id": "nt2.cup-handle.lab",
+    "granularity": "subfeature",
+    "feature_name": "Cup Handle Stock Pool And Watch Pool",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "提供候选股票池、入口过滤、主题偏好与持久化观察池查询。",
+    "run_logic": "前端通过 `/api/cup-handle-lab/stocks` 与 `/api/cup-handle-lab/watch-pool` 获取当日候选和持久化跟踪池，并可按日期、主题和入口过滤。",
+    "data_sources": [
+      "research/predictive_cup/output/v4_2_replay_daily_pool.csv",
+      "stock_data.db cup_watch_pool_events"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.cup-handle.summary-and-daily",
+    "parent_feature_id": "nt2.cup-handle.lab",
+    "granularity": "subfeature",
+    "feature_name": "Cup Handle Summary And Daily Trend",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "输出杯柄实验室总览、按状态胜率、近四周趋势和日级表现明细。",
+    "run_logic": "前端通过 `/api/cup-handle-lab/summary` 与 `/api/cup-handle-lab/daily` 读取回放 CSV 摘要，用于展示研究结果和趋势。",
+    "data_sources": [
+      "research/predictive_cup/output/v4_2_replay_overall_summary.csv",
+      "research/predictive_cup/output/v4_2_replay_daily_summary.csv"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx",
+      "research/predictive_cup/output"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/CupHandleLab.tsx",
+      "research/predictive_cup/output"
+    ]
+  },
+  {
+    "feature_id": "nt2.data-health.monitor-and-upload",
+    "feature_name": "Data Health Monitor And Manual Upload",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "展示数据库健康、运行历史、生命周期状态，并支持手工上传数据文件进入健康检查流程。",
+    "run_logic": "前端 Health 页调用 `/api/data-health`，必要时用 `/api/data-health/upload` 上传文件；后端聚合库检查、运行历史和 lifecycle 信息。",
+    "data_sources": [
+      "stock_data.db",
+      "logs/run_history.json",
+      "data lifecycle tables",
+      "上传文件内容"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.five-flags.flow-profile-calibration",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Flow Timing And Phase Profile Publish",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "输出五图流程级耗时概览，并支持把某个阶段画像槽位发布到活动配置。",
+    "run_logic": "调用 `/api/five-flags/flow/level-timing` 聚合最近运行的 flow timing，再通过 `/api/five-flags/phase-profile/publish` 发布 phase profile slot。",
+    "data_sources": [
+      "five_flags runs registry",
+      "flow_engine/default_five_flags_flow.json",
+      "phase profile config slots"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/flow_engine/default_five_flags_flow.json"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/flow_engine/default_five_flags_flow.json"
+    ]
+  },
+  {
+    "feature_id": "nt2.five-flags.health-and-unprocessed",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Health And Unprocessed Summary",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "展示五图股票池的数据就绪度、最新交易日、结果覆盖与未处理摘要。",
+    "run_logic": "前端通过 `/api/five-flags/health` 与 `/api/five-flags/unprocessed-summary` 查询老鸭头池总量、待处理量、结果覆盖和就绪原因。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou_pool",
+      "stock_data.db five_flags results tables"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.five-flags.miss-analysis-and-logs",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Miss Analysis And Log Views",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "分析指定日期未命中原因，并查看 cron 日志与可读化筛查日志。",
+    "run_logic": "前端调用 `/api/five-flags/miss-analysis`、`/api/five-flags/cron-logs`、`/api/five-flags/screening-logs`，后端汇总 miss reason、stdout/stderr tail 和队列运行记录。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou_pool",
+      "five_flags result tables",
+      "logs/five_flags_cron*.log",
+      "queue/runs registry"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.five-flags.monitor-and-pool",
+    "feature_name": "Five Flags Monitor And Pool Operations",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "围绕老鸭头五图提供健康监控、miss analysis、运行日志、pool 查询/上传、队列、运行记录和阶段画像发布。",
+    "run_logic": "前端 Monitor 与 Five Flags 相关页面调用 `/api/five-flags/*` 和 `/api/monitor/*`；后端依赖 cron 任务、pool 表、运行队列与诊断逻辑生成视图。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou_five_flags/pool tables",
+      "cron 日志",
+      "flow 配置 json",
+      "运行队列状态"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/cron/five_flags_pool_task.py",
+      "scripts/run_five_flags_pool_screening.py",
+      "scripts/flow_engine/default_five_flags_flow.json",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/cron/five_flags_pool_task.py",
+      "scripts/run_five_flags_pool_screening.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.five-flags.pool-query-upload",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Pool Query And Upload",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "查询老鸭头股票池，并支持上传 Excel 股票池文件触发串行筛查队列。",
+    "run_logic": "前端调用 `/api/five-flags/pools` 浏览池记录，使用 `/api/five-flags/pools/upload` 上传 Excel，后端解析文件并创建 upload job。",
+    "data_sources": [
+      "stock_data.db lao_ya_tou_pool",
+      "上传的 xls/xlsx 文件",
+      "queue status registry"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/upload_lao_ya_tou_pool.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/upload_lao_ya_tou_pool.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.five-flags.results-timeline-diagnosis",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Results Timeline And Cell Diagnosis",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "按股票、日期和筛选器查看五图命中时间线，并对单元格未命中原因做诊断。",
+    "run_logic": "前端调用 `/api/five-flags/results`、`/api/five-flags/timeline`、`/api/five-flags/diagnose-cell`，后端返回结果记录、时间线以及 fail checks/diagnostic hints。",
+    "data_sources": [
+      "stock_data.db five_flags result tables",
+      "daily_quotes",
+      "diagnostic hint builders"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.five-flags.run-queue-registry",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Five Flags Run Registry And Serial Queue",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "管理五图手动/自动筛查任务的串行队列、运行台账、失败重试和单 job 状态查询。",
+    "run_logic": "前端通过 `/api/five-flags/run`、`/api/five-flags/retry-failed`、`/api/five-flags/runs`、`/api/five-flags/queue`、`/api/five-flags/queue/<job_id>` 管理和跟踪筛查运行。",
+    "data_sources": [
+      "five_flags queue registry",
+      "five_flags runs registry",
+      "stock_data.db lao_ya_tou_pool"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/cron/five_flags_pool_task.py",
+      "scripts/run_five_flags_pool_screening.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/cron/five_flags_pool_task.py",
+      "scripts/run_five_flags_pool_screening.py",
+      "frontend/src/pages/FiveFlagsMonitor.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.operations.data-health-summary",
+    "parent_feature_id": "nt2.data-health.monitor-and-upload",
+    "granularity": "subfeature",
+    "feature_name": "Data Health Summary And Lifecycle View",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "聚合展示行情库健康、运行历史、生命周期与最近状态，作为人工巡检入口。",
+    "run_logic": "前端 Health 页调用 `/api/data-health`，后端汇总数据库检查、run history、lifecycle 和 freshness 状态后返回总览。",
+    "data_sources": [
+      "stock_data.db",
+      "logs/run_history.json",
+      "data lifecycle tables"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.operations.data-health-upload",
+    "parent_feature_id": "nt2.data-health.monitor-and-upload",
+    "granularity": "subfeature",
+    "feature_name": "Data Health Manual Upload",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "支持把人工提供的数据文件上传到数据健康检查链路中，作为补充排障入口。",
+    "run_logic": "前端通过 `/api/data-health/upload` 上传文件，后端读取文件内容并进入健康检查或导入前校验流程。",
+    "data_sources": [
+      "上传文件内容",
+      "stock_data.db",
+      "health check validation logic"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/data_health_check.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.operations.system-job-polling",
+    "parent_feature_id": "nt2.system.tasks-and-jobs",
+    "granularity": "subfeature",
+    "feature_name": "System Job Status Polling",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "对已触发的系统任务 job 提供异步状态轮询、返回码和 stdout/stderr 尾部信息查询。",
+    "run_logic": "后端在触发后生成 `job_id` 并写入内存注册表，调用方通过 `/api/system/jobs/<job_id>` 轮询任务状态和日志尾部。",
+    "data_sources": [
+      "SYSTEM_JOBS in-memory registry",
+      "subprocess stdout/stderr tail"
+    ],
+    "owner_modules": [
+      "backend/app.py"
+    ],
+    "evidence": [
+      "backend/app.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.operations.system-task-readiness-board",
+    "parent_feature_id": "nt2.system.tasks-and-jobs",
+    "granularity": "subfeature",
+    "feature_name": "System Task Readiness Board",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "统一展示各系统任务的 ready 条件、最近交易日、发布健康和 launchd 注册状态。",
+    "run_logic": "后端 `/api/system/tasks` 读取 `SYSTEM_TASK_SPECS`、交易日/发布健康和 launchctl 状态，前端据此生成任务看板。",
+    "data_sources": [
+      "SYSTEM_TASK_SPECS",
+      "launchctl 输出",
+      "daily_prices 最新交易日",
+      "publish health state"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/launchd",
+      "scripts/cron"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/launchd",
+      "scripts/cron/paper_portfolio_plan_task.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.operations.system-task-trigger",
+    "parent_feature_id": "nt2.system.tasks-and-jobs",
+    "granularity": "subfeature",
+    "feature_name": "System Task Manual Trigger And Wait Mode",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "支持按标签手动触发系统任务，并可在未就绪时进入 wait-and-run 模式。",
+    "run_logic": "前端向 `/api/system/tasks/trigger` 提交 `label/force/wait_sec`，后端根据任务规范执行脚本并在需要时等待 ready 条件满足。",
+    "data_sources": [
+      "SYSTEM_TASK_SPECS",
+      "trigger payload",
+      "subprocess stdout/stderr"
+    ],
+    "owner_modules": [
+      "backend/app.py"
+    ],
+    "evidence": [
+      "backend/app.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.paper-trading.artifact-catalog-download",
+    "parent_feature_id": "nt2.paper-trading.lab",
+    "granularity": "subfeature",
+    "feature_name": "Paper Trading Artifact Catalog And Download",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "列出模拟交易产物、读取单次运行摘要，并下载 JSON/CSV 文件。",
+    "run_logic": "前端通过 `/api/paper-trading/runs`、`/api/paper-trading/run`、`/api/paper-trading/download` 浏览 `data/paper_trading` 目录中的运行产物。",
+    "data_sources": [
+      "data/paper_trading/*.json",
+      "data/paper_trading/*.csv"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.paper-trading.follow-tracking",
+    "parent_feature_id": "nt2.paper-trading.lab",
+    "granularity": "subfeature",
+    "feature_name": "Paper Trading Follow Tracking",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "对既有推荐清单执行后续收益跟踪，汇总累计收益、胜率和分组表现。",
+    "run_logic": "`run_paper_portfolio.py --mode follow` 生成 `follow_*.json/.csv`，前端读取后展示覆盖区间、累计收益、赢家/输家和 sleeve 表现。",
+    "data_sources": [
+      "stock_data.db",
+      "data/paper_trading/follow_*.json",
+      "data/paper_trading/follow_*.csv"
+    ],
+    "owner_modules": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.paper-trading.lab",
+    "feature_name": "Paper Trading Lab",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "读取并展示模拟组合计划/运行产物，支持查看运行内容与下载文件。",
+    "run_logic": "定时任务 `paper_portfolio_plan_task.py` 调用 `paper_trading/run_paper_portfolio.py` 产出 `data/paper_trading`，前端通过 `/api/paper-trading/*` 读取列表、单次运行和下载。",
+    "data_sources": [
+      "stock_data.db",
+      "data/paper_trading/*.json",
+      "Eastmoney HTTP",
+      "AKShare"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/cron/paper_portfolio_plan_task.py",
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/cron/paper_portfolio_plan_task.py",
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.paper-trading.paper-portfolio-plan",
+    "parent_feature_id": "nt2.paper-trading.lab",
+    "granularity": "subfeature",
+    "feature_name": "Paper Trading Recommendation Portfolio",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "生成推荐清单式模拟组合计划，并输出候选股、分组和预估收益字段。",
+    "run_logic": "`run_paper_portfolio.py` 生成 `paper_portfolio_*.json/.csv`，前端读取后展示候选股表和得分、进场价、T+5/T+8 表现。",
+    "data_sources": [
+      "stock_data.db",
+      "data/paper_trading/paper_portfolio_*.json",
+      "data/paper_trading/paper_portfolio_*.csv"
+    ],
+    "owner_modules": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "scripts/cron/paper_portfolio_plan_task.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "scripts/cron/paper_portfolio_plan_task.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.paper-trading.portfolio-backtest",
+    "parent_feature_id": "nt2.paper-trading.lab",
+    "granularity": "subfeature",
+    "feature_name": "Paper Trading Portfolio Backtest",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "对推荐组合执行组合级资金曲线回测，输出资产曲线、归因和统计摘要。",
+    "run_logic": "`run_paper_portfolio.py --mode portfolio_backtest` 生成 `portfolio_backtest_*.json/.csv`，前端据此渲染资金曲线和 sleeve 归因。",
+    "data_sources": [
+      "stock_data.db",
+      "data/paper_trading/portfolio_backtest_*.json",
+      "data/paper_trading/portfolio_backtest_*.csv"
+    ],
+    "owner_modules": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.paper-trading.signal-backtest",
+    "parent_feature_id": "nt2.paper-trading.lab",
+    "granularity": "subfeature",
+    "feature_name": "Paper Trading Signal Backtest",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "以信号为粒度执行持有期回测，不将持仓重叠合并为单一资金曲线。",
+    "run_logic": "`run_paper_portfolio.py --mode backtest` 或 `--mode paper_backtest` 生成信号级回测 JSON/CSV，前端展示逐日样本、胜率和止盈止损退出统计。",
+    "data_sources": [
+      "stock_data.db",
+      "data/paper_trading/paper_backtest_*.json",
+      "data/paper_trading/paper_backtest_*.csv"
+    ],
+    "owner_modules": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ],
+    "evidence": [
+      "scripts/paper_trading/run_paper_portfolio.py",
+      "frontend/src/pages/PaperTradingLab.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.authoritative-overwrite-repair",
+    "parent_feature_id": "nt2.pipeline.backfill-and-repair",
+    "granularity": "subfeature",
+    "feature_name": "Authoritative Overwrite Repair",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "对已落库行情执行权威源覆盖修复，并生成修复报告。",
+    "run_logic": "`authoritative_baostock_overwrite.py` 从 Baostock 重新获取指定数据，对异常行执行覆盖写入，并输出 repair report。",
+    "data_sources": [
+      "Baostock",
+      "stock_data.db",
+      "data/repair_reports/*.json"
+    ],
+    "owner_modules": [
+      "scripts/authoritative_baostock_overwrite.py"
+    ],
+    "evidence": [
+      "scripts/authoritative_baostock_overwrite.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.backfill-and-repair",
+    "feature_name": "Historical Backfill And Authoritative Repair",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "进行历史行情回填、断点续传、权威源覆盖修复与数据缺口修补。",
+    "run_logic": "编排器的 Step 3 触发 `backfill_baostock.py`，必要时通过 `authoritative_baostock_overwrite.py`、`fill_data_gaps.py` 做问题数据修复。",
+    "data_sources": [
+      "Baostock",
+      "AKShare",
+      "mootdx",
+      "stock_data.db",
+      "backups/stock_data_*.db.bak"
+    ],
+    "owner_modules": [
+      "scripts/download_orchestrator.py",
+      "scripts/backfill_baostock.py",
+      "scripts/authoritative_baostock_overwrite.py",
+      "scripts/fill_data_gaps.py"
+    ],
+    "evidence": [
+      "scripts/download_orchestrator.py",
+      "scripts/backfill_baostock.py",
+      "scripts/authoritative_baostock_overwrite.py",
+      "scripts/fill_data_gaps.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.pipeline.capture-compose-publish-shortcut",
+    "parent_feature_id": "nt2.pipeline.compose-publish",
+    "granularity": "subfeature",
+    "feature_name": "Capture Compose Publish Shortcut Path",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "在同一脚本中串联腾讯抓取、compose 与 publish，形成日常快捷数据更新路径。",
+    "run_logic": "`update_daily_prices_tencent.py` 在抓取完成后直接导入并调用 `run_compose` 与 `run_publish`，减少人工分步执行。",
+    "data_sources": [
+      "Tencent capture 输出",
+      "compose/publish 台账表",
+      "stock_data.db daily_prices"
+    ],
+    "owner_modules": [
+      "scripts/update_daily_prices_tencent.py",
+      "scripts/compose_daily_prices_candidate.py",
+      "scripts/publish_daily_prices_candidate.py"
+    ],
+    "evidence": [
+      "scripts/update_daily_prices_tencent.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.compose-candidate-ledger",
+    "parent_feature_id": "nt2.pipeline.compose-publish",
+    "granularity": "subfeature",
+    "feature_name": "Compose Candidate And Conflict Ledger",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "将多源 capture 数据合成为候选批次，并记录字段级来源冲突与仲裁结果。",
+    "run_logic": "`compose_daily_prices_candidate.py` 从最新 capture rows 中按字段优先级择优选值，写入 compose candidate、compose rows 与 source conflicts 三张台账表。",
+    "data_sources": [
+      "daily_price_capture_rows",
+      "daily_price_capture_batches",
+      "daily_price_compose_candidates",
+      "daily_price_source_conflicts"
+    ],
+    "owner_modules": [
+      "scripts/compose_daily_prices_candidate.py"
+    ],
+    "evidence": [
+      "scripts/compose_daily_prices_candidate.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.compose-publish",
+    "feature_name": "Daily Prices Compose And Publish",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "将多源行情合成为候选批次，处理 source conflict，并把通过质量门的候选数据发布为正式 daily_prices。",
+    "run_logic": "`compose_daily_prices_candidate.py` 先按字段优先级合并腾讯与 Baostock，随后 `publish_daily_prices_candidate.py` 或 `update_daily_prices_tencent.py` 将候选结果发布入主表。",
+    "data_sources": [
+      "Tencent",
+      "Baostock",
+      "stock_data.db compose/publish tables",
+      "stock_data.db daily_prices"
+    ],
+    "owner_modules": [
+      "scripts/compose_daily_prices_candidate.py",
+      "scripts/publish_daily_prices_candidate.py",
+      "scripts/update_daily_prices_tencent.py"
+    ],
+    "evidence": [
+      "scripts/compose_daily_prices_candidate.py",
+      "scripts/publish_daily_prices_candidate.py",
+      "scripts/update_daily_prices_tencent.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.pipeline.daily-capture",
+    "feature_name": "Daily Market Data Capture",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "抓取当日行情与补充基础面字段，形成 capture 批次记录。",
+    "run_logic": "主编排器首先执行 `download_today_ifind.py --fundamentals`，另有 `update_daily_prices_tencent.py` 负责腾讯行情抓取并写入 capture 表。",
+    "data_sources": [
+      "iFinD",
+      "Tencent",
+      "stock_data.db capture tables"
+    ],
+    "owner_modules": [
+      "scripts/download_orchestrator.py",
+      "scripts/download_today_ifind.py",
+      "scripts/update_daily_prices_tencent.py"
+    ],
+    "evidence": [
+      "scripts/download_orchestrator.py",
+      "scripts/update_daily_prices_tencent.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.pipeline.download-orchestrator",
+    "parent_feature_id": "nt2.pipeline.daily-capture",
+    "granularity": "subfeature",
+    "feature_name": "Download Orchestrator Main Chain",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "统一组织交易日检查、当日下载、完整性验证、历史回填和筛选器运行的主编排脚本。",
+    "run_logic": "`download_orchestrator.py` 以 Step 0~4 方式顺序执行交易日判断、今日下载、元数据同步、完整性验证、回填、市值同步与批量筛选运行，并写状态文件与运行历史。",
+    "data_sources": [
+      "scripts/config.py",
+      "logs/last_run_status.json",
+      "logs/run_history.json",
+      "各子脚本返回结果"
+    ],
+    "owner_modules": [
+      "scripts/download_orchestrator.py"
+    ],
+    "evidence": [
+      "scripts/download_orchestrator.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.gap-filling",
+    "parent_feature_id": "nt2.pipeline.backfill-and-repair",
+    "granularity": "subfeature",
+    "feature_name": "Data Gap Filling",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "对历史缺口或异常缺失数据做专项补洞处理。",
+    "run_logic": "`fill_data_gaps.py` 面向检测出的缺口执行补齐流程，作为数据修复链路的一部分。",
+    "data_sources": [
+      "stock_data.db",
+      "缺口检测结果"
+    ],
+    "owner_modules": [
+      "scripts/fill_data_gaps.py"
+    ],
+    "evidence": [
+      "scripts/fill_data_gaps.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.historical-backfill",
+    "parent_feature_id": "nt2.pipeline.backfill-and-repair",
+    "granularity": "subfeature",
+    "feature_name": "Historical Backfill",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "从 Baostock 为主的数据源回填历史行情，并支持断点与重试。",
+    "run_logic": "`backfill_baostock.py` 使用 checkpoint、重试与批量插入机制，对股票历史行情执行长周期回填并写入 capture/主表。",
+    "data_sources": [
+      "Baostock",
+      "stock_data.db",
+      "logs/checkpoints"
+    ],
+    "owner_modules": [
+      "scripts/backfill_baostock.py"
+    ],
+    "evidence": [
+      "scripts/backfill_baostock.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.integrity-verification",
+    "parent_feature_id": "nt2.data-health.monitor-and-upload",
+    "granularity": "subfeature",
+    "feature_name": "Data Integrity Verification",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "对行情库完整性和可用性做自动验证，供主编排器与人工排障使用。",
+    "run_logic": "`download_orchestrator.py` 的 Step 2 调用 `verify_data_integrity.py`，对数据覆盖率、关键表与完整性做检查。",
+    "data_sources": [
+      "stock_data.db",
+      "verify_data_integrity.py 输出"
+    ],
+    "owner_modules": [
+      "scripts/download_orchestrator.py",
+      "scripts/verify_data_integrity.py"
+    ],
+    "evidence": [
+      "scripts/download_orchestrator.py",
+      "scripts/verify_data_integrity.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.publish-quality-gate",
+    "parent_feature_id": "nt2.pipeline.compose-publish",
+    "granularity": "subfeature",
+    "feature_name": "Publish Quality Gate",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "把最新 compose candidate 经过质量门校验后发布到正式 `daily_prices`。",
+    "run_logic": "`publish_daily_prices_candidate.py` 读取最新 candidate，评估价格异常率、覆盖率、交易日条件等质量门，只有通过时才 upsert 到 `daily_prices` 并写入 publish batch。",
+    "data_sources": [
+      "daily_price_compose_candidates",
+      "daily_price_compose_rows",
+      "stock_data.db daily_prices",
+      "trading_calendar tables"
+    ],
+    "owner_modules": [
+      "scripts/publish_daily_prices_candidate.py"
+    ],
+    "evidence": [
+      "scripts/publish_daily_prices_candidate.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.stock-meta-sync",
+    "feature_name": "Stock Metadata And Market Cap Sync",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "同步股票元数据、流通市值与基础静态信息，用于筛选器和数据健康检查。",
+    "run_logic": "编排器的 Step 1.5 运行 `update_stock_metadata.py`，并辅以 `sync_market_cap.py`、`update_stock_basic_info.py` 保持 `stocks` 与相关缓存字段最新。",
+    "data_sources": [
+      "Baostock",
+      "AKShare",
+      "stock_data.db stocks"
+    ],
+    "owner_modules": [
+      "scripts/download_orchestrator.py",
+      "scripts/update_stock_metadata.py",
+      "scripts/sync_market_cap.py",
+      "scripts/update_stock_basic_info.py"
+    ],
+    "evidence": [
+      "scripts/download_orchestrator.py",
+      "scripts/update_stock_metadata.py",
+      "scripts/sync_market_cap.py",
+      "scripts/update_stock_basic_info.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.pipeline.stock-meta-sync-detail",
+    "parent_feature_id": "nt2.pipeline.stock-meta-sync",
+    "granularity": "subfeature",
+    "feature_name": "Stock Meta And Market Cap Synchronization Detail",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "同步股票元数据、行业层级和市值信息，为筛选器过滤与实验模型提供静态字段。",
+    "run_logic": "`update_stock_metadata.py`、`sync_market_cap.py` 和 `update_stock_basic_info.py` 协同更新 `stocks` 表中的基础信息和补充字段。",
+    "data_sources": [
+      "Baostock",
+      "AKShare",
+      "stock_data.db stocks"
+    ],
+    "owner_modules": [
+      "scripts/update_stock_metadata.py",
+      "scripts/sync_market_cap.py",
+      "scripts/update_stock_basic_info.py"
+    ],
+    "evidence": [
+      "scripts/update_stock_metadata.py",
+      "scripts/sync_market_cap.py",
+      "scripts/update_stock_basic_info.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.pipeline.tencent-capture-batches",
+    "parent_feature_id": "nt2.pipeline.daily-capture",
+    "granularity": "subfeature",
+    "feature_name": "Tencent Daily Capture Batches",
+    "domain": "data_pipeline",
+    "status": "identified_from_code",
+    "definition": "从腾讯接口抓取日行情，建立 capture batch 与 row 台账。",
+    "run_logic": "`update_daily_prices_tencent.py` 按股票代码分批抓取 `qt.gtimg.cn` 行情，解析为 `QuoteBar`，写入 `daily_price_capture_batches` 与 `daily_price_capture_rows`。",
+    "data_sources": [
+      "Tencent qt.gtimg.cn",
+      "stock_data.db stocks",
+      "stock_data.db daily_price_capture_*"
+    ],
+    "owner_modules": [
+      "scripts/update_daily_prices_tencent.py"
+    ],
+    "evidence": [
+      "scripts/update_daily_prices_tencent.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.screener.algorithms",
+    "feature_name": "Technical Screener Algorithm Set",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "包含 A 股 2.1、金凤凰、银凤凰、试盘线、二板回调、20 天突破、主升浪突破、杯柄、老鸭头等筛选算法集合。",
+    "run_logic": "所有筛选器继承 `BaseScreener`，按统一过滤规则从 `daily_prices` 读取数据后执行各自模式识别逻辑，输出结果给 dashboard 或批处理脚本。",
+    "data_sources": [
+      "stock_data.db daily_prices/stocks",
+      "config/screeners/*.json",
+      "screeners/*.py"
+    ],
+    "owner_modules": [
+      "screeners/base_screener.py",
+      "screeners/*.py",
+      "config/screeners"
+    ],
+    "evidence": [
+      "screeners/base_screener.py",
+      "screeners/ashare_21_screener.py",
+      "screeners/coffee_cup_handle_screener_v4.py",
+      "screeners/lao_ya_tou_zhou_xian_screener.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.screeners.base-filter-contract",
+    "parent_feature_id": "nt2.screener.algorithms",
+    "granularity": "subfeature",
+    "feature_name": "Base Screener Filter And Runtime Contract",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "所有筛选算法共享的股票过滤、数据库读取、日期确定与运行输出契约。",
+    "run_logic": "`BaseScreener` 统一从 `stocks` 和 `daily_prices` 读取数据，应用退市、ST、指数、北交所、市值过滤规则，并约束 `run()` 输出结果结构。",
+    "data_sources": [
+      "scripts/config.py",
+      "stock_data.db stocks",
+      "stock_data.db daily_prices"
+    ],
+    "owner_modules": [
+      "screeners/base_screener.py",
+      "scripts/config.py"
+    ],
+    "evidence": [
+      "screeners/base_screener.py",
+      "scripts/config.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.bulk-run",
+    "parent_feature_id": "nt2.screeners.run-results-export",
+    "granularity": "subfeature",
+    "feature_name": "Bulk Screener Run",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "批量运行活跃筛选器，生成当日批次汇总报告。",
+    "run_logic": "`scripts/run_all_screeners.py` 维护活跃筛选器名单，逐个以子进程方式运行脚本，并把成功/失败及 picks 数写到 `logs/screener_run_<date>.json`。",
+    "data_sources": [
+      "ACTIVE_SCREENERS 清单",
+      "各筛选器脚本标准输出",
+      "logs/screener_run_<date>.json"
+    ],
+    "owner_modules": [
+      "scripts/run_all_screeners.py"
+    ],
+    "evidence": [
+      "scripts/run_all_screeners.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.catalog-listing",
+    "parent_feature_id": "nt2.screeners.registry-and-config",
+    "granularity": "subfeature",
+    "feature_name": "Screener Catalog Listing",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "列出已发现筛选器、分类、描述和基本元数据，供 dashboard 与配置面板使用。",
+    "run_logic": "后端通过 `/api/screeners` 返回已注册筛选器列表；注册数据由 `backend/screeners.py` 发现并写入 dashboard 数据库，前端 `ScreenersView` 按分类和名称组织展示。",
+    "data_sources": [
+      "dashboard.db screeners",
+      "screeners/*.py",
+      "frontend local category mapping"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "backend/screeners.py",
+      "backend/models.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "backend/screeners.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.config-read-write",
+    "parent_feature_id": "nt2.screeners.registry-and-config",
+    "granularity": "subfeature",
+    "feature_name": "Screener Config Read And Write",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "读取和更新单个筛选器配置参数，支持前端配置页面编辑。",
+    "run_logic": "前端调用 `/api/screeners/<screener_name>/config` 的 GET/PUT，后端通过配置加载器读取 `config/screeners/*.json` 并回写更新后的参数。",
+    "data_sources": [
+      "config/screeners/*.json",
+      "请求中的参数更新 payload"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "backend/config_loader.py",
+      "frontend/src/components/ScreenerConfig.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "backend/config_loader.py",
+      "frontend/src/components/ScreenerConfig.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.monitor-summary",
+    "parent_feature_id": "nt2.five-flags.monitor-and-pool",
+    "granularity": "subfeature",
+    "feature_name": "Screener Monitor Summary",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "提供筛选器运行监控总览与过期结果检查，用于发现筛选器层面的异常和停滞。",
+    "run_logic": "前端 Monitor 页调用 `/api/monitor/screeners`、`/api/monitor/expired`，后端读取运行记录、日期和时效信息返回监控摘要。",
+    "data_sources": [
+      "dashboard.db screener_runs",
+      "dashboard.db screener_results",
+      "当前日期/交易日判断"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.registry-and-config",
+    "feature_name": "Screener Registry And Config Management",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "动态发现筛选器、注册到 dashboard 数据库，并支持读取和更新单个筛选器配置。",
+    "run_logic": "后端通过 `backend/screeners.py` 扫描 `screeners/`、`scripts/` 与根目录中的 screener 文件，前端通过 `/api/screeners`、`/api/screeners/<name>/config` 查询和编辑配置。",
+    "data_sources": [
+      "screeners/*.py",
+      "config/screeners/*.json",
+      "dashboard.db screeners"
+    ],
+    "owner_modules": [
+      "backend/screeners.py",
+      "backend/config_loader.py",
+      "backend/app.py",
+      "frontend/src/components/ScreenerConfig.tsx"
+    ],
+    "evidence": [
+      "backend/screeners.py",
+      "backend/app.py",
+      "config/screeners",
+      "frontend/src/components/ScreenerConfig.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.screeners.results-query-export",
+    "parent_feature_id": "nt2.screeners.run-results-export",
+    "granularity": "subfeature",
+    "feature_name": "Screener Results Query And Export",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "查询指定筛选器和日期的结果集，并在前端导出 CSV 或 Excel。",
+    "run_logic": "前端调用 `/api/results` 拉取结果并在浏览器端执行扁平化导出，支持结果列表浏览与文件下载。",
+    "data_sources": [
+      "dashboard.db screener_results",
+      "浏览器端导出数据 blob"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "backend/models.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "backend/models.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.run-results-export",
+    "feature_name": "Screener Run Results And Export",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "运行单个或全部筛选器，查询结果，并支持前端导出 CSV/Excel。",
+    "run_logic": "用户在 dashboard 触发 `/api/screeners/<name>/run` 或通过 `scripts/run_all_screeners.py` 批量执行；后端记录 run/result，前端读取 `/api/results` 并导出。",
+    "data_sources": [
+      "stock_data.db daily_prices/stocks",
+      "dashboard.db screener_runs/screener_results",
+      "data/screeners/{screener_name}/{date}.xlsx"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "backend/models.py",
+      "backend/screeners.py",
+      "scripts/run_all_screeners.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "backend/models.py",
+      "backend/screeners.py",
+      "scripts/run_all_screeners.py",
+      "frontend/src/App.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.screeners.single-run",
+    "parent_feature_id": "nt2.screeners.run-results-export",
+    "granularity": "subfeature",
+    "feature_name": "Single Screener Run",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "按指定交易日运行单个筛选器，并记录本次执行结果。",
+    "run_logic": "前端或调用方通过 `/api/screeners/<screener_name>/run` 触发，后端动态加载筛选器类并执行，完成后写入 run/result 记录。",
+    "data_sources": [
+      "stock_data.db daily_prices/stocks",
+      "dashboard.db screener_runs/screener_results",
+      "config/screeners/*.json"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "backend/screeners.py",
+      "backend/models.py"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "backend/screeners.py",
+      "backend/models.py"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.single-stock-check",
+    "parent_feature_id": "nt2.stock.check-and-chart",
+    "granularity": "subfeature",
+    "feature_name": "Single Stock Screener Check",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "对单只股票执行指定筛选器检查，并返回命中与拒绝原因。",
+    "run_logic": "前端通过 `/api/check-stock` 提交股票代码和筛选器，后端实例化筛选器后对该股票做针对性校验并返回标准化结果。",
+    "data_sources": [
+      "stock_data.db daily_prices/stocks",
+      "screeners/base_screener.py",
+      "请求中的股票代码/筛选器名"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "screeners/base_screener.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "screeners/base_screener.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.screeners.stock-chart-inspection",
+    "parent_feature_id": "nt2.stock.check-and-chart",
+    "granularity": "subfeature",
+    "feature_name": "Stock Chart Inspection",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "展示单只股票的 K 线、均线、成交量和部分补充指标，用于结果复核。",
+    "run_logic": "前端调用 `/api/stock/<stock_code>/chart` 拉取图表数据，在 `StockDetailPanel` 中渲染 candlestick、MA5、MA20 和 volume 图。",
+    "data_sources": [
+      "stock_data.db daily_prices",
+      "dashboard.db stock_price_cache"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/App.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.stock.check-and-chart",
+    "feature_name": "Single Stock Check And Chart",
+    "domain": "screeners",
+    "status": "identified_from_code",
+    "definition": "对单只股票执行指定筛选器检查，并展示股票 K 线、均线与成交量图。",
+    "run_logic": "前端提交 `/api/check-stock` 和 `/api/stock/<code>/chart` 请求，后端实例化相应 screener 并从行情库读取股票历史数据。",
+    "data_sources": [
+      "stock_data.db daily_prices",
+      "screeners/base_screener.py",
+      "dashboard.db stock_price_cache"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "screeners/base_screener.py",
+      "frontend/src/App.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "screeners/base_screener.py",
+      "frontend/src/App.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.strategy.lab.recent-signals-summary",
+    "parent_feature_id": "nt2.strategy.runs-and-lab",
+    "granularity": "subfeature",
+    "feature_name": "Strategy Lab Recent Signals Summary",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "汇总最近多个交易日的策略命中股票、平均收益和涨跌分布，作为实验室快速回顾入口。",
+    "run_logic": "前端调用 `/api/strategy-lab/recent-signals-summary`，后端从 `triple_screen_signals` 或 `neil_turtle_signals` 汇总近 N 日命中与后续表现。",
+    "data_sources": [
+      "stock_data.db triple_screen_signals",
+      "stock_data.db neil_turtle_signals",
+      "stock_data.db daily_prices"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.strategy.runs-and-lab",
+    "feature_name": "Strategy Runs And Strategy Lab",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "管理策略回测/日跑任务，查看运行记录、日志、产物，并提供策略实验室近期信号摘要。",
+    "run_logic": "前端 Strategy 页通过 `/api/strategy-runs` 创建和查询策略任务，后端调度 `run_triple_screen_daily.py`、`run_neil_turtle_daily.py` 等脚本并保存运行台账；`/api/strategy-lab/recent-signals-summary` 提供实验室摘要。",
+    "data_sources": [
+      "stock_data.db triple_screen_signals/neil_turtle_signals",
+      "strategy run registry json",
+      "桌面导出的 pdf/md/html 报告"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/run_triple_screen_daily.py",
+      "scripts/run_neil_turtle_daily.py",
+      "scripts/strategies/triple_screen_strategy.py",
+      "scripts/strategies/turtle_short_strategy.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/run_triple_screen_daily.py",
+      "scripts/run_neil_turtle_daily.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.strategy.runs.create-and-execute",
+    "parent_feature_id": "nt2.strategy.runs-and-lab",
+    "granularity": "subfeature",
+    "feature_name": "Strategy Run Create And Execute",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "创建三重滤网或海龟策略任务，并按日跑/回溯模式同步执行。",
+    "run_logic": "前端向 `/api/strategy-runs` POST `strategy_id/task_type/execute_mode`，后端写入 run registry 并调用 `run_triple_screen_daily.py`、`run_neil_turtle_daily.py` 等脚本。",
+    "data_sources": [
+      "strategy run request payload",
+      "stock_data.db",
+      "logs/triple_screen_daily_report_*.json",
+      "logs/neil_daily_report_*.json"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/run_triple_screen_daily.py",
+      "scripts/run_neil_turtle_daily.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/run_triple_screen_daily.py",
+      "scripts/run_neil_turtle_daily.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.strategy.runs.logs-and-artifacts",
+    "parent_feature_id": "nt2.strategy.runs-and-lab",
+    "granularity": "subfeature",
+    "feature_name": "Strategy Run Logs And Artifact Download",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "查看单次策略运行日志尾部，并下载 PDF、Markdown 或 JSON 产物。",
+    "run_logic": "前端通过 `/api/strategy-runs/<run_id>/logs` 和 `/api/strategy-runs/<run_id>/download` 拉取日志尾部与导出文件。",
+    "data_sources": [
+      "strategy run log files",
+      "strategy report json/pdf/md/html artifacts"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.strategy.runs.registry-query",
+    "parent_feature_id": "nt2.strategy.runs-and-lab",
+    "granularity": "subfeature",
+    "feature_name": "Strategy Run Registry Query",
+    "domain": "strategy_and_lab",
+    "status": "identified_from_code",
+    "definition": "按策略、任务类型、状态和分页条件查询策略运行注册表。",
+    "run_logic": "前端调用 `/api/strategy-runs` GET 和 `/api/strategy-runs/<run_id>`，后端从 strategy runs registry 中返回轻量列表与单次运行详情。",
+    "data_sources": [
+      "strategy run registry json"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/pages/StrategyRuns.tsx"
+    ]
+  },
+  {
+    "feature_id": "nt2.system.tasks-and-jobs",
+    "feature_name": "System Task Registry And Manual Trigger",
+    "domain": "operations",
+    "status": "identified_from_code",
+    "definition": "统一展示 launchd/cron 任务状态、准备条件、日志摘要，并支持手动触发与轮询 job 状态。",
+    "run_logic": "后端通过 `/api/system/tasks` 枚举任务注册表与 launchctl 状态，通过 `/api/system/tasks/trigger` 异步触发，再由 `/api/system/jobs/<id>` 查询执行状态。",
+    "data_sources": [
+      "scripts/launchd/*.plist",
+      "launchctl 输出",
+      "脚本日志文件"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "scripts/launchd",
+      "scripts/cron"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "scripts/launchd",
+      "scripts/cron/paper_portfolio_plan_task.py",
+      "scripts/cron/stock_meta_freshness_task.py"
+    ],
+    "granularity": "system"
+  },
+  {
+    "feature_id": "nt2.web.dashboard-shell",
+    "feature_name": "Web Dashboard Shell And Auth",
+    "domain": "web_and_api",
+    "status": "identified_from_code",
+    "definition": "提供 NeoTrade2 的 Web 入口、静态资源分发、Basic Auth 保护、健康检查与版本信息。",
+    "run_logic": "由 `backend/app.py` 启动 Flask 服务，前端构建产物通过根路径和 assets 路由提供，访问前经过 `DASHBOARD_PASSWORD` 认证，前端 `App.tsx` 负责主导航与 tab 切换。",
+    "data_sources": [
+      "环境变量 DASHBOARD_PASSWORD",
+      "frontend/dist 静态构建产物",
+      "dashboard.db access_logs/access_stats"
+    ],
+    "owner_modules": [
+      "backend/app.py",
+      "frontend/src/App.tsx",
+      "backend/models.py"
+    ],
+    "evidence": [
+      "backend/app.py",
+      "frontend/src/App.tsx",
+      "CLAUDE.md"
+    ],
+    "granularity": "system"
+  }
+]

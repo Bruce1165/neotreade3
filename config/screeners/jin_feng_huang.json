@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "screener_id": "jin_feng_huang",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "limit_days": {
+        "type": "integer",
+        "x_display_name": "时间范围（交易日）",
+        "description": "时间范围（交易日）：筛选最近多少个交易日内的信号。",
+        "x_group": "基础设置",
+        "x_min": 1,
+        "x_max": 60
+      },
+      "limit_up_threshold": {
+        "type": "number",
+        "x_display_name": "涨停阈值（%）",
+        "description": "涨停阈值（%）：判断涨停的最低涨幅阈值。",
+        "x_group": "信号条件",
+        "x_min": 9.0,
+        "x_max": 10.5,
+        "x_step": 0.1
+      },
+      "signal_one_volume_ratio": {
+        "type": "number",
+        "x_display_name": "信号一成交额倍数",
+        "description": "信号一成交额倍数：信号一当日成交额需要达到前一日的倍数。",
+        "x_group": "信号条件",
+        "x_min": 1.5,
+        "x_max": 3.0,
+        "x_step": 0.1
+      },
+      "signal_two_volume_ratio": {
+        "type": "number",
+        "x_display_name": "信号二成交额倍数",
+        "description": "信号二成交额倍数：信号二当日成交额需要达到前一日的倍数。",
+        "x_group": "信号条件",
+        "x_min": 1.5,
+        "x_max": 3.0,
+        "x_step": 0.1
+      },
+      "signal_four_volume_ratio": {
+        "type": "number",
+        "x_display_name": "信号四地量倍数",
+        "description": "信号四地量倍数：信号四（地量日）成交额需要小于前一日的最大倍数。",
+        "x_group": "信号条件",
+        "x_min": 0.3,
+        "x_max": 0.7,
+        "x_step": 0.05
+      },
+      "signal_five_volume_ratio": {
+        "type": "number",
+        "x_display_name": "信号五成交额倍数",
+        "description": "信号五成交额倍数：信号五（启动日）成交额需要达到前一日的倍数。",
+        "x_group": "信号条件",
+        "x_min": 1.5,
+        "x_max": 3.0,
+        "x_step": 0.1
+      },
+      "top_n": {
+        "type": "integer",
+        "x_display_name": "最多输出数量",
+        "description": "最多输出候选数量。",
+        "x_group": "输出设置"
+      },
+      "universe_filters": {
+        "type": "object",
+        "properties": {
+          "min_market_cap": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "x_display_name": "最小流通市值阈值",
+            "description": "最小流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
+            "x_unit": "yuan",
+            "x_group": "股票池过滤"
+          }
+        }
+      }
+    }
+  },
+  "default_parameters": {
+    "limit_days": 14,
+    "limit_up_threshold": 9.9,
+    "signal_one_volume_ratio": 2.0,
+    "signal_two_volume_ratio": 2.0,
+    "signal_four_volume_ratio": 0.5,
+    "signal_five_volume_ratio": 2.0,
+    "top_n": 50,
+    "universe_filters": {
+      "min_market_cap": null
+    }
+  },
+  "current_parameters": {}
+}

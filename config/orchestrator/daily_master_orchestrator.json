@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "description": "Bootstrap placeholder for NeoTrade3 daily master orchestrator",
+  "phases": [
+    "preflight",
+    "data_pipeline",
+    "publish_gated_jobs",
+    "daily_lab_jobs",
+    "learning_loop",
+    "issue_aggregation_and_closeout"
+  ],
+  "tasks": [
+    {
+      "task_id": "data_control.capture",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "data_pipeline",
+      "entrypoint": "neotrade3.data_control.pipeline:DataControlPipeline.capture",
+      "args_template": {},
+      "depends_on": [],
+      "requires_publish_status": false,
+      "outputs": ["capture_batch"],
+      "failure_policy": "halt_phase",
+      "retry_policy": "no_retry",
+      "issue_tags": ["data_control", "capture"]
+    },
+    {
+      "task_id": "data_control.compose",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "data_pipeline",
+      "entrypoint": "neotrade3.data_control.pipeline:DataControlPipeline.compose",
+      "args_template": {},
+      "depends_on": ["data_control.capture"],
+      "requires_publish_status": false,
+      "outputs": ["compose_batch"],
+      "failure_policy": "halt_phase",
+      "retry_policy": "no_retry",
+      "issue_tags": ["data_control", "compose"]
+    },
+    {
+      "task_id": "data_control.publish",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "data_pipeline",
+      "entrypoint": "neotrade3.data_control.pipeline:DataControlPipeline.publish",
+      "args_template": {},
+      "depends_on": ["data_control.compose"],
+      "requires_publish_status": false,
+      "outputs": ["publish_batch"],
+      "failure_policy": "halt_run",
+      "retry_policy": "no_retry",
+      "issue_tags": ["data_control", "publish"]
+    },
+    {
+      "task_id": "paper_simulation_lab.daily_run",
+      "lab_id": "paper_simulation_lab",
+      "trigger_type": "post_publish_trigger",
+      "phase": "publish_gated_jobs",
+      "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+      "args_template": {},
+      "depends_on": ["data_control.publish"],
+      "requires_publish_status": true,
+      "outputs": ["lab_run_summary", "paper_simulation_positions"],
+      "failure_policy": "continue_with_issue",
+      "retry_policy": "single_retry",
+      "issue_tags": ["lab", "simulation"]
+    },
+    {
+      "task_id": "five_flags_lab.daily_scan",
+      "lab_id": "five_flags_lab",
+      "trigger_type": "post_publish_trigger",
+      "phase": "publish_gated_jobs",
+      "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+      "args_template": {},
+      "depends_on": ["data_control.publish"],
+      "requires_publish_status": true,
+      "outputs": ["lab_run_summary", "five_flags_scan_results"],
+      "failure_policy": "continue_with_issue",
+      "retry_policy": "single_retry",
+      "issue_tags": ["lab", "patterns"]
+    },
+    {
+      "task_id": "cup_handle_lab.daily_review",
+      "lab_id": "cup_handle_lab",
+      "trigger_type": "daily_lab_trigger",
+      "phase": "daily_lab_jobs",
+      "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+      "args_template": {},
+      "depends_on": [],
+      "requires_publish_status": false,
+      "outputs": ["lab_run_summary", "cup_handle_daily_report"],
+      "failure_policy": "continue_with_issue",
+      "retry_policy": "single_retry",
+      "issue_tags": ["lab", "cup_handle"]
+    },
+    {
+      "task_id": "quant_trading_lab.daily_analysis",
+      "lab_id": "quant_trading_lab",
+      "trigger_type": "daily_lab_trigger",
+      "phase": "daily_lab_jobs",
+      "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+      "args_template": {},
+      "depends_on": [],
+      "requires_publish_status": false,
+      "outputs": ["lab_run_summary", "quant_trading_analysis_report"],
+      "failure_policy": "continue_with_issue",
+      "retry_policy": "single_retry",
+      "issue_tags": ["lab", "trading"]
+    }
+  ]
+}

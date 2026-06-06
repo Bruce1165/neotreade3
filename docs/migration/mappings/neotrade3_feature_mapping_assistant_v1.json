@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "created_at": "2026-05-19",
+  "description": "NeoTrade3 migration mapping for NeoTrade2 'assistant' domain. This file records NeoTrade3 landing targets and migration status, while keeping NeoTrade2 inventory facts in neotrade2_feature_inventory.v3.json.",
+  "scope": {
+    "domain": "assistant"
+  },
+  "inventory_source": "docs/migration/neotrade2_feature_inventory.v3.json",
+  "mappings": [
+    {
+      "feature_id": "nt2.assistant.analysis",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "issue_center",
+          "dashboard",
+          "api"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/issue_center",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "NeoTrade3 不设置独立的 2.0 风格 assistant 服务；assistant 的产出应进入 learning 的评估与 issue_center 的证据关联，并通过只读 API/dashboard 统一呈现。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.pool-commonalities",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "股票池共性分析属于结果归集与统计评估，应以可复现的输入/输出记录进入 learning。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.label-summary",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "标签数据覆盖与摘要属于数据质量与样本分布的评估面。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.baseline-eval",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "labs"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/labs"
+        ]
+      },
+      "notes": "baseline eval 是实验评估能力，建议作为 labs 可执行实验或 learning 的评估任务，避免在 UI 内部隐式跑逻辑。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.daily-compare",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "issue_center"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "日对比属于外部对照评估，差异应固化为可追溯的 evidence 并进入 issue_center。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.five-flags-parameter-overrides",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "labs"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/labs",
+          "config/labs/labs_registry.json"
+        ]
+      },
+      "notes": "参数覆盖差异属于可审计的候选调整入口；3.0 应通过 learning 的候选调整与审计记录表达，而非直接在线改参。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.query-router",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "dashboard",
+          "api"
+        ],
+        "modules": [
+          "apps/dashboard",
+          "apps/api"
+        ]
+      },
+      "notes": "2.0 的 query router 偏 UI 工具能力；3.0 可用 dashboard 端的统一查询入口替代，但必须保持可审计的执行记录。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.assistant.rules-analyze",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "issue_center"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "规则分析属于可解释性评估；输出应带 trace 与事实证据，并可关联到 issue_center 的具体 case。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    }
+  ]
+}

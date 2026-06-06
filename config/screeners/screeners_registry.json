@@ -1,0 +1,62 @@
+{
+    "version": 1,
+    "description": "NeoTrade3 screener registry (bootstrap). v1 scope: only internal_formula screeners (exactly 7 enabled). Derived from NeoTrade2 evidence and kept runtime-independent.",
+    "screeners": [
+        {
+            "screener_id": "cup_handle_v4",
+            "display_name": "杯柄 V4",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_cup_handle_v4",
+            "tags": ["internal_formula", "pattern", "cup_handle"],
+            "notes": "Derived from NeoTrade2 evidence: screeners/coffee_cup_handle_screener_v4.py (internal_formula coffee_cup_v4)"
+        },
+        {
+            "screener_id": "daily_hot_cold",
+            "display_name": "每日冷热股",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_daily_hot_cold",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/daily_hot_cold_screener.py"
+        },
+        {
+            "screener_id": "er_ban_hui_tiao",
+            "display_name": "二板回调",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_er_ban_hui_tiao",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/er_ban_hui_tiao_screener.py"
+        },
+        {
+            "screener_id": "jin_feng_huang",
+            "display_name": "金凤凰",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_jin_feng_huang",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/jin_feng_huang_screener.py"
+        },
+        {
+            "screener_id": "shi_pan_xian",
+            "display_name": "试盘线",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_shi_pan_xian",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/shi_pan_xian_screener.py"
+        },
+        {
+            "screener_id": "yin_feng_huang",
+            "display_name": "银凤凰",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_yin_feng_huang",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/yin_feng_huang_screener.py"
+        },
+        {
+            "screener_id": "zhang_ting_bei_liang_yin",
+            "display_name": "倍量阴",
+            "enabled": true,
+            "entrypoint": "neotrade3.screeners.runtime:run_zhang_ting_bei_liang_yin",
+            "tags": ["internal_formula"],
+            "notes": "Derived from NeoTrade2 internal_formula evidence: screeners/zhang_ting_bei_liang_yin_screener.py"
+        }
+    ]
+}

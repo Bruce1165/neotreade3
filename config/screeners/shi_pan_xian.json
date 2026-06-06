@@ -1,0 +1,180 @@
+{
+  "current_parameters": {},
+  "default_parameters": {
+    "breakout_volume_ratio": 1.5,
+    "bse_limit_up_pct": 29.5,
+    "callback_max_days": 10,
+    "consolidation_days": 20,
+    "gem_star_limit_up_pct": 19.5,
+    "high_volume_lookback": 30,
+    "high_volume_peak_tolerance": 0.95,
+    "limit_up_search_days": 5,
+    "lookback_days": 150,
+    "main_board_limit_up_pct": 9.5,
+    "max_consolidation_gain": 0.1,
+    "min_days_after_high_volume": 3,
+    "min_history_days": 50,
+    "st_limit_up_pct": 4.5,
+    "top_n": 50,
+    "universe_filters": {
+      "min_market_cap": null
+    },
+    "volume_shrink_threshold": 0.25
+  },
+  "schema": {
+    "properties": {
+      "breakout_volume_ratio": {
+        "description": "放量突破倍数：再次放量日成交量需大于缩量区间平均成交量的该倍数。",
+        "type": "number",
+        "x_display_name": "放量突破倍数",
+        "x_group": "回调与缩量",
+        "x_min": 1.0,
+        "x_max": 5.0,
+        "x_step": 0.1
+      },
+      "bse_limit_up_pct": {
+        "description": "北交所涨停阈值：北交所股票判定涨停所需的最小涨幅（%）。",
+        "type": "number",
+        "x_display_name": "北交所涨停阈值",
+        "x_group": "涨停识别",
+        "x_min": 0.0,
+        "x_max": 50.0,
+        "x_step": 0.1
+      },
+      "callback_max_days": {
+        "description": "最大回调天数：从涨停日开始，最多观察 N 天回调窗口。",
+        "type": "integer",
+        "x_display_name": "最大回调天数",
+        "x_group": "回调与缩量",
+        "x_min": 3,
+        "x_max": 40
+      },
+      "consolidation_days": {
+        "description": "低位横盘天数：识别高量阳线前，要求至少有 N 天低位横盘区间。",
+        "type": "integer",
+        "x_display_name": "低位横盘天数",
+        "x_group": "横盘识别",
+        "x_min": 5,
+        "x_max": 60
+      },
+      "gem_star_limit_up_pct": {
+        "description": "创业/科创涨停阈值：创业板与科创板判定涨停所需的最小涨幅（%）。",
+        "type": "number",
+        "x_display_name": "创业/科创涨停阈值",
+        "x_group": "涨停识别",
+        "x_min": 0.0,
+        "x_max": 40.0,
+        "x_step": 0.1
+      },
+      "high_volume_lookback": {
+        "description": "高量回看天数：在最近 N 天内识别“高量阳线”是否为阶段高量。",
+        "type": "integer",
+        "x_display_name": "高量回看天数",
+        "x_group": "高量识别",
+        "x_min": 10,
+        "x_max": 120
+      },
+      "high_volume_peak_tolerance": {
+        "description": "高量峰值容忍度：候选高量阳线成交量需不低于回看区间最大量的该比例。",
+        "type": "number",
+        "x_display_name": "高量峰值容忍度",
+        "x_group": "高量识别",
+        "x_min": 0.5,
+        "x_max": 1.0,
+        "x_step": 0.01
+      },
+      "limit_up_search_days": {
+        "description": "涨停搜索窗口：高量阳线后最多 N 天内必须出现低量涨停。",
+        "type": "integer",
+        "x_display_name": "涨停搜索窗口",
+        "x_group": "涨停识别",
+        "x_min": 1,
+        "x_max": 20
+      },
+      "lookback_days": {
+        "description": "回看天数：用于加载并分析历史行情窗口。",
+        "type": "integer",
+        "x_display_name": "回看天数",
+        "x_group": "基础设置"
+      },
+      "main_board_limit_up_pct": {
+        "description": "主板涨停阈值：主板股票判定涨停所需的最小涨幅（%）。",
+        "type": "number",
+        "x_display_name": "主板涨停阈值",
+        "x_group": "涨停识别",
+        "x_min": 0.0,
+        "x_max": 20.0,
+        "x_step": 0.1
+      },
+      "max_consolidation_gain": {
+        "description": "横盘涨幅上限：横盘区间首尾涨跌幅绝对值不得超过该比例。",
+        "type": "number",
+        "x_display_name": "横盘涨幅上限",
+        "x_group": "横盘识别",
+        "x_min": 0.02,
+        "x_max": 0.3,
+        "x_step": 0.01
+      },
+      "min_days_after_high_volume": {
+        "description": "高量后最少观察天数：高量阳线后至少保留 N 天观察窗口，才进入后续涨停/回调判定。",
+        "type": "integer",
+        "x_display_name": "高量后最少观察天数",
+        "x_group": "基础设置",
+        "x_min": 1,
+        "x_max": 30
+      },
+      "min_history_days": {
+        "description": "最小历史天数：单股筛选至少需要的历史数据天数。",
+        "type": "integer",
+        "x_display_name": "最小历史天数",
+        "x_group": "基础设置",
+        "x_min": 20,
+        "x_max": 300
+      },
+      "st_limit_up_pct": {
+        "description": "ST 涨停阈值：ST 股票判定涨停所需的最小涨幅（%）。",
+        "type": "number",
+        "x_display_name": "ST 涨停阈值",
+        "x_group": "涨停识别",
+        "x_min": 0.0,
+        "x_max": 20.0,
+        "x_step": 0.1
+      },
+      "top_n": {
+        "description": "最多输出候选数量。",
+        "type": "integer",
+        "x_display_name": "最多输出数量",
+        "x_group": "输出设置"
+      },
+      "universe_filters": {
+        "properties": {
+          "min_market_cap": {
+            "description": "最小流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
+            "type": [
+              "number",
+              "null"
+            ],
+            "x_display_name": "最小流通市值阈值",
+            "x_unit": "yuan",
+            "x_group": "股票池过滤"
+          }
+        },
+        "type": "object"
+      },
+      "volume_shrink_threshold": {
+        "description": "缩量阈值：回调期成交量低于高量阳线成交量的该比例，判定为缩量。",
+        "type": "number",
+        "x_display_name": "缩量阈值",
+        "x_group": "回调与缩量",
+        "x_min": 0.05,
+        "x_max": 1.0,
+        "x_step": 0.01
+      }
+    },
+    "type": "object"
+  },
+  "screener_id": "shi_pan_xian",
+  "updated_at": "2026-05-23T04:23:23Z",
+  "updated_by": "cli_test_reset",
+  "version": 1
+}

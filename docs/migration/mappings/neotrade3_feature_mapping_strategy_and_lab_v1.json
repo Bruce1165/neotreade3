@@ -1,0 +1,675 @@
+{
+  "version": 1,
+  "created_at": "2026-05-19",
+  "description": "NeoTrade3 migration mapping for NeoTrade2 'strategy_and_lab' domain. This file records NeoTrade3 landing targets and migration status, while keeping NeoTrade2 inventory facts in neotrade2_feature_inventory.v3.json.",
+  "scope": {
+    "domain": "strategy_and_lab"
+  },
+  "inventory_source": "docs/migration/neotrade2_feature_inventory.v3.json",
+  "mappings": [
+    {
+      "feature_id": "nt2.cup-handle.lab",
+      "migration_strategy": "migrate",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "orchestration",
+          "issue_center",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "cup_handle_lab",
+        "orchestrator_task_ids": [
+          "cup_handle_lab.daily_review"
+        ],
+        "modules": [
+          "config/labs/labs_registry.json",
+          "config/orchestrator/daily_master_orchestrator.json",
+          "neotrade3/labs",
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "neotrade3/learning",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "NeoTrade3 已完成 cup_handle_lab 的注册与 orchestrator task contract；运行逻辑仍为占位实现。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "scaffolded",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.cup-handle.summary-and-daily",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "cup_handle_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "对应 NeoTrade3 cup_handle_lab 的日评估输出与趋势聚合；需要定义真实 artifact schema 与学习指标。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.cup-handle.stock-and-watch-pool",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "issue_center",
+          "dashboard"
+        ],
+        "lab_id": "cup_handle_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/issue_center",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "3.0 应把 watch pool 与样本跟踪归入实验室产物与问题池证据，而不是沿用 2.0 的 DB 表结构。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.cup-handle.alignment-and-compare",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning"
+        ],
+        "lab_id": "cup_handle_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning"
+        ]
+      },
+      "notes": "2.0 的 V4 compare/diff 属于实验对照评估；3.0 应落在 learning 的对比评估与审计记录中。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.cup-handle.daily-brief-and-audit",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning",
+          "issue_center"
+        ],
+        "lab_id": "cup_handle_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "3.0 的 daily brief/audit 应可审计、可回滚，并与 issue_center 关联具体批次与证据。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.cup-handle.feedback-and-retrain",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning",
+          "issue_center"
+        ],
+        "lab_id": "cup_handle_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "3.0 不应复用 2.0 retrain runs registry；应以候选变更 + 评估 + 审计为主链。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.lab",
+      "migration_strategy": "migrate",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "orchestration",
+          "issue_center",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "orchestrator_task_ids": [
+          "paper_simulation_lab.daily_run"
+        ],
+        "modules": [
+          "config/labs/labs_registry.json",
+          "config/orchestrator/daily_master_orchestrator.json",
+          "neotrade3/labs",
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "neotrade3/learning",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "NeoTrade3 已完成 paper_simulation_lab 的注册与 publish gated 任务契约；运行逻辑仍为占位实现。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "scaffolded",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.artifact-catalog-download",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "api",
+          "dashboard"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "modules": [
+          "neotrade3/labs",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "3.0 需要定义统一 artifact layout，并通过只读 API 暴露列表/下载能力。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.paper-portfolio-plan",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning"
+        ]
+      },
+      "notes": "建议作为 paper_simulation_lab 的核心日任务输出，并进入 learning 评估与候选调整。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.follow-tracking",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "modules": [
+          "neotrade3/learning",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "属于结果追踪与评估，应归入 learning 的指标评估与对比评估。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.portfolio-backtest",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning"
+        ]
+      },
+      "notes": "2.0 的组合回测在 3.0 中应产出结构化评估产物并可复现。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.paper-trading.signal-backtest",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning"
+        ],
+        "lab_id": "paper_simulation_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning"
+        ]
+      },
+      "notes": "信号级回测属于实验评估的一部分，建议作为可参数化实验执行。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.monitor-and-pool",
+      "migration_strategy": "migrate",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "labs",
+          "orchestration",
+          "issue_center",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "five_flags_lab",
+        "orchestrator_task_ids": [
+          "five_flags_lab.daily_scan"
+        ],
+        "modules": [
+          "config/data_control/source_registry.json",
+          "config/labs/labs_registry.json",
+          "config/orchestrator/daily_master_orchestrator.json",
+          "neotrade3/data_control",
+          "neotrade3/labs",
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "neotrade3/learning",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "NeoTrade3 已完成 five_flags_lab 的注册与 publish gated 任务契约；外部股票池输入应通过独立数据源上传与校验后进入捕获层；队列/诊断/日志等能力仍未迁移。",
+      "decision_evidence": [
+        "2026-05-19: tdx 老鸭头池作为外部来源，通过上传文件更新，不保证每日都有；数据质量必须严格保证。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "scaffolded",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.health-and-unprocessed",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "issue_center",
+          "dashboard"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/issue_center",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "3.0 应把 unprocessed 视为问题池条目，并关联具体批次与证据。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.pool-query-upload",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "labs",
+          "api",
+          "dashboard"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "config/data_control/source_registry.json",
+          "neotrade3/data_control",
+          "neotrade3/labs",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "外部股票池应作为可审计的外部来源输入进入 capture 层；实验运行仅消费通过校验的 pool snapshot。",
+      "decision_evidence": [
+        "2026-05-19: 外部来源通过上传文件更新，不保证每日都有；数据质量必须严格保证。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.run-queue-registry",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "labs",
+          "issue_center"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "neotrade3/orchestration",
+          "neotrade3/labs",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "3.0 不复用 2.0 的串行队列实现，建议统一进入 orchestrator 的任务/依赖与 ledger。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.results-timeline-diagnosis",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "neotrade3/labs",
+          "neotrade3/learning",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "诊断应输出结构化 evidence，便于学习闭环评估与问题池归因。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.miss-analysis-and-logs",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "issue_center",
+          "orchestration",
+          "dashboard"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "neotrade3/issue_center",
+          "neotrade3/orchestration",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "miss analysis/log views 属于问题池的证据呈现与运行日志统一采集。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.five-flags.flow-profile-calibration",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "issue_center"
+        ],
+        "lab_id": "five_flags_lab",
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "flow timing 与 phase profile publish 属于可审计的候选调整与评估过程。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.strategy.runs-and-lab",
+      "migration_strategy": "migrate",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "labs",
+          "orchestration",
+          "issue_center",
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "quant_trading_lab",
+        "orchestrator_task_ids": [
+          "quant_trading_lab.daily_analysis"
+        ],
+        "modules": [
+          "config/labs/labs_registry.json",
+          "config/orchestrator/daily_master_orchestrator.json",
+          "neotrade3/labs",
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "neotrade3/learning",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "NeoTrade3 已完成 quant_trading_lab 的注册与 orchestrator task contract；策略 run registry、日志下载与实验室摘要仍未迁移。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "scaffolded",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.strategy.runs.create-and-execute",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "labs"
+        ],
+        "lab_id": "quant_trading_lab",
+        "modules": [
+          "neotrade3/orchestration",
+          "neotrade3/labs"
+        ]
+      },
+      "notes": "3.0 中的策略任务创建/执行应由 orchestrator 统一协调，避免 2.0 的脚本直跑入口。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.strategy.runs.registry-query",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api",
+          "dashboard"
+        ],
+        "lab_id": "quant_trading_lab",
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "3.0 应把 run registry 统一落在 orchestrator ledger 中，并通过只读 API 暴露查询。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.strategy.runs.logs-and-artifacts",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api",
+          "dashboard",
+          "issue_center"
+        ],
+        "lab_id": "quant_trading_lab",
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "日志与产物下载在 3.0 需要和任务/批次绑定，作为问题池证据可追溯。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.strategy.lab.recent-signals-summary",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "dashboard"
+        ],
+        "lab_id": "quant_trading_lab",
+        "modules": [
+          "neotrade3/learning",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "近期信号摘要属于学习闭环的结果归集与指标评估层。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    }
+  ]
+}

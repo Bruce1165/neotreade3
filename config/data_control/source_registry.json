@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "Bootstrap placeholder for NeoTrade3 data source registry (independent from NeoTrade2 runtime)",
+  "sources": [
+    {
+      "source_id": "tdx_lao_ya_tou_pool_upload",
+      "display_name": "Tdx Lao-Ya-Tou Pool Upload",
+      "source_type": "external_upload",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture"],
+      "official_write_allowed": false,
+      "notes": "External universe source provided via file upload; may be missing on some days. Must be validated and audited before use."
+    },
+    {
+      "source_id": "neotrade3_candidate_workspace",
+      "display_name": "NeoTrade3 Candidate Workspace",
+      "source_type": "local_workspace",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture", "compose", "publish"],
+      "official_write_allowed": false,
+      "notes": "Used for placeholder candidate and ledger scaffolding during bootstrap; not an official production data store."
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "description": "Bootstrap placeholder for NeoTrade3 lab registry",
+  "labs": [
+    {
+      "lab_id": "cup_handle_lab",
+      "display_name": "杯柄实验室",
+      "domain": "pattern_research",
+      "owner": "unassigned",
+      "enabled": true,
+      "input_dependencies": ["published_daily_data"],
+      "daily_jobs": [
+        {
+          "task_id": "cup_handle_lab.daily_review",
+          "job_id": "cup_handle_daily_review",
+          "display_name": "杯柄日评估",
+          "trigger_type": "daily_lab_trigger",
+          "phase": "daily_lab_jobs",
+          "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+          "depends_on": [],
+          "requires_publish_status": false,
+          "outputs": ["lab_run_summary", "cup_handle_daily_report"],
+          "artifacts": ["cup_handle_daily_report"],
+          "health_checks": ["job_registration_present", "artifact_contract_present"]
+        }
+      ],
+      "artifacts": [
+        {
+          "artifact_id": "cup_handle_daily_report",
+          "path": "var/artifacts/labs/cup_handle_lab/daily_report.json",
+          "description": "Bootstrap placeholder for cup-handle daily evaluation output."
+        }
+      ],
+      "health_checks": [
+        {
+          "check_id": "job_registration_present",
+          "description": "Daily job contract must exist for the lab."
+        },
+        {
+          "check_id": "artifact_contract_present",
+          "description": "Declared artifacts must have matching contract definitions."
+        }
+      ],
+      "learning_inputs": ["daily_metrics"]
+    },
+    {
+      "lab_id": "paper_simulation_lab",
+      "display_name": "量化模拟交易实验室",
+      "domain": "simulation",
+      "owner": "unassigned",
+      "enabled": true,
+      "input_dependencies": ["published_daily_data"],
+      "daily_jobs": [
+        {
+          "task_id": "paper_simulation_lab.daily_run",
+          "job_id": "paper_simulation_daily_run",
+          "display_name": "模拟交易日运行",
+          "trigger_type": "post_publish_trigger",
+          "phase": "publish_gated_jobs",
+          "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+          "depends_on": ["data_control.publish"],
+          "requires_publish_status": true,
+          "outputs": ["lab_run_summary", "paper_simulation_positions"],
+          "artifacts": ["paper_simulation_positions"],
+          "health_checks": ["job_registration_present", "artifact_contract_present"]
+        }
+      ],
+      "artifacts": [
+        {
+          "artifact_id": "paper_simulation_positions",
+          "path": "var/artifacts/labs/paper_simulation_lab/positions.json",
+          "description": "Bootstrap placeholder for paper simulation daily position snapshot."
+        }
+      ],
+      "health_checks": [
+        {
+          "check_id": "job_registration_present",
+          "description": "Daily job contract must exist for the lab."
+        },
+        {
+          "check_id": "artifact_contract_present",
+          "description": "Declared artifacts must have matching contract definitions."
+        }
+      ],
+      "learning_inputs": ["daily_metrics"]
+    },
+    {
+      "lab_id": "five_flags_lab",
+      "display_name": "老鸭头五图",
+      "domain": "pattern_research",
+      "owner": "unassigned",
+      "enabled": true,
+      "input_dependencies": ["published_daily_data"],
+      "daily_jobs": [
+        {
+          "task_id": "five_flags_lab.daily_scan",
+          "job_id": "five_flags_daily_scan",
+          "display_name": "五图日扫描",
+          "trigger_type": "post_publish_trigger",
+          "phase": "publish_gated_jobs",
+          "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+          "depends_on": ["data_control.publish"],
+          "requires_publish_status": true,
+          "outputs": ["lab_run_summary", "five_flags_scan_results"],
+          "artifacts": ["five_flags_scan_results"],
+          "health_checks": ["job_registration_present", "artifact_contract_present"]
+        }
+      ],
+      "artifacts": [
+        {
+          "artifact_id": "five_flags_scan_results",
+          "path": "var/artifacts/labs/five_flags_lab/scan_results.json",
+          "description": "Bootstrap placeholder for five-flags scan output."
+        }
+      ],
+      "health_checks": [
+        {
+          "check_id": "job_registration_present",
+          "description": "Daily job contract must exist for the lab."
+        },
+        {
+          "check_id": "artifact_contract_present",
+          "description": "Declared artifacts must have matching contract definitions."
+        }
+      ],
+      "learning_inputs": ["daily_metrics"]
+    },
+    {
+      "lab_id": "quant_trading_lab",
+      "display_name": "量化交易实验室",
+      "domain": "trading_research",
+      "owner": "unassigned",
+      "enabled": true,
+      "input_dependencies": ["published_daily_data"],
+      "daily_jobs": [
+        {
+          "task_id": "quant_trading_lab.daily_analysis",
+          "job_id": "quant_trading_daily_analysis",
+          "display_name": "量化交易日分析",
+          "trigger_type": "daily_lab_trigger",
+          "phase": "daily_lab_jobs",
+          "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+          "depends_on": [],
+          "requires_publish_status": false,
+          "outputs": ["lab_run_summary", "quant_trading_analysis_report"],
+          "artifacts": ["quant_trading_analysis_report"],
+          "health_checks": ["job_registration_present", "artifact_contract_present"]
+        }
+      ],
+      "artifacts": [
+        {
+          "artifact_id": "quant_trading_analysis_report",
+          "path": "var/artifacts/labs/quant_trading_lab/analysis_report.json",
+          "description": "Bootstrap placeholder for quant trading daily analysis output."
+        }
+      ],
+      "health_checks": [
+        {
+          "check_id": "job_registration_present",
+          "description": "Daily job contract must exist for the lab."
+        },
+        {
+          "check_id": "artifact_contract_present",
+          "description": "Declared artifacts must have matching contract definitions."
+        }
+      ],
+      "learning_inputs": ["daily_metrics"]
+    }
+  ]
+}

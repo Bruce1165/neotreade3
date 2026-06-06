@@ -1,0 +1,467 @@
+"""Bootstrap worker entrypoint for NeoTrade3."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any, cast
+
+from neotrade3.data_control import DataControlPipeline
+from neotrade3.issue_center import IssueCenterCollector
+from neotrade3.learning import LearningLoopPipeline
+from neotrade3.labs.runtime import LabRuntimeAdapter
+from neotrade3.orchestration import DailyMasterOrchestrator, DailyRunRequest
+from neotrade3.orchestration.models import OrchestrationPhase, PlannedTask, RunStatus, TaskResult
+
+
+class BootstrapWorkerApp:
+    """Builds and optionally persists the current NeoTrade3 bootstrap snapshots."""
+
+    def __init__(self, project_root: str | Path) -> None:
+        self.project_root = Path(project_root)
+        self.paths = {
+            "labs_config": self.project_root / "config/labs/labs_registry.json",
+            "orchestrator_config": self.project_root
+            / "config/orchestrator/daily_master_orchestrator.json",
+            "source_registry_config": self.project_root
+            / "config/data_control/source_registry.json",
+            "ledgers_root": self.project_root / "var/ledgers/bootstrap_runs",
+            "artifacts_root": self.project_root / "var/artifacts/bootstrap_runs",
+        }
+        self._lab_adapter: LabRuntimeAdapter | None = None
+
+    def _get_lab_adapter(self) -> LabRuntimeAdapter:
+        if self._lab_adapter is None:
+            self._lab_adapter = LabRuntimeAdapter()
+        return self._lab_adapter
+
+    def _create_data_control_executor(
+        self, data_control: DataControlPipeline
+    ) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for DATA_PIPELINE phase tasks."""
+        # Map task_id suffix to the actual pipeline method
+        method_map = {
+            "capture": data_control.capture,
+            "compose": data_control.compose,
+            "publish": data_control.publish,
+        }
+
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            target_date = context.get("target_date", date.today())
+            try:
+                # Determine which pipeline method to call based on task_id
+                method = None
+                for suffix, fn in method_map.items():
+                    if suffix in task.task_id:
+                        method = fn
+                        break
+                if method is None:
+                    # Fallback to full build_plan
+                    plan = data_control.build_plan(target_date)
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message="data control plan built successfully",
+                        artifact_refs=[],
+                        details={"plan_stages": len(plan.stages) if hasattr(plan, 'stages') else 0},
+                    )
+
+                result = method(target_date=target_date)
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK if result else RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"{task.task_id} completed successfully",
+                    artifact_refs=[],
+                    details={"task_id": task.task_id},
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"data control error: {e}",
+                )
+        return executor
+
+    def _create_lab_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for LABS phase tasks."""
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            adapter = self._get_lab_adapter()
+            target_date = context.get("target_date", date.today())
+            try:
+                result = adapter.run_job(
+                    task_id=task.task_id,
+                    target_date=target_date,
+                    lab_id=task.lab_id or "",
+                    project_root=self.project_root,
+                )
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK if result.get("status") == "ok" else RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=result.get("message", ""),
+                    artifact_refs=result.get("artifacts", []),
+                    details={"picks_count": result.get("picks_count", 0)},
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"lab execution error: {e}",
+                )
+        return executor
+
+    def _create_learning_executor(
+        self, learning: LearningLoopPipeline
+    ) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for LEARNING_LOOP phase tasks."""
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            target_date = context.get("target_date", date.today())
+            try:
+                # Learning loop is executed post-hoc in self.run(),
+                # so here we just mark it as OK with a summary.
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK,
+                    lab_id=task.lab_id,
+                    message="learning loop pipeline ready for post-hoc execution",
+                    artifact_refs=[],
+                    details={"mode": "post_hoc"},
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"learning loop error: {e}",
+                )
+        return executor
+
+    def _create_issue_executor(
+        self, issue_center: IssueCenterCollector
+    ) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for ISSUE_AGGREGATION_AND_CLOSEOUT phase tasks."""
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            target_date = context.get("target_date", date.today())
+            try:
+                # Issue aggregation is executed post-hoc in self.run(),
+                # so here we just mark it as OK with a summary.
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK,
+                    lab_id=task.lab_id,
+                    message="issue aggregation ready for post-hoc execution",
+                    artifact_refs=[],
+                    details={"mode": "post_hoc"},
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"issue aggregation error: {e}",
+                )
+        return executor
+
+    def _create_preflight_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for PREFLIGHT phase tasks."""
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            target_date = context.get("target_date", date.today())
+            try:
+                from neotrade3.orchestration.preflight import PreflightRunner
+                runner = PreflightRunner()
+                report = runner.build_report(target_date)
+                all_passed = all(
+                    check.status.value in ("passed", "warning")
+                    for check in report.checks
+                )
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK if all_passed else RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"preflight checks: {len(report.checks)} items, "
+                           f"{'all passed' if all_passed else 'some failed'}",
+                    artifact_refs=[],
+                    details={"check_count": len(report.checks)},
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"preflight error: {e}",
+                )
+        return executor
+
+    def run(
+        self, target_date: date, publish_succeeded: bool, write_outputs: bool
+    ) -> dict[str, object]:
+        # ---- 运行锁获取 ----
+        from neotrade3.orchestration.preflight import PreflightRunner
+        lock_acquired, lock_msg = PreflightRunner.acquire_lock(
+            project_root=self.project_root,
+            requested_by="BootstrapWorkerApp.run",
+        )
+        if not lock_acquired:
+            return {
+                "status": "blocked",
+                "target_date": target_date.isoformat(),
+                "message": lock_msg,
+                "orchestration": {"task_results": []},
+                "summary": {
+                    "planned_task_count": 0,
+                    "issue_case_count": 0,
+                    "learning_candidate_count": 0,
+                },
+            }
+
+        try:
+            return self._run_inner(target_date, publish_succeeded, write_outputs)
+        finally:
+            PreflightRunner.release_lock(self.project_root)
+
+    def _run_inner(
+        self, target_date: date, publish_succeeded: bool, write_outputs: bool
+    ) -> dict[str, object]:
+        data_control = DataControlPipeline.from_registry_file(
+            self.paths["source_registry_config"]
+        )
+        orchestrator = DailyMasterOrchestrator.from_files(
+            orchestrator_config_path=self.paths["orchestrator_config"],
+            labs_registry_path=self.paths["labs_config"],
+        )
+        issue_center = IssueCenterCollector()
+        learning = LearningLoopPipeline()
+
+        data_plan = data_control.build_plan(target_date)
+        data_plan_ledger = data_control.build_plan_ledger(data_plan)
+        data_stage_summary = self._load_data_control_stage_summary(target_date)
+
+        run_plan = orchestrator.build_run_plan(
+            DailyRunRequest(
+                target_date=target_date, publish_succeeded=publish_succeeded
+            )
+        )
+
+        # Build task executors for real execution
+        # Map to actual OrchestrationPhase values used in config
+        task_executors = {
+            OrchestrationPhase.DATA_PIPELINE: self._create_data_control_executor(data_control),
+            OrchestrationPhase.PUBLISH_GATED_JOBS: self._create_lab_executor(),
+            OrchestrationPhase.DAILY_LAB_JOBS: self._create_lab_executor(),
+            OrchestrationPhase.LEARNING_LOOP: self._create_learning_executor(learning),
+            OrchestrationPhase.ISSUE_AGGREGATION_AND_CLOSEOUT: self._create_issue_executor(issue_center),
+            OrchestrationPhase.PREFLIGHT: self._create_preflight_executor(),
+        }
+
+        # Execute with real executors
+        context = {
+            "target_date": target_date,
+            "project_root": str(self.project_root),
+            "db_path": str(self.project_root / "var/data/neotrade3.db"),
+        }
+        task_results = orchestrator.execute_run_plan(run_plan, task_executors, context)
+
+        run_entry, task_entries = orchestrator.build_placeholder_run_ledger(run_plan)
+        issue_snapshot = issue_center.collect(target_date, task_results, task_entries)
+        learning_snapshot = learning.build_snapshot(
+            target_date,
+            task_results,
+            issue_snapshot,
+            project_root=self.project_root,
+        )
+
+        snapshot = {
+            "target_date": target_date.isoformat(),
+            "publish_succeeded": publish_succeeded,
+            "data_control": {
+                "source_summary": data_control.describe_sources(),
+                "plan": self._to_jsonable(data_plan),
+                "plan_ledger": self._to_jsonable(data_plan_ledger),
+                "stage_summary": data_stage_summary,
+            },
+            "orchestration": {
+                "plan": self._to_jsonable(run_plan),
+                "task_results": self._to_jsonable(task_results),
+                "run_ledger": self._to_jsonable(run_entry),
+                "task_ledger": self._to_jsonable(task_entries),
+            },
+            "issue_center": self._to_jsonable(issue_snapshot),
+            "learning": self._to_jsonable(learning_snapshot),
+            "summary": {
+                "planned_task_count": len(run_plan.planned_tasks),
+                "issue_case_count": len(issue_snapshot.cases),
+                "learning_candidate_count": len(
+                    learning_snapshot.adjustment_candidates
+                ),
+            },
+        }
+
+        if write_outputs:
+            self.write_outputs(target_date, snapshot)
+
+        return snapshot
+
+    def _load_data_control_stage_summary(self, target_date: date) -> dict[str, object]:
+        date_key = target_date.isoformat()
+        summary: dict[str, object] = {"target_date": date_key, "stages": {}}
+        stages: dict[str, object] = {}
+        for stage in ("capture", "compose", "publish"):
+            ledger_path = (
+                self.project_root
+                / "var/ledgers/data_control"
+                / date_key
+                / f"data_control_{stage}_ledger.json"
+            )
+            artifact_path = (
+                self.project_root
+                / "var/artifacts/data_control"
+                / date_key
+                / f"data_control_{stage}_result.json"
+            )
+            if not ledger_path.exists():
+                continue
+            try:
+                payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            item: dict[str, object] = {
+                "status": str(payload.get("status", "")),
+                "message": str(payload.get("message", "")),
+                "requested_at": str(payload.get("requested_at", "")),
+                "ledger_path": str(ledger_path.relative_to(self.project_root)),
+                "artifact_path": (
+                    str(artifact_path.relative_to(self.project_root))
+                    if artifact_path.exists()
+                    else None
+                ),
+            }
+            if stage in {"capture", "publish"}:
+                units_validation = payload.get("units_validation")
+                if isinstance(units_validation, dict):
+                    item["units_validation"] = units_validation
+            if stage == "compose":
+                warnings = payload.get("warnings")
+                if isinstance(warnings, list):
+                    item["warnings"] = [str(w) for w in warnings]
+                    item["warning_count"] = len(warnings)
+                candidates = payload.get("candidate_universe")
+                if isinstance(candidates, list):
+                    item["candidate_count"] = len(candidates)
+            stages[stage] = item
+        summary["stages"] = stages
+        return summary
+
+    def write_outputs(self, target_date: date, snapshot: dict[str, object]) -> None:
+        date_key = target_date.isoformat()
+        ledgers_dir = self.paths["ledgers_root"] / date_key
+        artifacts_dir = self.paths["artifacts_root"] / date_key
+        ledgers_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        self._write_json(
+            ledgers_dir / "data_control_plan_ledger.json", snapshot["data_control"]
+        )
+        self._write_json(
+            ledgers_dir / "orchestration_run_snapshot.json", snapshot["orchestration"]
+        )
+        self._write_json(
+            artifacts_dir / "issue_center_snapshot.json", snapshot["issue_center"]
+        )
+        self._write_json(artifacts_dir / "learning_snapshot.json", snapshot["learning"])
+        self._write_json(
+            artifacts_dir / "bootstrap_run_summary.json", snapshot["summary"]
+        )
+
+    @staticmethod
+    def _write_json(file_path: Path, payload: object) -> None:
+        file_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def _to_jsonable(cls, value: object) -> object:
+        if is_dataclass(value) and not isinstance(value, type):
+            return cls._to_jsonable(asdict(cast(Any, value)))
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(key): cls._to_jsonable(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._to_jsonable(item) for item in value]
+        return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the NeoTrade3 bootstrap worker.")
+    parser.add_argument(
+        "--date", dest="target_date", help="Target date in YYYY-MM-DD format."
+    )
+    parser.add_argument(
+        "--publish-succeeded",
+        action="store_true",
+        help="Mark publish-gated jobs as unblocked in the bootstrap plan.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build snapshots without writing files under var/.",
+    )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    target_date = (
+        date.fromisoformat(args.target_date) if args.target_date else date.today()
+    )
+    project_root = Path(__file__).resolve().parents[2]
+    app = BootstrapWorkerApp(project_root=project_root)
+    snapshot = app.run(
+        target_date=target_date,
+        publish_succeeded=args.publish_succeeded,
+        write_outputs=not args.dry_run,
+    )
+    print(
+        json.dumps(
+            {
+                "target_date": snapshot["target_date"],
+                "summary": snapshot["summary"],
+                "write_outputs": not args.dry_run,
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

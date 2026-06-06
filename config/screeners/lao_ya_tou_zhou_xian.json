@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "screener_id": "lao_ya_tou_zhou_xian",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "universe_filters": {
+        "type": "object",
+        "properties": {
+          "min_market_cap": {
+            "type": ["number", "null"],
+            "x_display_name": "最小流通市值阈值",
+            "description": "最小流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
+            "x_unit": "yuan"
+          }
+        }
+      }
+    }
+  },
+  "default_parameters": {
+    "universe_filters": {
+      "min_market_cap": null
+    }
+  },
+  "current_parameters": {}
+}
