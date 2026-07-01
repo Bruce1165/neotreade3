@@ -245,3 +245,79 @@ class TushareConceptAdapter:
             out.append(TradeCalendarDay(cal_date=cal_date, is_open=is_open, pretrade_date=pretrade))
         out.sort(key=lambda x: x.cal_date)
         return out
+
+    def fetch_daily_bar(
+        self,
+        *,
+        ts_code: str,
+        trade_date: str,
+    ) -> Optional[dict[str, Any]]:
+        ts_code = str(ts_code or "").strip()
+        if not ts_code:
+            raise ValueError("ts_code must be a non-empty string")
+        trade_date = str(trade_date or "").strip()
+        if not trade_date:
+            raise ValueError("trade_date must be a non-empty string")
+
+        rows = self._call(
+            api_name="daily",
+            params={"ts_code": ts_code, "trade_date": self._to_ymd(trade_date)},
+            fields=[
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "pre_close",
+                "vol",
+                "amount",
+            ],
+        )
+        if not rows:
+            return None
+        r = rows[0] if isinstance(rows[0], dict) else None
+        if not isinstance(r, dict):
+            return None
+
+        iso_trade_date = self._from_ymd(r.get("trade_date")) or None
+        try:
+            open_px = float(r["open"]) if r.get("open") is not None else None
+        except Exception:
+            open_px = None
+        try:
+            close_px = float(r["close"]) if r.get("close") is not None else None
+        except Exception:
+            close_px = None
+        try:
+            pre_close = float(r["pre_close"]) if r.get("pre_close") is not None else None
+        except Exception:
+            pre_close = None
+        try:
+            high_px = float(r["high"]) if r.get("high") is not None else None
+        except Exception:
+            high_px = None
+        try:
+            low_px = float(r["low"]) if r.get("low") is not None else None
+        except Exception:
+            low_px = None
+        try:
+            vol = float(r["vol"]) if r.get("vol") is not None else None
+        except Exception:
+            vol = None
+        try:
+            amount = float(r["amount"]) if r.get("amount") is not None else None
+        except Exception:
+            amount = None
+
+        return {
+            "ts_code": str(r.get("ts_code") or "").strip() or ts_code,
+            "trade_date": iso_trade_date,
+            "open": open_px,
+            "high": high_px,
+            "low": low_px,
+            "close": close_px,
+            "pre_close": pre_close,
+            "vol": vol,
+            "amount": amount,
+        }

@@ -5,7 +5,7 @@ This is a refactored, modular version of the original main.py.
 The original main.py is kept as backup for compatibility.
 
 Usage:
-    python -m apps.api.main_modular --port 18030
+    ./.venv/bin/python -m apps.api.main_modular --port 18031
 
 Structure:
     - utils/: Error handling, caching utilities
@@ -34,6 +34,7 @@ sys.path.insert(0, str(project_root))
 
 from apps.api.utils.errors import ApiError, format_api_error
 from apps.api.utils.cache import ApiCache
+from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 
 logger = logging.getLogger(__name__)
 
@@ -221,12 +222,11 @@ class ModularApiHandler(BaseHTTPRequestHandler):
 
     def _hot_sectors(self, params: dict) -> dict:
         """Get hot sectors."""
-        # TODO: Implement using neotrade3 modules
-        return {
-            "_meta": {"status": "ok"},
-            "sectors": [],
-            "note": "To be implemented with neotrade3 analysis modules",
-        }
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "hot sectors endpoint is not implemented in main_modular.py yet",
+        )
 
     def _list_screeners(self, params: dict) -> dict:
         """List available screeners."""
@@ -248,44 +248,44 @@ class ModularApiHandler(BaseHTTPRequestHandler):
             }
         except Exception as e:
             logger.error(f"Error listing screeners: {e}")
-            return {
-                "_meta": {"status": "ok"},
-                "screeners": [],
-                "error": str(e),
-            }
+            raise ApiError(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "SCREENERS_REGISTRY_ERROR",
+                f"Failed to load screener registry: {e}",
+            )
 
     def _update_data(self, data: dict) -> dict:
         """Update local data."""
-        # TODO: Implement data update logic
-        return {
-            "_meta": {"status": "ok"},
-            "message": "Data update triggered",
-            "note": "Full implementation to be added",
-        }
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "data update endpoint is not implemented in main_modular.py yet",
+        )
 
     def _run_model(self, data: dict) -> dict:
         """Run quant model."""
-        # TODO: Implement model run logic
-        return {
-            "_meta": {"status": "ok"},
-            "message": "Model run triggered",
-            "note": "Full implementation to be added",
-        }
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "model run endpoint is not implemented in main_modular.py yet",
+        )
 
     def _run_all_screeners(self, data: dict) -> dict:
         """Run all screeners."""
-        # TODO: Implement screener run logic
-        return {
-            "_meta": {"status": "ok"},
-            "message": "All screeners triggered",
-            "note": "Full implementation to be added",
-        }
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "run-all screeners endpoint is not implemented in main_modular.py yet",
+        )
 
 
 def build_handler(context: ApiContext) -> type[BaseHTTPRequestHandler]:
     """Build HTTP handler class with context."""
+    handler_context = context
+
     class Handler(ModularApiHandler):
-        context = context
+        context = handler_context
+
     return Handler
 
 
@@ -304,6 +304,12 @@ def main() -> int:
         level=getattr(logging, args.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    log_python_runtime(entrypoint="apps.api.main_modular", logger=logger)
+    try:
+        require_python_310(entrypoint="apps.api.main_modular")
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        return 2
 
     # Create context
     context = ApiContext(

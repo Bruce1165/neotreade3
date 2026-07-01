@@ -87,23 +87,23 @@ class DataControlPipeline:
         requested_by: str = "data_control.capture",
         dry_run: bool = False,
     ) -> DataControlStepResult:
-        tencent_update: dict[str, object] | None = None
+        authoritative_update: dict[str, object] | None = None
         if not dry_run and os.environ.get("NEOTRADE3_ENABLE_TENCENT_UPDATE") == "1":
             try:
                 from apps.api.main import BootstrapApiService
 
                 service = BootstrapApiService(project_root=self._project_root())
-                tencent_update = cast(
+                authoritative_update = cast(
                     dict[str, object],
-                    service.update_daily_prices_tencent_view(
+                    service.update_daily_prices_authoritative_view(
                         target_date=target_date.isoformat(),
                         requested_by=requested_by,
                     ),
                 )
             except Exception as exc:
-                tencent_update = {
+                authoritative_update = {
                     "status": "failed",
-                    "message": "tencent_update_failed",
+                    "message": "authoritative_update_failed",
                     "error": str(exc),
                 }
 
@@ -191,7 +191,7 @@ class DataControlPipeline:
             "requested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "status": status,
             "message": message,
-            "tencent_update": tencent_update,
+                    "authoritative_update": authoritative_update,
             "target_day_check": target_day_check,
             "units_validation": validation,
             "units_validation_before": validation_before,

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.neotrade3.frontend_gateway</string>
+
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}/neotrade3-dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>{{NODE_BIN}}</string>
+      <string>{{PROJECT_ROOT}}/neotrade3-dashboard/server/gateway.js</string>
+      <string>--host</string>
+      <string>127.0.0.1</string>
+      <string>--port</string>
+      <string>5174</string>
+      <string>--api-base</string>
+      <string>http://127.0.0.1:18030</string>
+      <string>--dist-dir</string>
+      <string>{{PROJECT_ROOT}}/neotrade3-dashboard/dist</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>DASHBOARD_PASSWORD</key>
+      <string>{{DASHBOARD_PASSWORD}}</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/var/log/neotrade3_frontend_gateway.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/var/log/neotrade3_frontend_gateway.err.log</string>
+  </dict>
+</plist>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -121,7 +122,18 @@ class IssueCenterCollector:
 
         # Categorize by error message patterns
         message = (case.summary or "").lower()
-        if "database" in message or "db" in message or "sqlite" in message:
+        has_db_error = (
+            "database" in message
+            or "sqlite" in message
+            or re.search(r"\bdb\b", message) is not None
+        )
+        has_path_error = (
+            "file not found" in message
+            or "no such file" in message
+            or "directory not found" in message
+            or "invalid path" in message
+        )
+        if has_db_error:
             cause_category = "data"
             primary_cause = "数据库访问失败"
         elif "config" in message or "configuration" in message or "registry" in message:
@@ -130,7 +142,7 @@ class IssueCenterCollector:
         elif "not implemented" in message or "placeholder" in message or "todo" in message:
             cause_category = "implementation"
             primary_cause = "功能尚未实现"
-        elif "file not found" in message or "path" in message or "directory" in message:
+        elif has_path_error:
             cause_category = "environment"
             primary_cause = "文件系统或路径问题"
         elif "timeout" in message or "lock" in message:
@@ -165,7 +177,7 @@ class IssueCenterCollector:
             return DegradationInfo(is_degradation=False)
 
         current_value = 0.0  # Failed/skipped = 0
-        if case.status == "succeeded":
+        if self._is_success_status(case.status):
             current_value = 1.0
 
         baseline_value = baseline.get("success_rate", 0.5)
@@ -194,7 +206,7 @@ class IssueCenterCollector:
             baseline_date = target_date - timedelta(days=days_back)
             ledger_path = (
                 self.project_root
-                / "var/ledgers/bootstrap_runs"
+                / "var/artifacts/bootstrap_runs"
                 / baseline_date.isoformat()
                 / "bootstrap_run_summary.json"
             )
@@ -207,7 +219,7 @@ class IssueCenterCollector:
                 for tr in task_results:
                     if tr.get("task_id") == task_id:
                         status = tr.get("status", "")
-                        success = 1.0 if status == "succeeded" else 0.0
+                        success = 1.0 if self._is_success_status(status) else 0.0
                         return {
                             "date": baseline_date,
                             "success_rate": success,
@@ -309,3 +321,7 @@ class IssueCenterCollector:
         if status == RunStatus.PENDING_IMPLEMENTATION:
             return IssueSeverity.INFO
         return None
+
+    @staticmethod
+    def _is_success_status(status: object) -> bool:
+        return str(status).strip().lower() in {"ok", "succeeded"}

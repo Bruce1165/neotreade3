@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-15",
+  "items": [
+    {
+      "stock_code": "000338",
+      "marker": "boundary_recovered_candidate",
+      "note": "边界样本：因补齐渗透率标注后恢复为推荐，需人工重点复核主题集中度。"
+    },
+    {
+      "stock_code": "002202",
+      "marker": "boundary_recovered_candidate",
+      "note": "边界样本：当前以东数西算(算力)恢复为推荐，但主题集中度仍需人工重点复核。"
+    }
+  ]
+}

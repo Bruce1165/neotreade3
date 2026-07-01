@@ -25,15 +25,15 @@ apps/api/
 ### 启动新版模块化服务
 
 ```bash
-cd /sessions/6a114a44ee100de4314469d7/workspace/NeoTrade3
-python -m apps.api.main_modular --port 18031
+cd /Users/mac/NeoTrade3
+./.venv/bin/python -m apps.api.main_modular --port 18031
 ```
 
 ### 启动原版服务（保持不变）
 
 ```bash
-cd /sessions/6a114a44ee100de4314469d7/workspace/NeoTrade3
-python -m apps.api.main --port 18030
+cd /Users/mac/NeoTrade3
+./.venv/bin/python -m apps.api.main --port 18030
 ```
 
 ## 对比

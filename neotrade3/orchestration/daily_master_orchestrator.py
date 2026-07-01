@@ -148,42 +148,61 @@ class DailyMasterOrchestrator:
         for task in plan.planned_tasks:
             # Handle pre-determined statuses
             if task.status == RunStatus.SKIPPED:
-                results.append(
-                    TaskResult(
-                        task_id=task.task_id,
-                        phase=task.phase,
-                        status=RunStatus.SKIPPED,
-                        lab_id=task.lab_id,
-                        message=task.skip_reason or "skipped",
-                    )
+                skipped_result = TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.SKIPPED,
+                    lab_id=task.lab_id,
+                    message=task.skip_reason or "skipped",
                 )
+                results.append(skipped_result)
+                completed_tasks[task.task_id] = skipped_result
                 continue
 
             if task.status == RunStatus.BLOCKED:
-                results.append(
-                    TaskResult(
-                        task_id=task.task_id,
-                        phase=task.phase,
-                        status=RunStatus.BLOCKED,
-                        lab_id=task.lab_id,
-                        message=task.skip_reason or "blocked",
-                    )
+                blocked_result = TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.BLOCKED,
+                    lab_id=task.lab_id,
+                    message=task.skip_reason or "blocked",
                 )
+                results.append(blocked_result)
+                completed_tasks[task.task_id] = blocked_result
                 continue
 
             # Check dependencies
-            dep_results = [completed_tasks[dep] for dep in task.depends_on if dep in completed_tasks]
-            failed_deps = [r for r in dep_results if r.status == RunStatus.FAILED]
-            if failed_deps:
-                results.append(
-                    TaskResult(
-                        task_id=task.task_id,
-                        phase=task.phase,
-                        status=RunStatus.BLOCKED,
-                        lab_id=task.lab_id,
-                        message=f"blocked by failed dependencies: {[d.task_id for d in failed_deps]}",
-                    )
+            missing_deps = [dep for dep in task.depends_on if dep not in completed_tasks]
+            if missing_deps:
+                blocked_result = TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.BLOCKED,
+                    lab_id=task.lab_id,
+                    message=(
+                        "blocked by incomplete dependencies: "
+                        f"{missing_deps}"
+                    ),
                 )
+                results.append(blocked_result)
+                completed_tasks[task.task_id] = blocked_result
+                continue
+
+            dep_results = [completed_tasks[dep] for dep in task.depends_on]
+            non_ok_deps = [r for r in dep_results if r.status != RunStatus.OK]
+            if non_ok_deps:
+                blocked_result = TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.BLOCKED,
+                    lab_id=task.lab_id,
+                    message=(
+                        "blocked by non-ok dependencies: "
+                        f"{[d.task_id for d in non_ok_deps]}"
+                    ),
+                )
+                results.append(blocked_result)
+                completed_tasks[task.task_id] = blocked_result
                 continue
 
             # Find and execute

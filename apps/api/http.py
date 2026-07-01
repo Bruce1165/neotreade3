@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Optional, TYPE_CHECKING
@@ -10,6 +12,8 @@ from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
     from apps.api.service import BootstrapApiService
+
+logger = logging.getLogger(__name__)
 
 
 def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler]:
@@ -19,6 +23,16 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
     router = BootstrapApiRouter(service)
 
     class RequestHandler(BaseHTTPRequestHandler):
+        def _log_request_result(self, method: str, status: int, started_at: float) -> None:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            logger.warning(
+                "API %s %s -> %s in %.1fms",
+                method,
+                self.path,
+                int(status),
+                elapsed_ms,
+            )
+
         def _is_loopback_client(self) -> bool:
             try:
                 ip = str(self.client_address[0] or "").strip()
@@ -132,24 +146,28 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
+            started_at = time.perf_counter()
             try:
                 if self._wants_debug_access():
                     self._require_api_key(allow_if_not_configured=False, allow_loopback=False)
                 status, payload = router.dispatch(self.path)
             except Exception as exc:
                 status, payload = format_api_error(exc)
+            self._log_request_result("GET", int(status), started_at)
             if isinstance(payload, ApiBinaryResponse):
                 self._send_binary_response(int(status), payload)
             else:
                 self._send_json_response(int(status), payload)
 
         def do_HEAD(self) -> None:  # noqa: N802
+            started_at = time.perf_counter()
             try:
                 if self._wants_debug_access():
                     self._require_api_key(allow_if_not_configured=False, allow_loopback=False)
                 status, payload = router.dispatch(self.path)
             except Exception as exc:
                 status, payload = format_api_error(exc)
+            self._log_request_result("HEAD", int(status), started_at)
             if isinstance(payload, ApiBinaryResponse):
                 self._send_binary_headers(int(status), payload)
             else:
@@ -167,6 +185,7 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
             self.end_headers()
 
         def do_POST(self) -> None:  # noqa: N802
+            started_at = time.perf_counter()
             try:
                 self._require_api_key(allow_if_not_configured=False)
                 content_length = int(self.headers.get("Content-Length", "0"))
@@ -182,6 +201,7 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
             except Exception as exc:
                 status, response_payload = format_api_error(exc)
 
+            self._log_request_result("POST", int(status), started_at)
             self._send_json_response(int(status), response_payload)
 
         def log_message(self, format: str, *args: object) -> None:

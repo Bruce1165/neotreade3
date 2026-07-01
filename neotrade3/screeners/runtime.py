@@ -36,6 +36,7 @@ def run_daily_hot_cold(
     trace_code = str(raw_trace_code or "").strip().split(".", 1)[0]
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -43,6 +44,14 @@ def run_daily_hot_cold(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     raw_top_n = params.get("top_n", 50)
     try:
@@ -183,20 +192,21 @@ def run_daily_hot_cold(
             "has_pct_change": has_pct_change,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": target_date.isoformat(),
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -246,7 +256,8 @@ def run_daily_hot_cold(
                 )
             continue
 
-        if min_market_cap is not None:
+        cap_f: float | None = None
+        if use_market_cap_filter:
             if market_cap is None:
                 reject_count += 1
                 if trace_code and code_str == trace_code:
@@ -257,6 +268,7 @@ def run_daily_hot_cold(
                             "code": code_str,
                             "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 if len(rejected_examples) < 5:
@@ -265,6 +277,7 @@ def run_daily_hot_cold(
                             "code": code_str,
                             "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
@@ -291,7 +304,7 @@ def run_daily_hot_cold(
                         }
                     )
                 continue
-            if cap_f < min_market_cap:
+            if min_market_cap is not None and cap_f < min_market_cap:
                 reject_count += 1
                 if trace_code and code_str == trace_code:
                     trace_target.append(
@@ -314,6 +327,29 @@ def run_daily_hot_cold(
                         }
                     )
                 continue
+            if max_market_cap is not None and cap_f > max_market_cap:
+                reject_count += 1
+                if trace_code and code_str == trace_code:
+                    trace_target.append(
+                        {
+                            "step": "market_cap",
+                            "ok": False,
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap_f,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
+                    )
+                if len(rejected_examples) < 5:
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap_f,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
+                    )
+                continue
 
         passed.append(
             {
@@ -321,7 +357,7 @@ def run_daily_hot_cold(
                 "name": name_str,
                 "pct_change": pct_f,
                 "amount_yuan": amount_f,
-                "market_cap_yuan": cap_f if min_market_cap is not None else None,
+                "market_cap_yuan": cap_f if use_market_cap_filter else None,
             }
         )
         if trace_code and code_str == trace_code:
@@ -332,7 +368,7 @@ def run_daily_hot_cold(
                     "code": code_str,
                     "pct_change": pct_f,
                     "amount_yuan": amount_f,
-                    "market_cap_yuan": cap_f if min_market_cap is not None else None,
+                    "market_cap_yuan": cap_f if use_market_cap_filter else None,
                 }
             )
 
@@ -343,6 +379,7 @@ def run_daily_hot_cold(
             "passed_count": len(passed),
             "rejected_count": reject_count,
             "min_market_cap_yuan": min_market_cap,
+            "max_market_cap_yuan": max_market_cap,
             "min_amount_yi": min_amount_yi,
             "min_amount_yuan": min_amount_yuan,
             "hot_pct_threshold": hot_pct_threshold,
@@ -495,6 +532,7 @@ def run_er_ban_hui_tiao(
     trace_code = str(raw_trace_code or "").strip().split(".", 1)[0]
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -502,6 +540,14 @@ def run_er_ban_hui_tiao(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     raw_limit_days = params.get("limit_days", 14)
     try:
@@ -767,20 +813,21 @@ def run_er_ban_hui_tiao(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -860,7 +907,7 @@ def run_er_ban_hui_tiao(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
@@ -872,10 +919,22 @@ def run_er_ban_hui_tiao(
                             "code": code_str,
                             "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
-            if not isinstance(cap, float) or cap < min_market_cap:
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "invalid_market_cap",
+                            "value": cap,
+                        }
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
@@ -884,6 +943,18 @@ def run_er_ban_hui_tiao(
                             "reason": "market_cap_below_threshold",
                             "market_cap_yuan": cap,
                             "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
@@ -1073,6 +1144,7 @@ def run_zhang_ting_bei_liang_yin(
 
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -1080,6 +1152,14 @@ def run_zhang_ting_bei_liang_yin(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     raw_limit_days = params.get("limit_days", 14)
     try:
@@ -1368,20 +1448,21 @@ def run_zhang_ting_bei_liang_yin(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -1461,7 +1542,7 @@ def run_zhang_ting_bei_liang_yin(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
@@ -1473,10 +1554,22 @@ def run_zhang_ting_bei_liang_yin(
                             "code": code_str,
                             "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
-            if not isinstance(cap, float) or cap < min_market_cap:
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "invalid_market_cap",
+                            "value": cap,
+                        }
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
@@ -1485,6 +1578,18 @@ def run_zhang_ting_bei_liang_yin(
                             "reason": "market_cap_below_threshold",
                             "market_cap_yuan": cap,
                             "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
@@ -1669,6 +1774,7 @@ def run_jin_feng_huang(
 
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -1676,6 +1782,14 @@ def run_jin_feng_huang(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     raw_limit_days = params.get("limit_days", 14)
     try:
@@ -1958,20 +2072,21 @@ def run_jin_feng_huang(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -2054,7 +2169,7 @@ def run_jin_feng_huang(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
@@ -2066,10 +2181,22 @@ def run_jin_feng_huang(
                             "code": code_str,
                             "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
-            if not isinstance(cap, float) or cap < min_market_cap:
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "invalid_market_cap",
+                            "value": cap,
+                        }
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
@@ -2078,6 +2205,18 @@ def run_jin_feng_huang(
                             "reason": "market_cap_below_threshold",
                             "market_cap_yuan": cap,
                             "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue
@@ -2249,6 +2388,7 @@ def run_yin_feng_huang(
 
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -2256,6 +2396,14 @@ def run_yin_feng_huang(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     raw_limit_days = params.get("limit_days", 14)
     try:
@@ -2533,20 +2681,21 @@ def run_yin_feng_huang(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -2630,15 +2779,51 @@ def run_yin_feng_huang(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
-            if cap is None or not isinstance(cap, float) or cap < min_market_cap:
+            if cap is None:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
-                        {"code": code_str, "reason": "market_cap_filter"}
+                        {
+                            "code": code_str,
+                            "reason": "missing_market_cap",
+                            "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
+                    )
+                continue
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {"code": code_str, "reason": "invalid_market_cap", "value": cap}
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_below_threshold",
+                            "market_cap_yuan": cap,
+                            "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
                     )
                 continue
 
@@ -2808,6 +2993,7 @@ def run_shi_pan_xian(
 
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -2815,6 +3001,14 @@ def run_shi_pan_xian(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     def _get_int(key: str, default: int) -> int:
         raw = params.get(key, default)
@@ -3088,20 +3282,21 @@ def run_shi_pan_xian(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -3322,15 +3517,51 @@ def run_shi_pan_xian(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
-            if cap is None or not isinstance(cap, float) or cap < min_market_cap:
+            if cap is None:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
-                        {"code": code_str, "reason": "market_cap_filter"}
+                        {
+                            "code": code_str,
+                            "reason": "missing_market_cap",
+                            "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
+                    )
+                continue
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {"code": code_str, "reason": "invalid_market_cap", "value": cap}
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_below_threshold",
+                            "market_cap_yuan": cap,
+                            "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
                     )
                 continue
 
@@ -3457,6 +3688,7 @@ def run_cup_handle_v4(
 
     universe_filters = params.get("universe_filters")
     min_market_cap = None
+    max_market_cap = None
     if isinstance(universe_filters, dict):
         raw_min_market_cap = universe_filters.get("min_market_cap")
         if raw_min_market_cap is not None:
@@ -3464,6 +3696,14 @@ def run_cup_handle_v4(
                 min_market_cap = float(raw_min_market_cap)
             except (TypeError, ValueError):
                 min_market_cap = None
+        raw_max_market_cap = universe_filters.get("max_market_cap")
+        if raw_max_market_cap is not None:
+            try:
+                max_market_cap = float(raw_max_market_cap)
+            except (TypeError, ValueError):
+                max_market_cap = None
+
+    use_market_cap_filter = (min_market_cap is not None) or (max_market_cap is not None)
 
     def _get_int(key: str, default: int) -> int:
         raw = params.get(key, default)
@@ -3752,20 +3992,21 @@ def run_cup_handle_v4(
             "has_market_cap": has_market_cap,
         }
     )
-    if min_market_cap is not None and not has_market_cap:
+    if use_market_cap_filter and not has_market_cap:
         decision_trace.append(
             {
                 "step": "validate_schema",
                 "status": "failed",
-                "reason": "market_cap column unavailable; cannot apply min_market_cap",
+                "reason": "market_cap column unavailable; cannot apply market_cap filters",
                 "min_market_cap_yuan": min_market_cap,
+                "max_market_cap_yuan": max_market_cap,
             }
         )
         return {
             "screener_id": screener_id,
             "target_date": day_key,
             "status": "failed",
-            "message": "market cap unavailable; cannot apply min_market_cap filter",
+            "message": "market cap unavailable; cannot apply market_cap filters",
             "parameters": params,
             "picks": [],
             "decision_trace": decision_trace,
@@ -4148,18 +4389,50 @@ def run_cup_handle_v4(
                 )
             continue
 
-        if min_market_cap is not None:
+        if use_market_cap_filter:
             cap = (
                 series.get(day_key, {}).get("market_cap") if day_key in series else None
             )
-            if cap is None or not isinstance(cap, float) or cap < min_market_cap:
+            if cap is None:
                 reject_count += 1
                 if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
                     rejected_examples.append(
                         {
                             "code": code_str,
-                            "reason": "market_cap_filter",
+                            "reason": "missing_market_cap",
                             "min_market_cap_yuan": min_market_cap,
+                            "max_market_cap_yuan": max_market_cap,
+                        }
+                    )
+                continue
+            if not isinstance(cap, float):
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {"code": code_str, "reason": "invalid_market_cap", "value": cap}
+                    )
+                continue
+            if min_market_cap is not None and cap < min_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_below_threshold",
+                            "market_cap_yuan": cap,
+                            "min_market_cap_yuan": min_market_cap,
+                        }
+                    )
+                continue
+            if max_market_cap is not None and cap > max_market_cap:
+                reject_count += 1
+                if len(rejected_examples) < 5 or (trace_code and code_str == trace_code):
+                    rejected_examples.append(
+                        {
+                            "code": code_str,
+                            "reason": "market_cap_above_threshold",
+                            "market_cap_yuan": cap,
+                            "max_market_cap_yuan": max_market_cap,
                         }
                     )
                 continue

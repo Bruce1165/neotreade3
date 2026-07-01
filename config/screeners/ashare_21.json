@@ -16,6 +16,16 @@
             "description": "最小流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
             "x_unit": "yuan",
             "x_group": "股票池过滤"
+          },
+          "max_market_cap": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "x_display_name": "最大流通市值阈值",
+            "description": "最大流通市值阈值，单位：元（与行情库 stocks.circulating_market_cap 一致）。",
+            "x_unit": "yuan",
+            "x_group": "股票池过滤"
           }
         }
       }
@@ -23,7 +33,8 @@
   },
   "default_parameters": {
     "universe_filters": {
-      "min_market_cap": null
+      "min_market_cap": 20000000000.0,
+      "max_market_cap": 50000000000.0
     }
   },
   "current_parameters": {}

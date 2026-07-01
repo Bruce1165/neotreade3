@@ -6,6 +6,7 @@ requests>=2.31.0
 black>=24.0.0
 bandit>=1.7.0
 mypy>=1.8.0
+pytest>=8.0.0
 ruff>=0.6.0
 
 [ml]

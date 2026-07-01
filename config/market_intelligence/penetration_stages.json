@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-15",
+  "items": [
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "人形机器人",
+      "penetration_stage": "0_1",
+      "reason": "用户已确认：人形机器人精密制造链按 0-1 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "商业航天",
+      "penetration_stage": "0_1",
+      "reason": "用户已确认：商业航天按 0-1 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "低空经济",
+      "penetration_stage": "0_1",
+      "reason": "用户已确认：低空经济按 0-1 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "国产算力",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：国产算力底座按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "创新药",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：创新药按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "医疗器械",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：高端医疗器械按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "新材料",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：高端工业新材料按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "东数西算(算力)",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：算力基础设施相关主题第一版按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "数据中心",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：算力基础设施相关主题第一版按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "算力租赁",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：算力基础设施相关主题第一版按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "液冷服务器",
+      "penetration_stage": "1_10",
+      "reason": "用户已确认：算力基础设施相关主题第一版按 1-10 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "光模块",
+      "penetration_stage": "10_30",
+      "reason": "用户已确认：AI 海外链科技制造补充赛道可按 10-30 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "芯片",
+      "penetration_stage": "10_30",
+      "reason": "用户已确认：AI 相关半导体补充赛道可按 10-30 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "半导体",
+      "penetration_stage": "10_30",
+      "reason": "用户已确认：AI 相关半导体补充赛道可按 10-30 阶段处理。"
+    },
+    {
+      "scope": "theme",
+      "match_type": "keyword",
+      "match_value": "先进封装",
+      "penetration_stage": "10_30",
+      "reason": "用户已确认：AI 相关科技制造补充赛道可按 10-30 阶段处理。"
+    }
+  ]
+}

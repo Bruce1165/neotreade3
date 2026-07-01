@@ -38,7 +38,14 @@ fi
 
 PROJECT_DIR="$(cd "${PROJECT_DIR}" && pwd)"
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+DEFAULT_PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-${DEFAULT_PYTHON_BIN}}"
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Python interpreter not found or not executable: ${PYTHON_BIN}" >&2
+  echo "Use PROJECT_ROOT/.venv/bin/python (Python 3.10.x)." >&2
+  exit 2
+fi
 
 if [[ "${FOREGROUND}" == "1" ]]; then
   exec "${PYTHON_BIN}" "${PROJECT_DIR}/scripts/brainstorm_server.py" \
@@ -76,7 +83,7 @@ done
 
 if [[ -z "${session_dir}" ]]; then
   echo "{\"type\":\"server-started\",\"error\":\"server-info not found\"}"
-  exit 0
+  exit 1
 fi
 
 cat "${session_dir}/state/server-info"

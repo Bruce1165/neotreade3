@@ -21,6 +21,46 @@
       "stage_support": ["capture", "compose", "publish"],
       "official_write_allowed": false,
       "notes": "Used for placeholder candidate and ledger scaffolding during bootstrap; not an official production data store."
+    },
+    {
+      "source_id": "tushare_company_announcements",
+      "display_name": "Tushare Company Announcements",
+      "source_type": "remote_api",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture"],
+      "official_write_allowed": false,
+      "notes": "Paid Tushare anns_d endpoint for system-wide company announcement capture and later downstream normalization."
+    },
+    {
+      "source_id": "tushare_policy_repository",
+      "display_name": "Tushare National Policy Repository",
+      "source_type": "remote_api",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture"],
+      "official_write_allowed": false,
+      "notes": "Paid Tushare npr endpoint for policy and regulation capture used by sector-board and policy-context reasoning."
+    },
+    {
+      "source_id": "tushare_research_intelligence",
+      "display_name": "Tushare Research Intelligence",
+      "source_type": "remote_api",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture"],
+      "official_write_allowed": false,
+      "notes": "Paid Tushare research_report, report_rc, and stk_surv endpoints for broker research, forecast, and institutional-attention capture."
+    },
+    {
+      "source_id": "tushare_etf_intelligence",
+      "display_name": "Tushare ETF Intelligence",
+      "source_type": "remote_api",
+      "enabled": true,
+      "owner": "neotrade3_bootstrap",
+      "stage_support": ["capture"],
+      "official_write_allowed": false,
+      "notes": "Paid Tushare ETF endpoints including etf_basic, fund_daily, rt_etf_k, etf_share_size, etf_index, index_weight, and fund_portfolio."
     }
   ]
 }
