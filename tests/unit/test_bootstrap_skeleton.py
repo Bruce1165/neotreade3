@@ -793,6 +793,31 @@ def test_bootstrap_worker_writes_summary_artifact_with_orchestration_excerpt(
     assert payload["orchestration"]["task_results"] == snapshot["orchestration"]["task_results"]
 
 
+def test_bootstrap_worker_uses_execution_status_in_orchestration_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
+    _install_fast_lab_runtime(monkeypatch, app)
+
+    snapshot = app.run(
+        target_date=date(2026, 5, 19),
+        publish_succeeded=False,
+        write_outputs=False,
+    )
+
+    assert snapshot["orchestration"]["run_ledger"]["status"] != "planned"
+    task_status_by_id = {
+        item["task_id"]: item["status"]
+        for item in snapshot["orchestration"]["task_results"]
+    }
+    ledger_status_by_id = {
+        item["task_id"]: item["status"]
+        for item in snapshot["orchestration"]["task_ledger"]
+    }
+
+    assert task_status_by_id == ledger_status_by_id
+
+
 def test_bootstrap_api_service_and_router_expose_read_only_snapshot() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)
@@ -3070,6 +3095,7 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["_meta"]["status"] == "ok"
             assert payload["lab_run"]["lab_id"] == "cup_handle_lab"
+            assert payload["lab_run"]["status"] == "pending_implementation"
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/labs/runs?date=2026-05-19&limit=10"

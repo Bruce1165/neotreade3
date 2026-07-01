@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Simple server for NeoTrade3 Dashboard with API proxy."""
+"""Deprecated dashboard server kept only as a historical reference.
+
+The official V3 external release path is now:
+cpolar -> Node frontend gateway -> dist/ + API proxy.
+Do not extend this Python server as the formal release carrier.
+"""
 
 import http.server
 import http.client

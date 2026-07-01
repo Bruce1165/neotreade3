@@ -10,6 +10,7 @@ Lab Design Decisions (V3):
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ from typing import Any
 
 from neotrade3.analysis.resonance_scorer import ResonanceScorer
 from neotrade3.analysis.stock_tiering import StockTieringAnalyzer, StockTier
+
+logger = logging.getLogger(__name__)
 
 
 class LabRuntimeAdapter:
@@ -164,6 +167,7 @@ class LabRuntimeAdapter:
         db_path = project_root / "var" / "db" / "stock_data.db"
         tiering_result = None
         tier_map: dict[str, str] = {}
+        degraded_steps: list[str] = []
         if db_path.exists() and codes:
             try:
                 target_date_obj = datetime.strptime(target_date, "%Y-%m-%d").date()
@@ -175,8 +179,14 @@ class LabRuntimeAdapter:
                 )
                 for stock in tiering_result.all_tiered_stocks:
                     tier_map[stock.code] = stock.tier.value
-            except Exception:
-                pass  # Tiering is best-effort
+            except Exception as exc:
+                logger.warning(
+                    "cup_handle_lab tiering degraded: target_date=%s codes=%s error=%s",
+                    target_date,
+                    len(codes),
+                    exc,
+                )
+                degraded_steps.append("stock_tiering")
 
         # Step 4: Apply resonance scoring
         resonance_results: dict[str, dict[str, Any]] = {}
@@ -193,8 +203,14 @@ class LabRuntimeAdapter:
                         "capital": r.sub_scores.capital,
                         "policy": r.sub_scores.policy,
                     }
-            except Exception:
-                pass  # Resonance scoring is best-effort
+            except Exception as exc:
+                logger.warning(
+                    "cup_handle_lab resonance degraded: target_date=%s codes=%s error=%s",
+                    target_date,
+                    len(codes),
+                    exc,
+                )
+                degraded_steps.append("resonance_scoring")
 
         # Step 5: Filter and enrich candidates
         filtered_candidates: list[dict[str, Any]] = []
@@ -254,6 +270,8 @@ class LabRuntimeAdapter:
             "candidates": filtered_candidates[:20],
             "tier_distribution": tier_counts,
             "analysis_version": "v2_enhanced",
+            "degraded": bool(degraded_steps),
+            "degraded_steps": degraded_steps,
             "filter_applied": {
                 "include_followers": include_followers,
                 "min_resonance_score": min_resonance_score,
@@ -290,6 +308,7 @@ class LabRuntimeAdapter:
 
         high_certainty_candidates: list[dict[str, Any]] = []
         market_context: dict[str, Any] = {}
+        degraded_steps: list[str] = []
 
         if factor_matrix_path.exists():
             try:
@@ -308,7 +327,12 @@ class LabRuntimeAdapter:
                                 "factor_summary": c.get("factor_summary", {}),
                             })
             except (OSError, json.JSONDecodeError):
-                pass
+                logger.warning(
+                    "quant_trading_lab factor matrix cache degraded: target_date=%s path=%s",
+                    target_date,
+                    factor_matrix_path,
+                )
+                degraded_steps.append("factor_matrix_cache")
 
         # 如果没有缓存，实时生成因子矩阵
         if not high_certainty_candidates and db_path.exists():
@@ -329,8 +353,13 @@ class LabRuntimeAdapter:
                             "subscores": c["subscores"],
                             "factor_summary": c.get("factor_summary", {}),
                         })
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "quant_trading_lab factor matrix build degraded: target_date=%s error=%s",
+                    target_date,
+                    exc,
+                )
+                degraded_steps.append("factor_matrix_build")
 
         # Step 2: 使用 SignalGenerator 生成交易信号
         trading_signals: list[dict[str, Any]] = []
@@ -409,11 +438,15 @@ class LabRuntimeAdapter:
                                 "wave_detail": wave_dim.detail if hasattr(wave_dim, "detail") else str(wave_dim),
                             })
 
-            except Exception as e:
-                # 信号生成失败不影响返回候选列表
-                import traceback
-                market_context["signal_generation_error"] = str(e)
-                market_context["signal_generation_traceback"] = traceback.format_exc()
+            except Exception as exc:
+                logger.warning(
+                    "quant_trading_lab signal generation degraded: target_date=%s candidates=%s error=%s",
+                    target_date,
+                    len(high_certainty_candidates),
+                    exc,
+                )
+                market_context["signal_generation_error"] = str(exc)
+                degraded_steps.append("signal_generation")
 
         # Step 3: 按等级统计
         grade_counts = {"A": 0, "B": 0, "C": 0}
@@ -442,6 +475,8 @@ class LabRuntimeAdapter:
             "wave_signals": wave_signals[:10],
             "grade_distribution": grade_counts,
             "analysis_version": "v2_enhanced",
+            "degraded": bool(degraded_steps),
+            "degraded_steps": degraded_steps,
             "notes": [
                 "V2 增强版：集成 SignalGenerator 生成 A/B/C 等级交易信号",
                 "包含：三维共振评分 + 艾略特波浪识别 + 板块轮动 + 个股分层",

@@ -16,8 +16,13 @@ from neotrade3.data_control import DataControlPipeline
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
 from neotrade3.labs.runtime import LabRuntimeAdapter
-from neotrade3.orchestration import DailyMasterOrchestrator, DailyRunRequest
-from neotrade3.orchestration.models import OrchestrationPhase, PlannedTask, RunStatus, TaskResult
+from neotrade3.orchestration import (
+    DailyMasterOrchestrator,
+    DailyRunRequest,
+    OrchestratorRunLedgerEntry,
+    OrchestratorTaskLedgerEntry,
+)
+from neotrade3.orchestration.models import DailyRunPlan, OrchestrationPhase, PlannedTask, RunStatus, TaskResult
 
 
 class BootstrapWorkerApp:
@@ -126,6 +131,8 @@ class BootstrapWorkerApp:
                     task_status = RunStatus.OK
                 elif raw_status == "skipped":
                     task_status = RunStatus.SKIPPED
+                elif raw_status == RunStatus.PENDING_IMPLEMENTATION.value:
+                    task_status = RunStatus.PENDING_IMPLEMENTATION
                 else:
                     task_status = RunStatus.FAILED
                 return TaskResult(
@@ -354,8 +361,10 @@ class BootstrapWorkerApp:
         )
         effective_publish_succeeded = self._effective_publish_succeeded(task_results)
 
-        run_entry, task_entries = orchestrator.build_placeholder_run_ledger(
-            execution_run_plan
+        run_entry, task_entries = self._build_execution_run_ledger(
+            target_date=target_date,
+            execution_run_plan=execution_run_plan,
+            task_results=task_results,
         )
         issue_snapshot = issue_center.collect(target_date, task_results, task_entries)
         learning_snapshot = learning.build_snapshot(
@@ -396,6 +405,62 @@ class BootstrapWorkerApp:
             self.write_outputs(target_date, snapshot)
 
         return snapshot
+
+    def _build_execution_run_ledger(
+        self,
+        *,
+        target_date: date,
+        execution_run_plan: DailyRunPlan,
+        task_results: list[TaskResult],
+    ) -> tuple[OrchestratorRunLedgerEntry, list[OrchestratorTaskLedgerEntry]]:
+        result_by_task = {result.task_id: result for result in task_results}
+        task_statuses = [result.status for result in task_results]
+        if any(status == RunStatus.FAILED for status in task_statuses):
+            run_status = RunStatus.FAILED
+        elif any(status == RunStatus.BLOCKED for status in task_statuses):
+            run_status = RunStatus.BLOCKED
+        elif any(status == RunStatus.SKIPPED for status in task_statuses):
+            run_status = RunStatus.SKIPPED
+        elif any(status == RunStatus.PENDING_IMPLEMENTATION for status in task_statuses):
+            run_status = RunStatus.PENDING_IMPLEMENTATION
+        else:
+            run_status = RunStatus.OK
+
+        run_entry = OrchestratorRunLedgerEntry(
+            orchestrator_run_id=f"exec:{target_date.isoformat()}",
+            target_date=target_date.isoformat(),
+            status=run_status,
+            phase_count=len(execution_run_plan.phases),
+            task_count=len(execution_run_plan.planned_tasks),
+            blocked_task_count=sum(
+                1 for status in task_statuses if status == RunStatus.BLOCKED
+            ),
+            skipped_task_count=sum(
+                1 for status in task_statuses if status == RunStatus.SKIPPED
+            ),
+            created_at=datetime.now().isoformat(),
+        )
+        task_entries = [
+            OrchestratorTaskLedgerEntry(
+                orchestrator_run_id=run_entry.orchestrator_run_id,
+                task_id=task.task_id,
+                phase=task.phase.value,
+                lab_id=task.lab_id,
+                status=(
+                    result_by_task[task.task_id].status
+                    if task.task_id in result_by_task
+                    else task.status
+                ),
+                dependency_refs=task.depends_on,
+                issue_summary=(
+                    result_by_task[task.task_id].message
+                    if task.task_id in result_by_task
+                    else task.skip_reason
+                ),
+            )
+            for task in execution_run_plan.planned_tasks
+        ]
+        return run_entry, task_entries
 
     def _load_data_control_stage_summary(self, target_date: date) -> dict[str, object]:
         date_key = target_date.isoformat()

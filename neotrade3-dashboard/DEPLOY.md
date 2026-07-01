@@ -1,8 +1,21 @@
 # NeoTrade3 Dashboard - Deployment Guide
 
-## Flask + Cpolar Integration
+## Official V3 Release Path
 
-### 1. Build the Dashboard
+当前正式发布方式不再使用 Flask 承载页面。  
+正式链路为：
+
+- `cpolar -> Node 前端网关 -> neotrade3-dashboard/dist`
+- `Node 前端网关 -> /api/* 或 /healthz -> 127.0.0.1:18030`
+
+其中：
+
+- `apps/api/main.py` 提供 API，默认监听 `127.0.0.1:18030`
+- `server/gateway.js` 提供前端静态资源与同域代理，默认监听 `127.0.0.1:5174`
+- 正式外网入口统一由 `server/gateway.js` 承担 `HTTP Basic Auth`
+- `DASHBOARD_PASSWORD` 是前端网关启动硬前提，缺失时必须启动失败
+
+## 1. Build Dashboard Assets
 
 ```bash
 cd neotrade3-dashboard
@@ -10,115 +23,125 @@ npm install
 npm run build
 ```
 
-The built files will be in the `dist/` directory.
+构建产物输出到 `dist/`。
 
-### 2. Flask Integration
+## 2. Start The Frontend Gateway
 
-Copy the `dist/` folder contents to your Flask static folder:
-
-```python
-# Flask app structure
-app/
-├── static/
-│   ├── index.html          # Copy from dist/
-│   ├── assets/             # Copy from dist/assets/
-│   └── ...
-├── templates/
-└── app.py
-```
-
-### 3. Flask Routes
-
-```python
-from flask import Flask, send_from_directory, jsonify
-import os
-
-app = Flask(__name__, static_folder='static')
-
-# Serve the dashboard
-@app.route('/')
-def index():
-    return send_from_directory('static', 'index.html')
-
-# Serve static assets
-@app.route('/<path:path>')
-def serve_static(path):
-    if os.path.exists(os.path.join('static', path)):
-        return send_from_directory('static', path)
-    return send_from_directory('static', 'index.html')
-
-# API proxy to NeoTrade3 API
-@app.route('/api/<path:path>')
-def proxy_api(path):
-    import requests
-    api_url = f'http://127.0.0.1:18030/api/{path}'
-    response = requests.get(api_url, params=request.args)
-    return jsonify(response.json()), response.status_code
-```
-
-### 4. Cpolar Configuration
+本机前端网关入口：
 
 ```bash
-# Install cpolar
-curl -L https://www.cpolar.com/static/downloads/install-release-cpolar.sh | sudo bash
-
-# Authenticate
-cpolar authtoken <your_token>
-
-# Create tunnel
-cpolar http 5000
+cd neotrade3-dashboard
+DASHBOARD_PASSWORD='your-dashboard-password' node server/gateway.js \
+  --host 127.0.0.1 \
+  --port 5174 \
+  --api-base http://127.0.0.1:18030 \
+  --dist-dir /Users/mac/NeoTrade3/neotrade3-dashboard/dist
 ```
 
-### 5. Environment Variables
+也可以直接使用：
 
-Create a `.env` file in your Flask app:
-
-```
-NEOTRADE3_API_URL=http://127.0.0.1:18030
-FLASK_ENV=production
-FLASK_PORT=5000
-```
-
-### 6. Production Build Notes
-
-- The dashboard is built as a Single Page Application (SPA)
-- All routes are handled by React Router
-- Flask must serve `index.html` for all non-API routes
-- API calls are proxied to the NeoTrade3 API server
-
-### 7. API Configuration
-
-The dashboard expects the API at `/api` path. In production, you can configure this via environment variable:
-
-```javascript
-// In src/services/api.js
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-```
-
-Build with custom API URL:
 ```bash
-VITE_API_BASE_URL=https://your-api-domain.com npm run build
+export DASHBOARD_PASSWORD='your-dashboard-password'
+npm run start:gateway
 ```
 
-### 8. Security Considerations
+默认行为：
 
-- Set `FLASK_ENV=production` for production
-- Use HTTPS via Cpolar or reverse proxy
-- Implement API key authentication for POST endpoints
-- Add CORS headers in Flask if needed
+- `/` 返回 `index.html`
+- 未认证访问任一路径返回 `401 Unauthorized`
+- 响应头带 `WWW-Authenticate: Basic realm="NeoTrade3 Dashboard"`
+- 静态资源直接从 `dist/` 返回
+- `/api/*` 透明代理到 `127.0.0.1:18030`
+- `/healthz` 透明代理到 `127.0.0.1:18030/healthz`
+- `/_gateway/healthz` 返回前端网关自身状态
+- `/_gateway/healthz` 返回前端网关自身状态
 
-### 9. Troubleshooting
+## 3. Local Verification
 
-**Blank page after deployment:**
-- Check browser console for 404 errors
-- Ensure Flask is serving static files correctly
-- Verify `index.html` is served for all routes
+在切外网前，先验证本机链路：
 
-**API connection errors:**
-- Verify NeoTrade3 API is running on port 18030
-- Check Flask proxy routes are configured
-- Test API directly: `curl http://127.0.0.1:18030/healthz`
+```bash
+curl http://127.0.0.1:18030/healthz
+curl -i http://127.0.0.1:5174/
+curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/_gateway/healthz
+curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/healthz
+curl -I -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/
+```
 
-**CORS errors:**
-- Add CORS headers in Flask
-- Or ensure API and dashboard are on same origin
+预期结果：
+
+- API `healthz` 返回 `status=ok`
+- 未认证访问网关返回 `401`，这是正常行为
+- 网关 `/_gateway/healthz` 返回 `status=ok`
+- 通过网关访问 `/healthz` 能返回 API 的 `status=ok`
+- 首页返回 `200`
+
+## 4. cpolar Target
+
+对外域名 `sanford.vip.cpolar.cn` 应指向前端网关端口，而不是旧 `V2` Flask 端口。
+
+正式目标应为：
+
+- `http://127.0.0.1:5174`
+
+不再使用：
+
+- `http://127.0.0.1:8765`
+
+## 5. Launchd Assets
+
+当前正式模板应包括：
+
+- `config/launchd/com.neotrade3.api.plist.template`
+- `config/launchd/com.neotrade3.frontend_gateway.plist.template`
+- `config/launchd/com.neotrade3.scheduler.plist.template`
+- `config/launchd/com.neotrade3.trade_execution_rt.plist.template`
+
+统一渲染/安装脚本：
+
+```bash
+export DASHBOARD_PASSWORD='your-dashboard-password'
+python3 scripts/install_launchagents.py render --output-dir /tmp/neotrade3-launchagents
+python3 scripts/install_launchagents.py check --target-dir ~/Library/LaunchAgents
+python3 scripts/install_launchagents.py install --target-dir ~/Library/LaunchAgents
+```
+
+如需指定解释器路径：
+
+```bash
+export DASHBOARD_PASSWORD='your-dashboard-password'
+python3 scripts/install_launchagents.py install \
+  --target-dir ~/Library/LaunchAgents \
+  --python-bin /Users/mac/NeoTrade3/.venv/bin/python \
+  --node-bin /opt/homebrew/bin/node
+```
+
+## 6. Notes
+
+- 不要再为 V3 新增 Flask 页面承载壳
+- 不要把 `vite dev` 或 `vite preview` 当作正式外网入口
+- 前端继续使用相对路径 `/api`，正式发布不需要改成跨域 API 地址
+- `legacy/runtime/dashboard_server.py` 仅保留为历史参考，不再作为正式发布方案
+- `DASHBOARD_PASSWORD` 只注入 `frontend_gateway`，不要扩散到 API 或调度进程
+
+## 7. Troubleshooting
+
+**首页打不开：**
+
+- 检查 `cpolar` 是否仍指向旧端口
+- 检查前端网关是否已启动
+- 检查 `dist/` 是否已构建
+- 若返回 `401`，先确认是否已经通过 Basic Auth 携带密码
+
+**页面能开但数据为空：**
+
+- 检查 `http://127.0.0.1:18030/healthz`
+- 检查 `http://127.0.0.1:5174/healthz`
+- 检查网关代理参数中的 `--api-base`
+
+**网关自身异常：**
+
+- 检查 `http://127.0.0.1:5174/_gateway/healthz`
+- 检查 `var/log/neotrade3_frontend_gateway.out.log`
+- 检查 `var/log/neotrade3_frontend_gateway.err.log`
+- 若日志提示缺少 `DASHBOARD_PASSWORD`，先补齐环境变量后再重载网关

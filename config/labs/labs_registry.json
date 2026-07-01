@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Bootstrap placeholder for NeoTrade3 lab registry",
+  "description": "Active NeoTrade3 lab registry for runtime scheduling and artifact contracts",
   "labs": [
     {
       "lab_id": "cup_handle_lab",
@@ -28,7 +28,7 @@
         {
           "artifact_id": "cup_handle_daily_report",
           "path": "var/artifacts/labs/cup_handle_lab/daily_report.json",
-          "description": "Bootstrap placeholder for cup-handle daily evaluation output."
+          "description": "Cup-handle daily evaluation output contract."
         }
       ],
       "health_checks": [
@@ -69,7 +69,7 @@
         {
           "artifact_id": "paper_simulation_positions",
           "path": "var/artifacts/labs/paper_simulation_lab/positions.json",
-          "description": "Bootstrap placeholder for paper simulation daily position snapshot."
+          "description": "Paper simulation daily position snapshot contract."
         }
       ],
       "health_checks": [
@@ -89,7 +89,7 @@
       "display_name": "老鸭头五图",
       "domain": "pattern_research",
       "owner": "unassigned",
-      "enabled": true,
+      "enabled": false,
       "input_dependencies": ["published_daily_data"],
       "daily_jobs": [
         {
@@ -110,7 +110,7 @@
         {
           "artifact_id": "five_flags_scan_results",
           "path": "var/artifacts/labs/five_flags_lab/scan_results.json",
-          "description": "Bootstrap placeholder for five-flags scan output."
+          "description": "Five-flags scan output contract."
         }
       ],
       "health_checks": [
@@ -151,7 +151,7 @@
         {
           "artifact_id": "quant_trading_analysis_report",
           "path": "var/artifacts/labs/quant_trading_lab/analysis_report.json",
-          "description": "Bootstrap placeholder for quant trading daily analysis output."
+          "description": "Quant trading daily analysis output contract."
         }
       ],
       "health_checks": [

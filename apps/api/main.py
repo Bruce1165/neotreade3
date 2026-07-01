@@ -1972,12 +1972,9 @@ class BootstrapApiService:
         artifacts_dir = self.project_root / "var/artifacts/screener_runs" / target_date
         bulk_ledger_path = ledgers_dir / "bulk_run_ledger.json"
         bulk_artifact_path = artifacts_dir / "bulk_run_result.json"
-        if any(record.status == "failed" for record in run_records):
-            bulk_status = "failed"
-        elif all(record.status == "ok" for record in run_records):
-            bulk_status = "ok"
-        else:
-            bulk_status = "pending_implementation"
+        bulk_status = self._summarize_runtime_statuses(
+            [str(record.status or "") for record in run_records]
+        )
 
         bulk_ledger_payload = {
             "version": 1,
@@ -2023,6 +2020,26 @@ class BootstrapApiService:
             "_meta": {"status": "ok"},
             "bulk_run": bulk_ledger_payload,
         }
+
+    @staticmethod
+    def _summarize_runtime_statuses(statuses: list[str]) -> str:
+        normalized = [
+            str(status or "").strip().lower()
+            for status in statuses
+            if str(status or "").strip()
+        ]
+        if not normalized:
+            return "pending_implementation"
+        unique = set(normalized)
+        if "failed" in unique:
+            return "failed"
+        if len(unique) == 1:
+            return normalized[0]
+        if "ok" in unique:
+            return "partial_success"
+        if "pending_implementation" in unique:
+            return "pending_implementation"
+        return "mixed"
 
     def check_stock_view(
         self,
@@ -5240,6 +5257,13 @@ class BootstrapApiService:
                 for artifact in lab.artifacts
             }
 
+        run_status = self._summarize_runtime_statuses(
+            [
+                str(item.get("status", ""))
+                for item in artifacts_payload.values()
+                if isinstance(item, dict)
+            ]
+        )
         run_payload = {
             "version": 1,
             "lab_id": lab.lab_id,
@@ -5247,7 +5271,7 @@ class BootstrapApiService:
             "target_date": target_date,
             "requested_by": requested_by,
             "requested_at": requested_at,
-            "status": "ok",
+            "status": run_status,
             "artifact_path": self._safe_ref_path(str(artifact_path)),
             "artifacts": artifacts_payload,
         }
@@ -5257,7 +5281,7 @@ class BootstrapApiService:
             "target_date": target_date,
             "requested_by": requested_by,
             "requested_at": requested_at,
-            "status": "ok",
+            "status": run_status,
             "artifact_path": self._safe_ref_path(str(artifact_path)),
         }
 

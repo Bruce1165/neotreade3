@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Bootstrap placeholder for NeoTrade3 daily master orchestrator",
+  "description": "Active NeoTrade3 daily master orchestrator schedule and task contracts",
   "phases": [
     "preflight",
     "data_pipeline",
@@ -65,20 +65,6 @@
       "failure_policy": "continue_with_issue",
       "retry_policy": "single_retry",
       "issue_tags": ["lab", "simulation"]
-    },
-    {
-      "task_id": "five_flags_lab.daily_scan",
-      "lab_id": "five_flags_lab",
-      "trigger_type": "post_publish_trigger",
-      "phase": "publish_gated_jobs",
-      "entrypoint": "neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
-      "args_template": {},
-      "depends_on": ["data_control.publish"],
-      "requires_publish_status": true,
-      "outputs": ["lab_run_summary", "five_flags_scan_results"],
-      "failure_policy": "continue_with_issue",
-      "retry_policy": "single_retry",
-      "issue_tags": ["lab", "patterns"]
     },
     {
       "task_id": "cup_handle_lab.daily_review",
