@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict, is_dataclass
+import sys
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
@@ -52,6 +54,10 @@ class BootstrapWorkerApp:
 
         def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
             target_date = context.get("target_date", date.today())
+            requested_by = str(
+                context.get("requested_by", f"worker.{task.task_id}")
+            )
+            dry_run = bool(context.get("dry_run", False))
             try:
                 # Determine which pipeline method to call based on task_id
                 method = None
@@ -72,15 +78,26 @@ class BootstrapWorkerApp:
                         details={"plan_stages": len(plan.stages) if hasattr(plan, 'stages') else 0},
                     )
 
-                result = method(target_date=target_date)
+                result = method(
+                    target_date=target_date,
+                    requested_by=requested_by,
+                    dry_run=dry_run,
+                )
+                result_status = getattr(result, "status", "")
+                is_ok = result_status == "ok"
+                result_message = getattr(
+                    result,
+                    "message",
+                    f"{task.task_id} completed successfully",
+                )
                 return TaskResult(
                     task_id=task.task_id,
                     phase=task.phase,
-                    status=RunStatus.OK if result else RunStatus.FAILED,
+                    status=RunStatus.OK if is_ok else RunStatus.FAILED,
                     lab_id=task.lab_id,
-                    message=f"{task.task_id} completed successfully",
+                    message=result_message,
                     artifact_refs=[],
-                    details={"task_id": task.task_id},
+                    details={"task_id": task.task_id, "stage_status": result_status},
                 )
             except Exception as e:
                 return TaskResult(
@@ -104,14 +121,24 @@ class BootstrapWorkerApp:
                     lab_id=task.lab_id or "",
                     project_root=self.project_root,
                 )
+                raw_status = str(result.get("status", "")).strip().lower()
+                if raw_status == "ok":
+                    task_status = RunStatus.OK
+                elif raw_status == "skipped":
+                    task_status = RunStatus.SKIPPED
+                else:
+                    task_status = RunStatus.FAILED
                 return TaskResult(
                     task_id=task.task_id,
                     phase=task.phase,
-                    status=RunStatus.OK if result.get("status") == "ok" else RunStatus.FAILED,
+                    status=task_status,
                     lab_id=task.lab_id,
                     message=result.get("message", ""),
                     artifact_refs=result.get("artifacts", []),
-                    details={"picks_count": result.get("picks_count", 0)},
+                    details={
+                        "picks_count": result.get("picks_count", 0),
+                        "lab_status": raw_status,
+                    },
                 )
             except Exception as e:
                 return TaskResult(
@@ -211,14 +238,43 @@ class BootstrapWorkerApp:
                 )
         return executor
 
+    @staticmethod
+    def _build_execution_run_plan(run_plan):
+        execution_tasks = []
+        for task in run_plan.planned_tasks:
+            if (
+                task.requires_publish_status
+                and task.status == RunStatus.BLOCKED
+                and task.skip_reason == "publish_not_successful"
+            ):
+                execution_tasks.append(
+                    replace(task, status=RunStatus.PLANNED, skip_reason=None)
+                )
+            else:
+                execution_tasks.append(task)
+        return replace(run_plan, planned_tasks=execution_tasks)
+
+    @staticmethod
+    def _effective_publish_succeeded(task_results: list[TaskResult]) -> bool:
+        for result in task_results:
+            if result.task_id == "data_control.publish":
+                return result.status == RunStatus.OK
+        return False
+
     def run(
-        self, target_date: date, publish_succeeded: bool, write_outputs: bool
+        self,
+        target_date: date,
+        publish_succeeded: bool,
+        write_outputs: bool,
+        *,
+        requested_by: str = "BootstrapWorkerApp.run",
+        dry_run: bool = False,
     ) -> dict[str, object]:
         # ---- 运行锁获取 ----
         from neotrade3.orchestration.preflight import PreflightRunner
         lock_acquired, lock_msg = PreflightRunner.acquire_lock(
             project_root=self.project_root,
-            requested_by="BootstrapWorkerApp.run",
+            requested_by=requested_by,
         )
         if not lock_acquired:
             return {
@@ -234,12 +290,24 @@ class BootstrapWorkerApp:
             }
 
         try:
-            return self._run_inner(target_date, publish_succeeded, write_outputs)
+            return self._run_inner(
+                target_date,
+                publish_succeeded,
+                write_outputs,
+                requested_by=requested_by,
+                dry_run=dry_run,
+            )
         finally:
             PreflightRunner.release_lock(self.project_root)
 
     def _run_inner(
-        self, target_date: date, publish_succeeded: bool, write_outputs: bool
+        self,
+        target_date: date,
+        publish_succeeded: bool,
+        write_outputs: bool,
+        *,
+        requested_by: str,
+        dry_run: bool,
     ) -> dict[str, object]:
         data_control = DataControlPipeline.from_registry_file(
             self.paths["source_registry_config"]
@@ -260,6 +328,7 @@ class BootstrapWorkerApp:
                 target_date=target_date, publish_succeeded=publish_succeeded
             )
         )
+        execution_run_plan = self._build_execution_run_plan(run_plan)
 
         # Build task executors for real execution
         # Map to actual OrchestrationPhase values used in config
@@ -277,10 +346,17 @@ class BootstrapWorkerApp:
             "target_date": target_date,
             "project_root": str(self.project_root),
             "db_path": str(self.project_root / "var/data/neotrade3.db"),
+            "requested_by": requested_by,
+            "dry_run": dry_run,
         }
-        task_results = orchestrator.execute_run_plan(run_plan, task_executors, context)
+        task_results = orchestrator.execute_run_plan(
+            execution_run_plan, task_executors, context
+        )
+        effective_publish_succeeded = self._effective_publish_succeeded(task_results)
 
-        run_entry, task_entries = orchestrator.build_placeholder_run_ledger(run_plan)
+        run_entry, task_entries = orchestrator.build_placeholder_run_ledger(
+            execution_run_plan
+        )
         issue_snapshot = issue_center.collect(target_date, task_results, task_entries)
         learning_snapshot = learning.build_snapshot(
             target_date,
@@ -291,7 +367,8 @@ class BootstrapWorkerApp:
 
         snapshot = {
             "target_date": target_date.isoformat(),
-            "publish_succeeded": publish_succeeded,
+            "publish_succeeded": effective_publish_succeeded,
+            "requested_publish_succeeded": publish_succeeded,
             "data_control": {
                 "source_summary": data_control.describe_sources(),
                 "plan": self._to_jsonable(data_plan),
@@ -299,7 +376,7 @@ class BootstrapWorkerApp:
                 "stage_summary": data_stage_summary,
             },
             "orchestration": {
-                "plan": self._to_jsonable(run_plan),
+                "plan": self._to_jsonable(execution_run_plan),
                 "task_results": self._to_jsonable(task_results),
                 "run_ledger": self._to_jsonable(run_entry),
                 "task_ledger": self._to_jsonable(task_entries),
@@ -307,7 +384,7 @@ class BootstrapWorkerApp:
             "issue_center": self._to_jsonable(issue_snapshot),
             "learning": self._to_jsonable(learning_snapshot),
             "summary": {
-                "planned_task_count": len(run_plan.planned_tasks),
+                "planned_task_count": len(execution_run_plan.planned_tasks),
                 "issue_case_count": len(issue_snapshot.cases),
                 "learning_candidate_count": len(
                     learning_snapshot.adjustment_candidates
@@ -391,7 +468,8 @@ class BootstrapWorkerApp:
         )
         self._write_json(artifacts_dir / "learning_snapshot.json", snapshot["learning"])
         self._write_json(
-            artifacts_dir / "bootstrap_run_summary.json", snapshot["summary"]
+            artifacts_dir / "bootstrap_run_summary.json",
+            self._build_summary_artifact(snapshot),
         )
 
     @staticmethod
@@ -400,6 +478,26 @@ class BootstrapWorkerApp:
             json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _build_summary_artifact(snapshot: dict[str, object]) -> dict[str, object]:
+        orchestration = snapshot.get("orchestration", {})
+        task_results: object = []
+        if isinstance(orchestration, dict):
+            candidate = orchestration.get("task_results", [])
+            if isinstance(candidate, list):
+                task_results = candidate
+        return {
+            "target_date": snapshot.get("target_date"),
+            "publish_succeeded": snapshot.get("publish_succeeded", False),
+            "requested_publish_succeeded": snapshot.get(
+                "requested_publish_succeeded", False
+            ),
+            "summary": snapshot.get("summary", {}),
+            "orchestration": {
+                "task_results": task_results,
+            },
+        }
 
     @classmethod
     def _to_jsonable(cls, value: object) -> object:
@@ -437,6 +535,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    log_python_runtime(entrypoint="apps.worker.main")
+    try:
+        require_python_310(entrypoint="apps.worker.main")
+    except RuntimeError as exc:
+        print(json.dumps({"entrypoint": "apps.worker.main", "status": "error", "error": str(exc)}, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+        return 2
 
     target_date = (
         date.fromisoformat(args.target_date) if args.target_date else date.today()
@@ -448,9 +552,11 @@ def main() -> int:
         publish_succeeded=args.publish_succeeded,
         write_outputs=not args.dry_run,
     )
+    status = str(snapshot.get("status") or "ok").strip().lower()
     print(
         json.dumps(
             {
+                "status": status,
                 "target_date": snapshot["target_date"],
                 "summary": snapshot["summary"],
                 "write_outputs": not args.dry_run,
@@ -460,7 +566,7 @@ def main() -> int:
             sort_keys=True,
         )
     )
-    return 0
+    return 0 if status == "ok" else 1
 
 
 if __name__ == "__main__":

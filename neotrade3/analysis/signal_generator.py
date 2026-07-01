@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class SignalDirection(str, Enum):
@@ -232,7 +235,12 @@ class SignalGenerator:
             # In bear market, be very selective
             market_bullish = phase_result.phase.value in ("bull", "transition")
             market_score = phase_result.confidence if market_bullish else phase_result.confidence * 0.3
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator market phase detection degraded on %s: %s",
+                target_date.isoformat(),
+                exc,
+            )
             market_bullish = True
             market_score = 50.0
 
@@ -295,7 +303,13 @@ class SignalGenerator:
         # Get current price
         try:
             name, current_price = self._get_stock_info(code, target_date)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator stock info lookup failed for %s on %s: %s",
+                code,
+                target_date.isoformat(),
+                exc,
+            )
             return None
 
         if current_price <= 0:
@@ -336,8 +350,13 @@ class SignalGenerator:
                 weight=self.DIMENSION_WEIGHTS[SignalSource.RESONANCE],
                 detail=f"共振分{resonance_score:.0f} (基于动量)",
             ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator resonance analysis degraded for %s on %s: %s",
+                code,
+                target_date.isoformat(),
+                exc,
+            )
 
         # Dimension 2: Elliott Wave (波浪位置)
         wave_signal = None
@@ -360,8 +379,13 @@ class SignalGenerator:
                         weight=self.DIMENSION_WEIGHTS[SignalSource.ELLIOTT_WAVE],
                         detail=f"Wave {primary.current_wave.value} {primary.wave_position.value} R/R:{primary.risk_reward_ratio:.1f}",
                     ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator Elliott Wave analysis degraded for %s on %s: %s",
+                code,
+                target_date.isoformat(),
+                exc,
+            )
 
         # Dimension 3: Sector Rotation (板块轮动)
         try:
@@ -393,8 +417,13 @@ class SignalGenerator:
                 weight=self.DIMENSION_WEIGHTS[SignalSource.SECTOR_ROTATION],
                 detail=f"板块{stock_sector or '?'} RPS120:{sector_rps_score:.0f} {'主线' if is_policy_mainline else '非主线'}",
             ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator sector rotation analysis degraded for %s on %s: %s",
+                code,
+                target_date.isoformat(),
+                exc,
+            )
 
         # Dimension 4: Stock Tiering (个股分层)
         try:
@@ -419,8 +448,13 @@ class SignalGenerator:
                 weight=self.DIMENSION_WEIGHTS[SignalSource.STOCK_TIERING],
                 detail=f"分层:{tier} 领导分:{leadership_score:.0f}",
             ))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "SignalGenerator stock tiering analysis degraded for %s on %s: %s",
+                code,
+                target_date.isoformat(),
+                exc,
+            )
 
         # Dimension 5: Market Phase (市场相位)
         is_bull = market_bullish

@@ -8,7 +8,10 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from datetime import datetime, timedelta
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 class MarketPhase(Enum):
@@ -144,7 +147,7 @@ def _calc_market_breadth(
         return up_count / total_count
         
     except Exception as e:
-        print(f"计算市场广度时出错: {e}")
+        logger.warning("计算市场广度时出错: target_date=%s error=%s", target_date, e)
         return 0.5
 
 
@@ -214,7 +217,7 @@ def _calc_total_amount(
         return current_amount, trend
         
     except Exception as e:
-        print(f"计算成交额时出错: {e}")
+        logger.warning("计算成交额时出错: target_date=%s error=%s", target_date, e)
         return 0.0, "unknown"
 
 
@@ -399,7 +402,7 @@ def detect_market_phase(
         )
         
     except Exception as e:
-        print(f"检测市场阶段时出错: {e}")
+        logger.warning("检测市场阶段时出错: target_date=%s error=%s", target_date, e)
         return MarketPhaseResult(
             phase=MarketPhase.TRANSITION,
             confidence=0.0,

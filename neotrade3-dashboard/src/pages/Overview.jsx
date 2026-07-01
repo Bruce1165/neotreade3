@@ -1,14 +1,40 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Flame, Target, Wallet, FileText, RefreshCw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import SemanticBadge from '../components/SemanticBadge';
 import DateSelector from '../components/DateSelector';
+import StockCodeLink from '../components/StockCodeLink';
+import { fetchApi } from '../services/api';
+import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
 
 function SimpleCard({ title, value, subtitle }) {
+  const displayValue = value == null || value === '' ? '--' : value;
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="text-sm font-medium text-gray-500 mb-2">{title}</div>
-      <div className="text-2xl font-bold text-gray-900 mb-1">{value || '--'}</div>
+      <div className="text-2xl font-bold text-gray-900 mb-1">{displayValue}</div>
       {subtitle ? <div className="text-sm text-gray-500">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function BlockMessage({ tone = 'gray', message, onRetry, retryLabel = '重试' }) {
+  const toneClass =
+    tone === 'red'
+      ? 'bg-red-50 border-red-200 text-red-700'
+      : 'bg-gray-50 border-gray-200 text-gray-600';
+  return (
+    <div className={`rounded-lg border p-4 text-sm flex items-center justify-between gap-3 ${toneClass}`}>
+      <span>{message}</span>
+      {typeof onRetry === 'function' ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="px-3 py-1 rounded bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+        >
+          {retryLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -28,68 +54,163 @@ function minusDays(isoDate, days) {
   return toLocalDateString(dt);
 }
 
+function conceptRiskBadge(v) {
+  const lv = String(v || '').trim().toLowerCase();
+  if (lv === 'exit') return { key: 'not_qualified_avoid', label: '回避' };
+  if (lv === 'warn') return { key: 'risk_warn', label: '危险状态' };
+  if (lv === 'ok') return { key: 'risk_ok', label: '稳定状态' };
+  return null;
+}
+
+function queueStatusBadge(rawStatus, cancelReason) {
+  if (rawStatus === 'executed') return { key: 'queue_executed', label: '已处理' };
+  if (rawStatus === 'cancelled' && cancelReason === 'abandoned') {
+    return { key: 'queue_abandoned', label: '已放弃' };
+  }
+  if (rawStatus === 'cancelled') {
+    return {
+      key: 'queue_cancelled',
+      label: cancelReason ? `已取消（${cancelReason}）` : '已取消',
+    };
+  }
+  return { key: 'queue_pending', label: '待处理' };
+}
+
+function queueRiskBadge(risk, isSell) {
+  const lv = String(risk || '').trim().toLowerCase();
+  if (lv === 'exit') {
+    return { key: isSell ? 'exit_signal' : 'not_qualified_avoid', label: isSell ? '离场信号' : '回避' };
+  }
+  if (lv === 'warn') return { key: 'risk_warn', label: '危险状态' };
+  if (lv === 'ok') return { key: 'risk_ok', label: '稳定状态' };
+  return null;
+}
+
+function findLatestTushareFailure(resources) {
+  if (!resources || typeof resources !== 'object') return null;
+  let latest = null;
+  for (const [resource, payload] of Object.entries(resources)) {
+    if (!payload || typeof payload !== 'object') continue;
+    const lastFailureAt = String(payload.last_failure_at || '').trim();
+    const lastOkAt = String(payload.last_ok_at || '').trim();
+    if (!lastFailureAt) continue;
+    if (lastOkAt && lastOkAt >= lastFailureAt) continue;
+    if (!latest || lastFailureAt > latest.lastFailureAt) {
+      latest = {
+        resource,
+        lastFailureAt,
+        reason: String(payload.last_failure_reason || '').trim(),
+      };
+    }
+  }
+  return latest;
+}
+
 export default function Overview() {
   const { selectedDate } = useApp();
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [mutating, setMutating] = useState(false);
   const [actionState, setActionState] = useState({ kind: null, intentId: null });
-  const [data, setData] = useState({
-    dataStatus: null,
-    hotSectors: null,
-    conceptsMainline: null,
-    executionQueue: null,
-    backtestWindow: null,
+  const [blocks, setBlocks] = useState({
+    core: createBlockState(),
+    sectors: createBlockState(),
+    queue: createBlockState(),
+    backtest: createBlockState(),
   });
 
   const backtestEndDate = useMemo(() => minusDays(selectedDate, 1) || selectedDate, [selectedDate]);
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
+  const loadCoreBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, core: startBlock(prev.core, true) }));
     try {
-      const [statusRes, hotRes, conceptsRes, queueRes, backtestRes] = await Promise.all([
-        fetch('/api/data/status'),
-        fetch(
-          `/api/sectors/hot?date=${encodeURIComponent(selectedDate)}&include_sell_signal=true`
-        ),
-        fetch(`/api/concepts/mainline?date=${encodeURIComponent(selectedDate)}&limit=10`),
-        fetch(
-          `/api/lowfreq/execution/queue?date=${encodeURIComponent(
-            selectedDate
-          )}&ensure_generated=true`
-        ),
-        fetch(
-          `/api/lowfreq/backtest/window-summary?end_date=${encodeURIComponent(
-            backtestEndDate
-          )}&window_trading_days=60`
+      const [dataStatus, conceptsMainline] = await Promise.all([
+        fetchApi('/api/data/status', {}, { timeoutMs: 45000 }),
+        fetchApi(
+          `/api/concepts/mainline?date=${encodeURIComponent(selectedDate)}&limit=10`,
+          {},
+          { timeoutMs: 45000 }
         ),
       ]);
-      const dataStatus = statusRes.ok ? await statusRes.json() : null;
-      const hotSectors = hotRes.ok ? await hotRes.json() : null;
-      const conceptsMainline = conceptsRes.ok ? await conceptsRes.json() : null;
-      const executionQueue = queueRes.ok ? await queueRes.json() : null;
-      const backtestWindow = backtestRes.ok ? await backtestRes.json() : null;
-      setData({ dataStatus, hotSectors, conceptsMainline, executionQueue, backtestWindow });
+      setBlocks((prev) => ({ ...prev, core: resolveBlock({ dataStatus, conceptsMainline }) }));
     } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setLoading(false);
+      setBlocks((prev) => ({ ...prev, core: rejectBlock(prev.core, e, true) }));
     }
-  };
+  }, [selectedDate]);
+
+  const loadSectorsBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, sectors: startBlock(prev.sectors, true) }));
+    try {
+      const hotSectors = await fetchApi(
+        `/api/sectors/hot?date=${encodeURIComponent(selectedDate)}&include_sell_signal=true`,
+        {},
+        { timeoutMs: 45000 }
+      );
+      setBlocks((prev) => ({ ...prev, sectors: resolveBlock({ hotSectors }) }));
+    } catch (e) {
+      setBlocks((prev) => ({ ...prev, sectors: rejectBlock(prev.sectors, e, true) }));
+    }
+  }, [selectedDate]);
+
+  const loadQueueBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, queue: startBlock(prev.queue, true) }));
+    try {
+      const executionQueue = await fetchApi(
+        `/api/lowfreq/execution/queue?date=${encodeURIComponent(selectedDate)}&ensure_generated=true`,
+        {},
+        { timeoutMs: 45000 }
+      );
+      setBlocks((prev) => ({ ...prev, queue: resolveBlock({ executionQueue }) }));
+    } catch (e) {
+      setBlocks((prev) => ({ ...prev, queue: rejectBlock(prev.queue, e, true) }));
+    }
+  }, [selectedDate]);
+
+  const loadBacktestBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, backtest: startBlock(prev.backtest, true) }));
+    try {
+      const backtestWindow = await fetchApi(
+        `/api/lowfreq/backtest/window-summary?end_date=${encodeURIComponent(
+          backtestEndDate
+        )}&window_trading_days=60`,
+        {},
+        { timeoutMs: 60000 }
+      );
+      setBlocks((prev) => ({ ...prev, backtest: resolveBlock({ backtestWindow }) }));
+    } catch (e) {
+      setBlocks((prev) => ({ ...prev, backtest: rejectBlock(prev.backtest, e, true) }));
+    }
+  }, [backtestEndDate]);
+
+  const fetchData = useCallback(async () => {
+    setError(null);
+    await loadCoreBlock();
+    void loadSectorsBlock();
+    void loadQueueBlock();
+    void loadBacktestBlock();
+  }, [loadBacktestBlock, loadCoreBlock, loadQueueBlock, loadSectorsBlock]);
 
   useEffect(() => {
     fetchData();
-  }, [selectedDate, backtestEndDate]);
+  }, [fetchData]);
 
+  const corePayload = blocks.core.data || {};
+  const sectorsPayload = blocks.sectors.data || {};
+  const queuePayload = blocks.queue.data || {};
+  const backtestPayload = blocks.backtest.data || {};
+  const loading = Object.values(blocks).some((block) => block.loading);
   const latestAvailableDate =
-    data.dataStatus?.latest_available_date ||
-    data.dataStatus?.latest_trade_date ||
+    corePayload.dataStatus?.latest_available_date ||
+    corePayload.dataStatus?.latest_trade_date ||
     '--';
+  const latestTushareFailure = findLatestTushareFailure(corePayload.dataStatus?.tushare?.resources);
 
-  const sectors = Array.isArray(data.hotSectors?.sectors) ? data.hotSectors.sectors : [];
-  const portfolio = data.hotSectors?.portfolio || null;
-  const mainlineConcepts = Array.isArray(data.conceptsMainline?.concepts)
-    ? data.conceptsMainline.concepts
+  const sectors = Array.isArray(sectorsPayload.hotSectors?.sectors)
+    ? sectorsPayload.hotSectors.sectors
+    : [];
+  const topSectors = sectors.slice(0, 5);
+  const portfolio = sectorsPayload.hotSectors?.portfolio || null;
+  const mainlineConcepts = Array.isArray(corePayload.conceptsMainline?.concepts)
+    ? corePayload.conceptsMainline.concepts
     : [];
   const mainlineRiskCounts = (() => {
     const counts = { ok: 0, warn: 0, exit: 0 };
@@ -99,26 +220,20 @@ export default function Overview() {
     }
     return counts;
   })();
-  const queueItems = Array.isArray(data.executionQueue?.queue) ? data.executionQueue.queue : [];
-  const autopilotEnabled = Boolean(data.executionQueue?.autopilot_enabled);
+  const queueItems = Array.isArray(queuePayload.executionQueue?.queue) ? queuePayload.executionQueue.queue : [];
+  const autopilotEnabled = Boolean(queuePayload.executionQueue?.autopilot_enabled);
+  const pageError = error || (!blocks.core.loaded && blocks.core.error ? blocks.core.error : null);
 
   const postJson = async (url, payload) => {
-    const headers = { 'Content-Type': 'application/json' };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json().catch(() => null);
-    if (!res.ok) {
-      const msg = json?.error?.message || json?.message || json?._meta?.message || '请求失败';
-      throw new Error(msg);
-    }
-    return json;
+    return fetchApi(
+      url,
+      { method: 'POST', body: JSON.stringify(payload) },
+      { timeoutMs: 30000 }
+    );
   };
 
   const toggleAutopilot = async (nextEnabled) => {
-    setLoading(true);
+    setMutating(true);
     setError(null);
     setActionState({ kind: 'autopilot', intentId: null });
     try {
@@ -131,12 +246,12 @@ export default function Overview() {
       setError(e.message || String(e));
     } finally {
       setActionState({ kind: null, intentId: null });
-      setLoading(false);
+      setMutating(false);
     }
   };
 
   const executeIntent = async (intentId) => {
-    setLoading(true);
+    setMutating(true);
     setError(null);
     setActionState({ kind: 'execute', intentId: String(intentId || '').trim() });
     try {
@@ -149,12 +264,12 @@ export default function Overview() {
       setError(e.message || String(e));
     } finally {
       setActionState({ kind: null, intentId: null });
-      setLoading(false);
+      setMutating(false);
     }
   };
 
   const markAbandoned = async (intentId) => {
-    setLoading(true);
+    setMutating(true);
     setError(null);
     setActionState({ kind: 'abandon', intentId: String(intentId || '').trim() });
     try {
@@ -168,7 +283,7 @@ export default function Overview() {
       setError(e.message || String(e));
     } finally {
       setActionState({ kind: null, intentId: null });
-      setLoading(false);
+      setMutating(false);
     }
   };
 
@@ -197,7 +312,7 @@ export default function Overview() {
         </div>
         <button
           onClick={fetchData}
-          disabled={loading}
+          disabled={loading || mutating}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
           <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
@@ -205,17 +320,17 @@ export default function Overview() {
         </button>
       </div>
 
-      {error ? (
+      {pageError ? (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700">
           <AlertCircle size={20} />
-          <span>{error}</span>
+          <span>{pageError}</span>
         </div>
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <SimpleCard title="数据更新到" value={latestAvailableDate} subtitle="本地可用最新日期" />
-        <SimpleCard title="热门板块 Top5" value={String(sectors.length)} subtitle="板块轮动快照" />
-        <SimpleCard title="入场信号" value={String(buySignals)} subtitle="热门板块内 buy_signal 数量" />
+        <SimpleCard title="热门板块 Top5" value={String(topSectors.length)} subtitle="板块轮动快照" />
+        <SimpleCard title="买入信号" value={String(buySignals)} subtitle="热门板块内买入信号数量" />
         <SimpleCard
           title="虚拟持仓收益"
           value={
@@ -223,8 +338,20 @@ export default function Overview() {
               ? `${portfolio.total_return_pct >= 0 ? '+' : ''}${portfolio.total_return_pct.toFixed(2)}%`
               : '--'
           }
-          subtitle={portfolio?.as_of ? `数据日期：${portfolio.as_of}` : '—'}
+          subtitle={portfolio?.as_of ? `当前虚拟组合累计收益｜数据日期：${portfolio.as_of}` : '当前虚拟组合累计收益'}
         />
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 text-sm text-gray-600">
+        <span className="font-medium text-gray-900">当前 authoritative 口径</span>
+        <span className="ml-3">日线主源：Tushare</span>
+        <span className="ml-3">safety-net：Tencent</span>
+        {latestTushareFailure ? (
+          <span className="ml-3 text-red-700">
+            最近异常：{latestTushareFailure.resource} @ {latestTushareFailure.lastFailureAt}
+            {latestTushareFailure.reason ? ` (${latestTushareFailure.reason})` : ''}
+          </span>
+        ) : null}
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -233,11 +360,15 @@ export default function Overview() {
           主线概念（Top10）
         </h3>
         <div className="text-sm text-gray-600 mb-3">
-          风险灯：<span className="text-red-600 font-semibold">exit {mainlineRiskCounts.exit}</span>{' '}
-          <span className="text-orange-600 font-semibold">warn {mainlineRiskCounts.warn}</span>{' '}
-          <span className="text-green-700 font-semibold">ok {mainlineRiskCounts.ok}</span>
+          风险灯：<span className="text-gray-700 font-semibold">回避 {mainlineRiskCounts.exit}</span>{' '}
+          <span className="text-orange-600 font-semibold">危险状态 {mainlineRiskCounts.warn}</span>{' '}
+          <span className="text-green-700 font-semibold">稳定状态 {mainlineRiskCounts.ok}</span>
         </div>
-        {mainlineConcepts.length ? (
+        {blocks.core.loading && !blocks.core.loaded ? (
+          <BlockMessage message="主线概念加载中..." />
+        ) : blocks.core.error && !blocks.core.loaded ? (
+          <BlockMessage tone="red" message={blocks.core.error} onRetry={loadCoreBlock} />
+        ) : mainlineConcepts.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -264,17 +395,14 @@ export default function Overview() {
                       {typeof c.mainline_streak === 'number' ? `${c.mainline_streak}d` : '--'}
                     </td>
                     <td className="py-2 pr-4">
-                      <span
-                        className={
-                          c.risk_level === 'exit'
-                            ? 'text-red-600 font-semibold'
-                            : c.risk_level === 'warn'
-                            ? 'text-orange-600 font-semibold'
-                            : 'text-green-700 font-semibold'
-                        }
-                      >
-                        {c.risk_level || '--'}
-                      </span>
+                      {conceptRiskBadge(c.risk_level) ? (
+                        <SemanticBadge
+                          semanticKey={conceptRiskBadge(c.risk_level).key}
+                          label={conceptRiskBadge(c.risk_level).label}
+                        />
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -298,7 +426,7 @@ export default function Overview() {
                 type="checkbox"
                 checked={autopilotEnabled}
                 onChange={(e) => toggleAutopilot(e.target.checked)}
-                disabled={loading}
+                disabled={loading || mutating}
               />
               自动操盘（自动保存）
             </label>
@@ -309,7 +437,11 @@ export default function Overview() {
           <div className="text-sm text-gray-500">本机访问默认放行，无需 API Key</div>
         </div>
 
-        {queueItems.length ? (
+        {blocks.queue.loading && !blocks.queue.loaded ? (
+          <BlockMessage message="执行队列加载中..." />
+        ) : blocks.queue.error && !blocks.queue.loaded ? (
+          <BlockMessage tone="red" message={blocks.queue.error} onRetry={loadQueueBlock} />
+        ) : queueItems.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -340,50 +472,43 @@ export default function Overview() {
                       : !canExecute
                       ? '暂不可执行'
                       : null;
-                  const prob = typeof it?.confidence_prob === 'number' ? it.confidence_prob : null;
-                  const samples = typeof it?.confidence_samples === 'number' ? it.confidence_samples : null;
-                  const confidenceText =
-                    prob !== null ? `把握度=${Math.round(prob * 100)}%${samples !== null ? `（n=${samples}）` : ''}` : '把握度=--';
-                  const noteBase = isBuy ? confidenceText : String(it?.sell_reason || it?.sell_signal || '--');
+                  const prob =
+                    typeof it?.certainty_prob === 'number'
+                      ? it.certainty_prob
+                      : typeof it?.confidence_prob === 'number'
+                      ? it.confidence_prob
+                      : null;
+                  const samples =
+                    typeof it?.certainty_samples === 'number'
+                      ? it.certainty_samples
+                      : typeof it?.confidence_samples === 'number'
+                      ? it.confidence_samples
+                      : null;
+                  const certaintyText =
+                    prob !== null ? `确定性=${Math.round(prob * 100)}%${samples !== null ? `（n=${samples}）` : ''}` : '确定性=--';
+                  const noteBase = isBuy ? certaintyText : String(it?.sell_reason || it?.sell_signal || '--');
                   const note = blockedReason ? `${noteBase}｜${blockedReason}` : noteBase;
-                  const statusLabel =
-                    rawStatus === 'executed'
-                      ? '已处理'
-                      : rawStatus === 'cancelled'
-                      ? cancelReason === 'abandoned'
-                        ? '已放弃'
-                        : cancelReason
-                        ? `已取消（${cancelReason}）`
-                        : '已取消'
-                      : '待处理';
                   const risk = String(it?.risk_level || '').trim();
+                  const statusBadge = queueStatusBadge(rawStatus, cancelReason);
+                  const riskBadge = queueRiskBadge(risk, isSell);
                   return (
                     <tr key={it.intent_id} className="border-b last:border-b-0">
                       <td className="py-2 pr-4 text-gray-700">{typeLabel}</td>
                       <td className="py-2 pr-4">
                         <div className="text-gray-900 font-medium">
-                          {it?.name || '--'} <span className="text-gray-500">{it?.code}</span>
+                          {it?.name || '--'}{' '}
+                          <StockCodeLink code={it?.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                            {it?.code || '--'}
+                          </StockCodeLink>
                         </div>
                         <div className="text-gray-500">{it?.sector || '--'}</div>
                       </td>
                       <td className="py-2 pr-4 text-gray-700">{it?.execute_date || '--'}</td>
                       <td className="py-2 pr-4">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={isPending ? 'text-blue-600 font-semibold' : 'text-gray-700'}>
-                            {statusLabel}
-                          </span>
-                          {risk ? (
-                            <span
-                              className={
-                                risk === 'exit'
-                                  ? 'text-red-600 font-semibold'
-                                  : risk === 'warn'
-                                  ? 'text-orange-600 font-semibold'
-                                  : 'text-green-700 font-semibold'
-                              }
-                            >
-                              {risk}
-                            </span>
+                          <SemanticBadge semanticKey={statusBadge.key} label={statusBadge.label} />
+                          {riskBadge ? (
+                            <SemanticBadge semanticKey={riskBadge.key} label={riskBadge.label} />
                           ) : null}
                         </div>
                       </td>
@@ -392,21 +517,21 @@ export default function Overview() {
                         <div className="flex items-center gap-2">
                           <button
                             className="px-3 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                            disabled={!isPending || !isBuy || !canExecute || loading}
+                            disabled={!isPending || !isBuy || !canExecute || loading || mutating}
                             onClick={() => executeIntent(it.intent_id)}
                           >
                             {isBusy && actionState.kind === 'execute' ? '处理中…' : '买入'}
                           </button>
                           <button
                             className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                            disabled={!isPending || !isSell || !canExecute || loading}
+                            disabled={!isPending || !isSell || !canExecute || loading || mutating}
                             onClick={() => executeIntent(it.intent_id)}
                           >
                             {isBusy && actionState.kind === 'execute' ? '处理中…' : '卖出'}
                           </button>
                           <button
                             className="px-3 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50"
-                            disabled={!isPending || loading}
+                            disabled={!isPending || loading || mutating}
                             onClick={() => markAbandoned(it.intent_id)}
                           >
                             {isBusy && actionState.kind === 'abandon' ? '处理中…' : '放弃'}
@@ -429,30 +554,34 @@ export default function Overview() {
           <FileText size={20} />
           昨日回测（窗口 60 交易日）
         </h3>
-        {data.backtestWindow?._meta?.status === 'ok' ? (
+        {blocks.backtest.loading && !blocks.backtest.loaded ? (
+          <BlockMessage message="昨日回测加载中..." />
+        ) : blocks.backtest.error && !blocks.backtest.loaded ? (
+          <BlockMessage tone="red" message={blocks.backtest.error} onRetry={loadBacktestBlock} />
+        ) : backtestPayload.backtestWindow?._meta?.status === 'ok' ? (
           <div className="flex items-center justify-between gap-3 flex-wrap text-sm">
             <div className="text-gray-700">
-              窗口：{data.backtestWindow.start_date} → {data.backtestWindow.end_date}
+              窗口：{backtestPayload.backtestWindow.start_date} → {backtestPayload.backtestWindow.end_date}
             </div>
             <div className="text-gray-700">
-              总收益：
-              {typeof data.backtestWindow?.report?.summary?.total_return_pct === 'number' ? (
-                <span className={data.backtestWindow.report.summary.total_return_pct >= 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
-                  {data.backtestWindow.report.summary.total_return_pct >= 0 ? '+' : ''}
-                  {data.backtestWindow.report.summary.total_return_pct.toFixed(2)}%
+              窗口回测总收益：
+              {typeof backtestPayload.backtestWindow?.report?.summary?.total_return_pct === 'number' ? (
+                <span className={backtestPayload.backtestWindow.report.summary.total_return_pct >= 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
+                  {backtestPayload.backtestWindow.report.summary.total_return_pct >= 0 ? '+' : ''}
+                  {backtestPayload.backtestWindow.report.summary.total_return_pct.toFixed(2)}%
                 </span>
               ) : (
                 <span className="text-gray-500">--</span>
               )}
             </div>
             <div className="flex items-center gap-3">
-              {data.backtestWindow?.report?.pdf_url ? (
-                <a className="text-blue-600 hover:underline" href={data.backtestWindow.report.pdf_url} target="_blank" rel="noreferrer">
+              {backtestPayload.backtestWindow?.report?.pdf_url ? (
+                <a className="text-blue-600 hover:underline" href={backtestPayload.backtestWindow.report.pdf_url} target="_blank" rel="noreferrer">
                   下载 PDF
                 </a>
               ) : null}
-              {data.backtestWindow?.report?.json_url ? (
-                <a className="text-blue-600 hover:underline" href={data.backtestWindow.report.json_url} target="_blank" rel="noreferrer">
+              {backtestPayload.backtestWindow?.report?.json_url ? (
+                <a className="text-blue-600 hover:underline" href={backtestPayload.backtestWindow.report.json_url} target="_blank" rel="noreferrer">
                   下载 JSON
                 </a>
               ) : null}
@@ -460,7 +589,7 @@ export default function Overview() {
           </div>
         ) : (
           <div className="text-sm text-gray-600">
-            {data.backtestWindow?.message || '未生成该窗口回测报告'}
+            {backtestPayload.backtestWindow?.message || '未生成该窗口回测报告'}
           </div>
         )}
       </div>
@@ -471,7 +600,11 @@ export default function Overview() {
           最新热门板块（Top5）
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {sectors.map((sec, idx) => (
+          {blocks.sectors.loading && !blocks.sectors.loaded ? (
+            <BlockMessage message="热门板块加载中..." />
+          ) : blocks.sectors.error && !blocks.sectors.loaded ? (
+            <BlockMessage tone="red" message={blocks.sectors.error} onRetry={loadSectorsBlock} />
+          ) : topSectors.map((sec, idx) => (
             <div key={idx} className="bg-white rounded-lg border border-gray-200 p-6">
               <div className="flex items-start justify-between mb-4">
                 <div>
@@ -490,42 +623,40 @@ export default function Overview() {
                   <div className="space-y-1">
                     {(sec.leaders || []).slice(0, 2).map((s) => (
                       <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">{s.name} <span className="text-gray-500">{s.code}</span></div>
+                        <div className="text-gray-900">
+                          {s.name}{' '}
+                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                            {s.code || '--'}
+                          </StockCodeLink>
+                        </div>
                         <div className="inline-flex items-center gap-3">
-                          {typeof s.confidence_prob === 'number' ? (
+                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
                             <span className="text-gray-700">
-                              把握度 {Math.round(s.confidence_prob * 100)}%
-                              {typeof s.confidence_samples === 'number' ? (
-                                <span className="text-gray-500">（n={s.confidence_samples}）</span>
+                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
+                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
+                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
                               ) : null}
                             </span>
                           ) : (
-                            <span className="text-gray-500">把握度 —</span>
+                            <span className="text-gray-500">确定性 —</span>
                           )}
-                          {s.risk_level ? (
-                            <span
-                              className={
-                                s.risk_level === 'exit'
-                                  ? 'text-red-600 font-semibold'
-                                  : s.risk_level === 'warn'
-                                  ? 'text-orange-600 font-semibold'
-                                  : 'text-green-700 font-semibold'
-                              }
-                            >
-                              {s.risk_level}
-                            </span>
+                          {conceptRiskBadge(s.risk_level) ? (
+                            <SemanticBadge
+                              semanticKey={conceptRiskBadge(s.risk_level).key}
+                              label={conceptRiskBadge(s.risk_level).label}
+                            />
                           ) : (
                             <span className="text-gray-500">—</span>
                           )}
                           {s.buy_signal ? (
-                            <span className="inline-flex items-center gap-1 text-green-700">
-                              <Target size={14} />
-                              入场
-                            </span>
+                            <div className="inline-flex items-center gap-1">
+                              <Target size={14} className="text-green-700" />
+                              <SemanticBadge semanticKey="entry_ready" label="入场" />
+                            </div>
                           ) : null}
                         </div>
                       </div>
-                    ))}
+          ))}
                   </div>
                 </div>
 
@@ -534,38 +665,36 @@ export default function Overview() {
                   <div className="space-y-1">
                     {(sec.middle || []).slice(0, 2).map((s) => (
                       <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">{s.name} <span className="text-gray-500">{s.code}</span></div>
+                        <div className="text-gray-900">
+                          {s.name}{' '}
+                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                            {s.code || '--'}
+                          </StockCodeLink>
+                        </div>
                         <div className="inline-flex items-center gap-3">
-                          {typeof s.confidence_prob === 'number' ? (
+                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
                             <span className="text-gray-700">
-                              把握度 {Math.round(s.confidence_prob * 100)}%
-                              {typeof s.confidence_samples === 'number' ? (
-                                <span className="text-gray-500">（n={s.confidence_samples}）</span>
+                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
+                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
+                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
                               ) : null}
                             </span>
                           ) : (
-                            <span className="text-gray-500">把握度 —</span>
+                            <span className="text-gray-500">确定性 —</span>
                           )}
-                          {s.risk_level ? (
-                            <span
-                              className={
-                                s.risk_level === 'exit'
-                                  ? 'text-red-600 font-semibold'
-                                  : s.risk_level === 'warn'
-                                  ? 'text-orange-600 font-semibold'
-                                  : 'text-green-700 font-semibold'
-                              }
-                            >
-                              {s.risk_level}
-                            </span>
+                          {conceptRiskBadge(s.risk_level) ? (
+                            <SemanticBadge
+                              semanticKey={conceptRiskBadge(s.risk_level).key}
+                              label={conceptRiskBadge(s.risk_level).label}
+                            />
                           ) : (
                             <span className="text-gray-500">—</span>
                           )}
                           {s.buy_signal ? (
-                            <span className="inline-flex items-center gap-1 text-green-700">
-                              <Target size={14} />
-                              入场
-                            </span>
+                            <div className="inline-flex items-center gap-1">
+                              <Target size={14} className="text-green-700" />
+                              <SemanticBadge semanticKey="entry_ready" label="入场" />
+                            </div>
                           ) : null}
                         </div>
                       </div>
@@ -578,38 +707,36 @@ export default function Overview() {
                   <div className="space-y-1">
                     {(sec.followers || []).slice(0, 2).map((s) => (
                       <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">{s.name} <span className="text-gray-500">{s.code}</span></div>
+                        <div className="text-gray-900">
+                          {s.name}{' '}
+                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                            {s.code || '--'}
+                          </StockCodeLink>
+                        </div>
                         <div className="inline-flex items-center gap-3">
-                          {typeof s.confidence_prob === 'number' ? (
+                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
                             <span className="text-gray-700">
-                              把握度 {Math.round(s.confidence_prob * 100)}%
-                              {typeof s.confidence_samples === 'number' ? (
-                                <span className="text-gray-500">（n={s.confidence_samples}）</span>
+                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
+                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
+                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
                               ) : null}
                             </span>
                           ) : (
-                            <span className="text-gray-500">把握度 —</span>
+                            <span className="text-gray-500">确定性 —</span>
                           )}
-                          {s.risk_level ? (
-                            <span
-                              className={
-                                s.risk_level === 'exit'
-                                  ? 'text-red-600 font-semibold'
-                                  : s.risk_level === 'warn'
-                                  ? 'text-orange-600 font-semibold'
-                                  : 'text-green-700 font-semibold'
-                              }
-                            >
-                              {s.risk_level}
-                            </span>
+                          {conceptRiskBadge(s.risk_level) ? (
+                            <SemanticBadge
+                              semanticKey={conceptRiskBadge(s.risk_level).key}
+                              label={conceptRiskBadge(s.risk_level).label}
+                            />
                           ) : (
                             <span className="text-gray-500">—</span>
                           )}
                           {s.buy_signal ? (
-                            <span className="inline-flex items-center gap-1 text-green-700">
-                              <Target size={14} />
-                              入场
-                            </span>
+                            <div className="inline-flex items-center gap-1">
+                              <Target size={14} className="text-green-700" />
+                              <SemanticBadge semanticKey="entry_ready" label="入场" />
+                            </div>
                           ) : null}
                         </div>
                       </div>
@@ -645,7 +772,11 @@ export default function Overview() {
               <tbody>
                 {portfolio.open_positions.map((pos) => (
                   <tr key={pos.code} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">{pos.code}</td>
+                    <td className="py-3 px-4 text-gray-900">
+                      <StockCodeLink code={pos.code} className="hover:text-blue-600 hover:underline">
+                        {pos.code || '--'}
+                      </StockCodeLink>
+                    </td>
                     <td className="py-3 px-4 text-gray-900">{pos.name}</td>
                     <td className="py-3 px-4 text-gray-500">{pos.sector}</td>
                     <td className="py-3 px-4 text-gray-500">{pos.buy_date || '--'}</td>

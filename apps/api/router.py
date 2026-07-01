@@ -28,9 +28,7 @@ class BootstrapApiRouter:
 
     def dispatch(self, raw_path: str) -> tuple[int, Union[dict[str, Any], ApiBinaryResponse]]:
         parsed = urlparse(raw_path)
-        normalized_path = self._normalize_path(raw_path)
         query = parse_qs(parsed.query)
-        original_parsed = urlparse(normalized_path)
 
         if parsed.path == "/healthz":
             return HTTPStatus.OK, self.service.health()
@@ -50,6 +48,7 @@ class BootstrapApiRouter:
                         "/api — API 文档（本页面）",
                         "/api/trading-day?date=YYYY-MM-DD — 交易日查询",
                         "/api/factor-matrix/daily?date=YYYY-MM-DD — 因子矩阵",
+                        "/api/sector-prosperity/daily?date=YYYY-MM-DD — 高景气板块评分",
                         "/api/market-phase?date=YYYY-MM-DD — 市场阶段",
                         "/api/resonance-score?codes=xxx&date=YYYY-MM-DD — 共振评分",
                         "/api/sector-rotation?date=YYYY-MM-DD — 板块轮动",
@@ -68,13 +67,14 @@ class BootstrapApiRouter:
                     ],
                     "POST": [
                         "/api/factor-matrix/daily/run — 运行因子矩阵",
+                        "/api/sector-prosperity/daily/run — 运行高景气板块评分",
                         "/api/labs/run — 运行实验室",
                         "/api/orchestration/run — 运行编排",
                         "/api/screeners/run — 运行筛选器",
                         "/api/screeners/config/<id> — 更新筛选器配置",
                         "/api/data-control/seed-stock-db — 初始化数据库",
                         "/api/data-control/sync-daily-prices — 同步行情",
-                        "/api/data-control/update-daily-prices/tencent — 腾讯数据更新",
+                        "/api/data/update — authoritative 日线更新",
                     ],
                 },
             }
@@ -84,6 +84,79 @@ class BootstrapApiRouter:
 
         if parsed.path == "/api/sectors/hot" or parsed.path == "/api/v1/sectors/hot":
             return HTTPStatus.OK, self._hot_sectors(query)
+
+        if (
+            parsed.path == "/api/data/sources/assessment"
+            or parsed.path == "/api/v1/data/sources/assessment"
+        ):
+            raw_date = query.get("date", [None])[0]
+            raw_lookback = query.get("lookback_days", ["30"])[0]
+            try:
+                lookback_days = int(str(raw_lookback))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_lookback_days",
+                    message="lookback_days must be an integer",
+                    details={"lookback_days": raw_lookback},
+                )
+            return HTTPStatus.OK, self.service.data_sources_assessment_view(
+                target_date=str(raw_date).strip() if isinstance(raw_date, str) and raw_date.strip() else None,
+                lookback_days=lookback_days,
+            )
+
+        if (
+            parsed.path == "/api/data/history/gaps"
+            or parsed.path == "/api/v1/data/history/gaps"
+        ):
+            raw_start = query.get("start_date", [None])[0]
+            raw_end = query.get("end_date", [None])[0]
+            raw_required = query.get("required_history_days", [None])[0]
+            required_history_days: Optional[int] = None
+            if raw_required is not None:
+                try:
+                    required_history_days = int(str(raw_required))
+                except ValueError:
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_required_history_days",
+                        message="required_history_days must be an integer",
+                        details={"required_history_days": raw_required},
+                    )
+            return HTTPStatus.OK, self.service.historical_data_gaps_view(
+                start_date=str(raw_start).strip() if isinstance(raw_start, str) and raw_start.strip() else None,
+                end_date=str(raw_end).strip() if isinstance(raw_end, str) and raw_end.strip() else None,
+                required_history_days=required_history_days,
+            )
+
+        if (
+            parsed.path == "/api/model/validate/quickstart"
+            or parsed.path == "/api/v1/model/validate/quickstart"
+        ):
+            raw_end = query.get("end_date", [None])[0]
+            raw_window = query.get("window_trading_days", ["60"])[0]
+            try:
+                window_trading_days = int(str(raw_window))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_window_trading_days",
+                    message="window_trading_days must be an integer",
+                    details={"window_trading_days": raw_window},
+                )
+            return HTTPStatus.OK, self.service.model_validation_quickstart_view(
+                end_date=str(raw_end).strip() if isinstance(raw_end, str) and raw_end.strip() else None,
+                window_trading_days=window_trading_days,
+            )
+
+        if (
+            parsed.path == "/api/ashare/midcap/audit"
+            or parsed.path == "/api/v1/ashare/midcap/audit"
+        ):
+            raw_date = query.get("date", [None])[0]
+            return HTTPStatus.OK, self.service.ashare_midcap_audit_view(
+                target_date=str(raw_date).strip() if isinstance(raw_date, str) and raw_date.strip() else None
+            )
 
         if parsed.path == "/api/lowfreq/rsi/regression":
             return HTTPStatus.OK, self._lowfreq_rsi_regression(query)
@@ -425,6 +498,22 @@ class BootstrapApiRouter:
                 debug=debug,
             )
 
+        if parsed.path == "/api/sector-prosperity/daily":
+            raw_date = query.get("date", [date.today().isoformat()])[0]
+            raw_date = str(raw_date)
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            return HTTPStatus.OK, self.service.sector_prosperity_daily_view(
+                target_date=raw_date
+            )
+
         if parsed.path.startswith("/api/factor-matrix/daily/"):
             parts = [part for part in parsed.path.split("/") if part]
             if len(parts) not in {4, 5}:
@@ -459,6 +548,40 @@ class BootstrapApiRouter:
                 target_date=raw_date
             )
 
+        if parsed.path.startswith("/api/sector-prosperity/daily/"):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message="expected /api/sector-prosperity/daily/<date>",
+                    details={"path": parsed.path},
+                )
+            _, _, _, raw_date, *rest = parts
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            if rest:
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message="expected /api/sector-prosperity/daily/<date>/download",
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.sector_prosperity_daily_download_view(
+                    target_date=raw_date
+                )
+            return HTTPStatus.OK, self.service.sector_prosperity_daily_detail_view(
+                target_date=raw_date
+            )
+
         if parsed.path == "/api/stocks/lookup":
             raw_codes = query.get("codes", [])
             codes: list[str] = []
@@ -483,6 +606,123 @@ class BootstrapApiRouter:
         if parsed.path == "/api/stocks/coverage":
             target_date = self._parse_target_date(query)
             return HTTPStatus.OK, self.service.stocks_coverage_view(target_date=target_date)
+
+        if parsed.path == "/api/market-intelligence/candidates":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_candidates_view(
+                top_n=top_n
+            )
+
+        if parsed.path == "/api/market-intelligence/unified-candidates":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_unified_candidates_view(
+                top_n=top_n
+            )
+
+        if parsed.path == "/api/market-intelligence/recommendations":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_recommendations_view(
+                top_n=top_n
+            )
+
+        if parsed.path == "/api/market-intelligence/review-board":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            trade_date = query.get("trade_date", [None])[0]
+            if trade_date is not None and not isinstance(trade_date, str):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_trade_date",
+                    message="trade_date must be a string when provided",
+                    details={"trade_date": trade_date},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_review_board_view(
+                top_n=top_n,
+                trade_date=trade_date,
+            )
+
+        if parsed.path == "/api/market-intelligence/decision-summary":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            trade_date = query.get("trade_date", [None])[0]
+            if trade_date is not None and not isinstance(trade_date, str):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_trade_date",
+                    message="trade_date must be a string when provided",
+                    details={"trade_date": trade_date},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_decision_summary_view(
+                top_n=top_n,
+                trade_date=trade_date,
+            )
+
+        if parsed.path == "/api/market-intelligence/themes":
+            raw_top_n = query.get("top_n", ["20"])[0]
+            try:
+                top_n = int(str(raw_top_n).strip())
+            except (TypeError, ValueError):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": raw_top_n},
+                )
+            trade_date = query.get("trade_date", [None])[0]
+            if trade_date is not None and not isinstance(trade_date, str):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_trade_date",
+                    message="trade_date must be a string when provided",
+                    details={"trade_date": trade_date},
+                )
+            return HTTPStatus.OK, self.service.market_intelligence_theme_board_view(
+                top_n=top_n,
+                trade_date=trade_date,
+            )
 
         if parsed.path == "/api/check-stock":
             raw_code = query.get("code", [None])[0]
@@ -1174,7 +1414,7 @@ class BootstrapApiRouter:
                     details={"dry_run": dry_run},
                 )
 
-            tencent_result = self.service.update_daily_prices_tencent_view(
+            authoritative_result = self.service.update_daily_prices_authoritative_view(
                 target_date=raw_date,
                 requested_by=requested_by.strip(),
                 dry_run=dry_run,
@@ -1212,7 +1452,7 @@ class BootstrapApiRouter:
             return HTTPStatus.OK, {
                 "_meta": {"status": "ok"},
                 "target_date": raw_date,
-                "tencent_update": tencent_result,
+                "authoritative_update": authoritative_result,
                 "v2_sync": v2_sync,
             }
 
@@ -1970,6 +2210,46 @@ class BootstrapApiRouter:
                 debug=debug,
             )
 
+        if path == "/api/sector-prosperity/daily/run":
+            raw_date = body.get("date") or date.today().isoformat()
+            if not isinstance(raw_date, str):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message="date must be a string in YYYY-MM-DD format",
+                    details={"date": raw_date},
+                )
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            requested_by = body.get("requested_by", "api")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_requested_by",
+                    message="requested_by must be a non-empty string",
+                    details={"requested_by": requested_by},
+                )
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_dry_run",
+                    message="dry_run must be a boolean",
+                    details={"dry_run": dry_run},
+                )
+            return HTTPStatus.OK, self.service.sector_prosperity_daily_run_view(
+                target_date=raw_date,
+                requested_by=requested_by.strip(),
+                dry_run=dry_run,
+            )
+
         if path == "/api/labs/run":
             lab_id = body.get("lab_id")
             if not isinstance(lab_id, str) or not lab_id.strip():
@@ -2284,23 +2564,88 @@ class BootstrapApiRouter:
                 target_date=target_date,
             )
 
-        if path == "/api/data-control/update-daily-prices/tencent":
-            raw_date = body.get("date") or date.today().isoformat()
+        if path == "/api/data-control/backfill/daily-prices/tushare":
+            start_date = body.get("start_date") or ""
+            end_date = body.get("end_date") or ""
+            if not isinstance(start_date, str) or not start_date.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_start_date",
+                    message="start_date is required (YYYY-MM-DD)",
+                )
+            if not isinstance(end_date, str) or not end_date.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_end_date",
+                    message="end_date is required (YYYY-MM-DD)",
+                )
+            requested_by = body.get("requested_by", "api")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_requested_by",
+                    message="requested_by must be a non-empty string",
+                    details={"requested_by": requested_by},
+                )
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_dry_run",
+                    message="dry_run must be a boolean",
+                    details={"dry_run": dry_run},
+                )
+            min_close_coverage = body.get("min_close_coverage", 0.99)
+            if not isinstance(min_close_coverage, (int, float)):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_min_close_coverage",
+                    message="min_close_coverage must be a number",
+                    details={"min_close_coverage": min_close_coverage},
+                )
+            min_amount_coverage = body.get("min_amount_coverage", 0.99)
+            if not isinstance(min_amount_coverage, (int, float)):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_min_amount_coverage",
+                    message="min_amount_coverage must be a number",
+                    details={"min_amount_coverage": min_amount_coverage},
+                )
+            min_turnover_coverage = body.get("min_turnover_coverage", 0.0)
+            if not isinstance(min_turnover_coverage, (int, float)):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_min_turnover_coverage",
+                    message="min_turnover_coverage must be a number",
+                    details={"min_turnover_coverage": min_turnover_coverage},
+                )
+            return HTTPStatus.OK, self.service.backfill_daily_prices_tushare_range_view(
+                start_date=str(start_date).strip(),
+                end_date=str(end_date).strip(),
+                requested_by=requested_by.strip(),
+                min_close_coverage=float(min_close_coverage),
+                min_amount_coverage=float(min_amount_coverage),
+                min_turnover_coverage=float(min_turnover_coverage),
+                dry_run=dry_run,
+            )
+
+        if path == "/api/data-control/update-stock-fundamentals/tushare":
+            raw_date = body.get("trade_date") or body.get("date") or date.today().isoformat()
             if not isinstance(raw_date, str):
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_date",
-                    message="date must be a string in YYYY-MM-DD format",
-                    details={"date": raw_date},
+                    code="invalid_trade_date",
+                    message="trade_date must be a string in YYYY-MM-DD format",
+                    details={"trade_date": raw_date},
                 )
             try:
                 date.fromisoformat(raw_date)
             except ValueError:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_date",
-                    message=f"invalid date: {raw_date}",
-                    details={"date": raw_date},
+                    code="invalid_trade_date",
+                    message=f"invalid trade_date: {raw_date}",
+                    details={"trade_date": raw_date},
                 )
 
             requested_by = body.get("requested_by", "api")
@@ -2321,16 +2666,44 @@ class BootstrapApiRouter:
                     details={"dry_run": dry_run},
                 )
 
-            chunk_size = body.get("chunk_size", 200)
-            if not isinstance(chunk_size, int) or chunk_size <= 0:
+            return HTTPStatus.OK, self.service.stock_fundamentals_update_tushare_view(
+                trade_date=raw_date,
+                requested_by=requested_by.strip(),
+                dry_run=dry_run,
+            )
+
+        if path == "/api/data-control/update-financial-reports/tushare":
+            start_period = body.get("start_period") or ""
+            end_period = body.get("end_period") or ""
+            if not isinstance(start_period, str) or not start_period.strip():
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_chunk_size",
-                    message="chunk_size must be a positive integer",
-                    details={"chunk_size": chunk_size},
+                    code="invalid_start_period",
+                    message="start_period is required (YYYYMMDD)",
                 )
-
-            sleep_seconds = body.get("sleep_seconds", 0.2)
+            if not isinstance(end_period, str) or not end_period.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_end_period",
+                    message="end_period is required (YYYYMMDD)",
+                )
+            requested_by = body.get("requested_by", "api")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_requested_by",
+                    message="requested_by must be a non-empty string",
+                    details={"requested_by": requested_by},
+                )
+            max_codes = body.get("max_codes", 0)
+            if max_codes is not None and not isinstance(max_codes, int):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_max_codes",
+                    message="max_codes must be an integer",
+                    details={"max_codes": max_codes},
+                )
+            sleep_seconds = body.get("sleep_seconds", 0.12)
             if not isinstance(sleep_seconds, (int, float)) or float(sleep_seconds) < 0:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
@@ -2338,8 +2711,67 @@ class BootstrapApiRouter:
                     message="sleep_seconds must be a non-negative number",
                     details={"sleep_seconds": sleep_seconds},
                 )
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_dry_run",
+                    message="dry_run must be a boolean",
+                    details={"dry_run": dry_run},
+                )
+            return HTTPStatus.OK, self.service.financial_reports_update_tushare_view(
+                start_period=str(start_period).strip(),
+                end_period=str(end_period).strip(),
+                requested_by=requested_by.strip(),
+                max_codes=int(max_codes) if isinstance(max_codes, int) else 0,
+                sleep_seconds=float(sleep_seconds),
+                dry_run=dry_run,
+            )
 
-            timeout_seconds = body.get("timeout_seconds", 15)
+        if path == "/api/data-control/sync-tushare-market-data":
+            resource = body.get("resource") or ""
+            if not isinstance(resource, str) or not resource.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_resource",
+                    message="resource is required",
+                )
+            requested_by = body.get("requested_by", "api")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_requested_by",
+                    message="requested_by must be a non-empty string",
+                    details={"requested_by": requested_by},
+                )
+            filters = body.get("filters", {})
+            if not isinstance(filters, dict):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_filters",
+                    message="filters must be an object",
+                    details={"filters_type": type(filters).__name__},
+                )
+            fields = body.get("fields")
+            if fields is not None:
+                if not isinstance(fields, list) or any(
+                    not isinstance(item, str) or not item.strip() for item in fields
+                ):
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_fields",
+                        message="fields must be a list of non-empty strings",
+                    )
+                fields = [str(item).strip() for item in fields]
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_dry_run",
+                    message="dry_run must be a boolean",
+                    details={"dry_run": dry_run},
+                )
+            timeout_seconds = body.get("timeout_seconds", 20)
             if not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
@@ -2347,53 +2779,77 @@ class BootstrapApiRouter:
                     message="timeout_seconds must be a positive integer",
                     details={"timeout_seconds": timeout_seconds},
                 )
-
-            max_attempts = body.get("max_attempts", 3)
-            if not isinstance(max_attempts, int) or max_attempts <= 0:
-                raise ApiError(
-                    status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_max_attempts",
-                    message="max_attempts must be a positive integer",
-                    details={"max_attempts": max_attempts},
-                )
-
-            min_close_coverage = body.get("min_close_coverage", 0.99)
-            if not isinstance(min_close_coverage, (int, float)):
-                raise ApiError(
-                    status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_min_close_coverage",
-                    message="min_close_coverage must be a number",
-                    details={"min_close_coverage": min_close_coverage},
-                )
-
-            min_amount_coverage = body.get("min_amount_coverage", 0.99)
-            if not isinstance(min_amount_coverage, (int, float)):
-                raise ApiError(
-                    status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_min_amount_coverage",
-                    message="min_amount_coverage must be a number",
-                    details={"min_amount_coverage": min_amount_coverage},
-                )
-
-            min_turnover_coverage = body.get("min_turnover_coverage", 0.0)
-            if not isinstance(min_turnover_coverage, (int, float)):
-                raise ApiError(
-                    status_code=HTTPStatus.BAD_REQUEST,
-                    code="invalid_min_turnover_coverage",
-                    message="min_turnover_coverage must be a number",
-                    details={"min_turnover_coverage": min_turnover_coverage},
-                )
-
-            return HTTPStatus.OK, self.service.update_daily_prices_tencent_view(
-                target_date=raw_date,
+            return HTTPStatus.OK, self.service.sync_tushare_market_data_view(
+                resource=str(resource).strip(),
                 requested_by=requested_by.strip(),
-                chunk_size=int(chunk_size),
-                sleep_seconds=float(sleep_seconds),
+                filters=filters,
+                fields=fields,
+                dry_run=dry_run,
                 timeout_seconds=int(timeout_seconds),
-                max_attempts=int(max_attempts),
-                min_close_coverage=float(min_close_coverage),
-                min_amount_coverage=float(min_amount_coverage),
-                min_turnover_coverage=float(min_turnover_coverage),
+            )
+
+        if path == "/api/data-control/backfill/ths-concept-daily":
+            start_date = body.get("start_date") or ""
+            end_date = body.get("end_date") or ""
+            if not isinstance(start_date, str) or not start_date.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_start_date",
+                    message="start_date is required (YYYY-MM-DD)",
+                )
+            if not isinstance(end_date, str) or not end_date.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_end_date",
+                    message="end_date is required (YYYY-MM-DD)",
+                )
+            requested_by = body.get("requested_by", "api")
+            if not isinstance(requested_by, str) or not requested_by.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_requested_by",
+                    message="requested_by must be a non-empty string",
+                    details={"requested_by": requested_by},
+                )
+            top_n = body.get("top_n", 10)
+            if not isinstance(top_n, int) or top_n <= 0:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_top_n",
+                    message="top_n must be a positive integer",
+                    details={"top_n": top_n},
+                )
+            leader_k = body.get("leader_k", 5)
+            if not isinstance(leader_k, int) or leader_k <= 0:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_leader_k",
+                    message="leader_k must be a positive integer",
+                    details={"leader_k": leader_k},
+                )
+            limit_days = body.get("limit_days", 0)
+            if limit_days is not None and (not isinstance(limit_days, int) or limit_days < 0):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_limit_days",
+                    message="limit_days must be a non-negative integer",
+                    details={"limit_days": limit_days},
+                )
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_dry_run",
+                    message="dry_run must be a boolean",
+                    details={"dry_run": dry_run},
+                )
+            return HTTPStatus.OK, self.service.ths_concept_mainline_backfill_view(
+                start_date=str(start_date).strip(),
+                end_date=str(end_date).strip(),
+                requested_by=requested_by.strip(),
+                top_n=int(top_n),
+                leader_k=int(leader_k),
+                limit_days=int(limit_days) if isinstance(limit_days, int) else 0,
                 dry_run=dry_run,
             )
 
@@ -2617,67 +3073,26 @@ class BootstrapApiRouter:
         return result
 
     def _get_screener_results(self, screener_id: str) -> dict:
-        import random
-
-        sample_results = [
-            {"code": "600000", "name": "浦发银行", "sector": "金融", "score": 75.5},
-            {"code": "600519", "name": "贵州茅台", "sector": "消费", "score": 82.3},
-            {"code": "000001", "name": "平安银行", "sector": "金融", "score": 68.7},
-            {"code": "300750", "name": "宁德时代", "sector": "新能源", "score": 89.1},
-        ]
-        return {
-            "screener_id": screener_id,
-            "results": sample_results[: random.randint(2, 4)],
-        }
+        raise ApiError(
+            status_code=HTTPStatus.NOT_IMPLEMENTED,
+            code="screener_results_not_implemented",
+            message="screener results endpoint is not implemented",
+            details={
+                "screener_id": str(screener_id),
+                "endpoint": "/api/v1/screeners/<screener_id>/results",
+            },
+        )
 
     def _check_stock(self, code: str) -> dict:
-        import random
-
-        stock_name = ""
-        try:
-            import sqlite3
-
-            db_path = self.service.project_root / "var/db/stock_data.db"
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT name, sector_lv1 FROM stocks WHERE code = ?", (code,))
-            row = cursor.fetchone()
-            if row:
-                stock_name = row[0] or ""
-        except Exception:
-            pass
-
-        all_screeners = [
-            {"id": "cup_handle_v4", "name": "杯柄形态"},
-            {"id": "daily_hot_cold", "name": "冷热筛选"},
-            {"id": "er_ban", "name": "二板"},
-            {"id": "jin_feng", "name": "金风"},
-            {"id": "yin_feng", "name": "阴风"},
-            {"id": "shi_pan", "name": "试盘"},
-            {"id": "zhang_ting", "name": "涨停"},
-        ]
-
-        passed = []
-        failed = []
-
-        for s in all_screeners:
-            if random.random() > 0.5:
-                passed.append(
-                    {"id": s["id"], "name": s["name"], "score": round(70 + random.random() * 30, 1)}
-                )
-            else:
-                failed.append({"id": s["id"], "name": s["name"], "reason": "不符合筛选条件"})
-
-        return {
-            "code": code,
-            "name": stock_name or "未知股票",
-            "passed_screeners": passed,
-            "failed_screeners": failed,
-            "sector": "科技",
-            "tier": "中军",
-            "rps": 72.5,
-            "certainty": 68.3,
-        }
+        raise ApiError(
+            status_code=HTTPStatus.NOT_IMPLEMENTED,
+            code="stock_check_not_implemented",
+            message="stock check endpoint is not implemented",
+            details={
+                "stock_code": str(code),
+                "endpoint": "/api/v1/stock/<code>/check",
+            },
+        )
 
     @staticmethod
     def _parse_target_date(query: dict[str, list[str]]) -> date:

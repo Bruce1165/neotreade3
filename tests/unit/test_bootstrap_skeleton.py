@@ -5,9 +5,11 @@ from http.server import ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import pytest
 import sqlite3
 import shutil
 from threading import Thread
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from apps.api.main import (
@@ -21,19 +23,30 @@ from apps.dashboard.main import (
     build_handler as build_dashboard_handler,
 )
 from apps.worker.main import BootstrapWorkerApp
+import apps.worker.main as worker_main
 from neotrade3.config_contracts import ConfigContractError, build_config_contract_report
-from neotrade3.data_control import DataControlPipeline, DataControlStage, SourceRegistry
-from neotrade3.issue_center import IssueCenterCollector, IssueSeverity
+from neotrade3.data_control import (
+    DataControlPipeline,
+    DataControlStage,
+    DataControlStepResult,
+    SourceRegistry,
+)
+from neotrade3.issue_center import IssueCase, IssueCenterCollector, IssueSeverity
 from neotrade3.labs import LabRegistry, LabRuntimeAdapter
 from neotrade3.learning import EvaluationDecision, LearningLoopPipeline
 from neotrade3.migration import load_feature_inventory
 from neotrade3.orchestration import (
     DailyMasterOrchestrator,
+    DailyRunPlan,
     DailyRunRequest,
+    OrchestrationPhase,
+    PlannedTask,
     RunStatus,
+    TaskResult,
     load_orchestrator_config,
 )
 from neotrade3.orchestration.config_loader import orchestrator_config_from_dict
+from neotrade3.orchestration.preflight import PreflightRunner
 from neotrade3.screeners.cli import build_parser as build_screener_cli_parser
 from neotrade3.screeners.runtime import run_placeholder as run_screener_placeholder
 
@@ -48,12 +61,42 @@ FEATURE_INVENTORY_FILE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _release_bootstrap_lock_between_tests():
+    PreflightRunner.release_lock(PROJECT_ROOT)
+    try:
+        yield
+    finally:
+        PreflightRunner.release_lock(PROJECT_ROOT)
+
+
+class _FastLabAdapter:
+    def run_job(self, *, task_id, target_date, lab_id, project_root):
+        return {
+            "task_id": task_id,
+            "lab_id": lab_id,
+            "status": "skipped",
+            "message": "fast test stub",
+            "target_date": (
+                target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+            ),
+            "artifacts": [],
+            "picks_count": 0,
+        }
+
+
+def _install_fast_lab_runtime(monkeypatch: pytest.MonkeyPatch, worker_app: BootstrapWorkerApp) -> None:
+    monkeypatch.setattr(worker_app, "_get_lab_adapter", lambda: _FastLabAdapter())
+
+
 def test_lab_registry_loads_expected_bootstrap_labs() -> None:
     registry = LabRegistry.from_file(LABS_CONFIG)
 
     assert registry.version == 1
-    assert len(registry.enabled_labs()) == 4
+    assert len(registry.enabled_labs()) == 3
     assert registry.get_lab("cup_handle_lab") is not None
+    assert registry.get_lab("five_flags_lab") is not None
+    assert registry.get_lab("five_flags_lab").enabled is False
     assert (
         registry.get_lab("cup_handle_lab").daily_jobs[0].task_id
         == "cup_handle_lab.daily_review"
@@ -148,6 +191,43 @@ def test_data_control_pipeline_exposes_capture_compose_publish_plan() -> None:
     ]
 
 
+def test_bootstrap_worker_data_control_executor_uses_step_result_status() -> None:
+    class _FakeDataControlPipeline:
+        def capture(self, *, target_date, requested_by="test", dry_run=False):
+            return DataControlStepResult(
+                stage=DataControlStage.CAPTURE,
+                status="failed",
+                message=f"capture failed for {target_date.isoformat()}",
+            )
+
+        def compose(self, *, target_date, requested_by="test", dry_run=False):
+            raise AssertionError("compose should not be called")
+
+        def publish(self, *, target_date, requested_by="test", dry_run=False):
+            raise AssertionError("publish should not be called")
+
+        def build_plan(self, target_date):
+            raise AssertionError("build_plan should not be called")
+
+    app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
+    executor = app._create_data_control_executor(_FakeDataControlPipeline())
+    result = executor(
+        PlannedTask(
+            task_id="data_control.capture",
+            phase=OrchestrationPhase.DATA_PIPELINE,
+            lab_id=None,
+            entrypoint="fake.capture",
+            depends_on=[],
+            outputs=[],
+            requires_publish_status=False,
+        ),
+        {"target_date": date(2026, 5, 19)},
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert result.message == "capture failed for 2026-05-19"
+
+
 def test_screener_cli_parser_requires_screener_id() -> None:
     parser = build_screener_cli_parser()
     try:
@@ -187,24 +267,27 @@ def test_data_control_source_registry_and_plan_ledger_load() -> None:
     ledger_entries = pipeline.build_plan_ledger(plan)
 
     assert registry.version == 1
-    assert len(registry.enabled_sources()) == 2
+    assert len(registry.enabled_sources()) == len(registry.sources)
     assert len(registry.sources_for_stage("capture")) >= 1
     assert len(ledger_entries) == 3
     assert any(entry.stage == "publish" for entry in ledger_entries)
 
 
 def test_config_contract_report_is_clean_for_current_bootstrap_configs() -> None:
+    source_registry = SourceRegistry.from_file(SOURCE_REGISTRY_CONFIG)
     report = build_config_contract_report(
-        source_registry=SourceRegistry.from_file(SOURCE_REGISTRY_CONFIG),
+        source_registry=source_registry,
         lab_registry=LabRegistry.from_file(LABS_CONFIG),
         orchestrator_config=load_orchestrator_config(ORCHESTRATOR_CONFIG),
     )
 
     assert report.status == "ok"
     assert report.issues == []
-    assert report.enabled_source_count == 2
-    assert report.enabled_lab_count == 4
-    assert report.orchestrator_lab_task_count == 4
+    assert report.source_count == len(source_registry.sources)
+    assert report.enabled_source_count == len(source_registry.enabled_sources())
+    assert report.lab_count == 4
+    assert report.enabled_lab_count == 3
+    assert report.orchestrator_lab_task_count == 3
 
 
 def test_neotrade2_feature_inventory_has_required_fields() -> None:
@@ -229,6 +312,104 @@ def test_neotrade2_feature_inventory_has_required_fields() -> None:
     assert all(item["data_sources"] for item in items)
     assert all(item["owner_modules"] for item in items)
     assert all(item["evidence"] for item in items)
+
+
+def test_lowfreq_market_cap_range_is_100_to_2500_billion() -> None:
+    from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, LowFreqV16Config
+
+    assert float(LowFreqTradingEngineV16.MARKET_CAP_MIN) == 100e8
+    assert float(LowFreqTradingEngineV16.MARKET_CAP_MAX) == 2500e8
+    assert float(LowFreqV16Config.MARKET_CAP_MIN) == 100e8
+    assert float(LowFreqV16Config.MARKET_CAP_MAX) == 2500e8
+
+
+def test_signals_view_exposes_buy_sell_hold_flags() -> None:
+    from datetime import date as _date
+    import tempfile
+
+    import apps.api.main as api_main
+
+    class _FakeSignalsResult:
+        def to_dict(self) -> dict:
+            return {
+                "target_date": "2026-06-08",
+                "market_phase": "bull",
+                "summary": {"total_analyzed": 2, "buy_signals": 1, "sell_signals": 1, "grade_distribution": {"A": 0, "B": 0, "C": 2}},
+                "signals": [
+                    {"signal_id": "s1", "code": "000001", "name": "X", "direction": "buy", "grade": "C"},
+                    {"signal_id": "s2", "code": "000002", "name": "Y", "direction": "sell", "grade": "C"},
+                ],
+            }
+
+    class _FakeSignalGenerator:
+        def __init__(self, db_path: str) -> None:
+            self.db_path = db_path
+
+        def generate(self, *, codes=None, target_date=None, min_grade=None):
+            return _FakeSignalsResult()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        (root / "config").mkdir(parents=True, exist_ok=True)
+        (root / "var/db").mkdir(parents=True, exist_ok=True)
+        db_path = root / "var/db/stock_data.db"
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute("CREATE TABLE trading_calendar_cache (trade_date TEXT PRIMARY KEY)")
+            conn.execute(
+                """
+                CREATE TABLE daily_prices (
+                    trade_date TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    preclose REAL,
+                    pct_change REAL,
+                    PRIMARY KEY (trade_date, code)
+                )
+                """
+            )
+            conn.execute("INSERT INTO trading_calendar_cache(trade_date) VALUES (?)", ("2026-06-09",))
+            conn.execute(
+                "INSERT INTO daily_prices(trade_date, code, open, high, low, close, volume, amount, preclose, pct_change) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("2026-06-08", "000001", 10, 11, 9, 10.5, 100, 1000, 10, 5),
+            )
+            conn.execute(
+                "INSERT INTO daily_prices(trade_date, code, open, high, low, close, volume, amount, preclose, pct_change) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("2026-06-08", "000002", 20, 21, 19, 20.5, 200, 2000, 20, 2.5),
+            )
+            conn.execute(
+                "INSERT INTO daily_prices(trade_date, code, open, high, low, close, volume, amount, preclose, pct_change) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("2026-06-09", "000001", 10.6, 11, 10, 10.8, 110, 1100, 10.5, 2),
+            )
+            conn.execute(
+                "INSERT INTO daily_prices(trade_date, code, open, high, low, close, volume, amount, preclose, pct_change) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("2026-06-09", "000002", 20.6, 21, 20, 20.8, 210, 2100, 20.5, 1),
+            )
+
+        original_generator = api_main.SignalGenerator
+        api_main.SignalGenerator = _FakeSignalGenerator
+        try:
+            service = api_main.BootstrapApiService(project_root=root)
+            payload = service.signals_view(
+                target_date=_date.fromisoformat("2026-06-08"),
+                codes=["000001", "000002"],
+                min_grade="C",
+            )
+        finally:
+            api_main.SignalGenerator = original_generator
+
+    assert isinstance(payload.get("signals"), list)
+    by_code = {it.get("code"): it for it in payload["signals"]}
+    assert by_code["000001"]["buy_signal"] is True
+    assert by_code["000001"]["sell_signal"] is False
+    assert by_code["000001"]["hold_signal"] is False
+    assert by_code["000002"]["buy_signal"] is False
+    assert by_code["000002"]["sell_signal"] is True
+    assert by_code["000002"]["hold_signal"] is False
 
 
 def test_lab_registry_rejects_missing_artifact_contracts() -> None:
@@ -280,6 +461,161 @@ def test_orchestrator_config_rejects_unknown_dependencies() -> None:
 
     assert error.scope == "orchestrator config"
     assert any("undefined depends_on tasks" in issue for issue in error.issues)
+
+
+def test_daily_master_orchestrator_blocks_when_dependency_was_skipped() -> None:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    plan = orchestrator.build_run_plan(
+        DailyRunRequest(target_date=date(2026, 5, 19), publish_succeeded=True)
+    )
+    plan.planned_tasks = [
+        PlannedTask(
+            task_id="upstream.skip",
+            phase=OrchestrationPhase.DATA_PIPELINE,
+            lab_id=None,
+            entrypoint="fake.skip",
+            depends_on=[],
+            outputs=[],
+            requires_publish_status=False,
+            status=RunStatus.SKIPPED,
+            skip_reason="test skip",
+        ),
+        PlannedTask(
+            task_id="downstream.run",
+            phase=OrchestrationPhase.DAILY_LAB_JOBS,
+            lab_id=None,
+            entrypoint="fake.run",
+            depends_on=["upstream.skip"],
+            outputs=[],
+            requires_publish_status=False,
+        ),
+    ]
+    executed: list[str] = []
+
+    def _executor(task, context):
+        executed.append(task.task_id)
+        raise AssertionError("downstream executor should not run")
+
+    results = orchestrator.execute_run_plan(
+        plan,
+        {OrchestrationPhase.DAILY_LAB_JOBS: _executor},
+        {},
+    )
+
+    assert [item.status for item in results] == [RunStatus.SKIPPED, RunStatus.BLOCKED]
+    assert executed == []
+
+
+def test_daily_master_orchestrator_blocks_when_dependency_not_completed_yet() -> None:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    plan = orchestrator.build_run_plan(
+        DailyRunRequest(target_date=date(2026, 5, 19), publish_succeeded=True)
+    )
+    plan.planned_tasks = [
+        PlannedTask(
+            task_id="downstream.run",
+            phase=OrchestrationPhase.DAILY_LAB_JOBS,
+            lab_id=None,
+            entrypoint="fake.run",
+            depends_on=["upstream.late"],
+            outputs=[],
+            requires_publish_status=False,
+        ),
+        PlannedTask(
+            task_id="upstream.late",
+            phase=OrchestrationPhase.DATA_PIPELINE,
+            lab_id=None,
+            entrypoint="fake.ok",
+            depends_on=[],
+            outputs=[],
+            requires_publish_status=False,
+        ),
+    ]
+    executed: list[str] = []
+
+    def _executor(task, context):
+        executed.append(task.task_id)
+        return task
+
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.DAILY_LAB_JOBS: _executor,
+            OrchestrationPhase.DATA_PIPELINE: _executor,
+        },
+        {},
+    )
+
+    assert results[0].status == RunStatus.BLOCKED
+    assert results[1] is plan.planned_tasks[1]
+    assert executed == ["upstream.late"]
+
+
+def test_bootstrap_worker_execution_plan_unblocks_publish_gated_tasks() -> None:
+    app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
+    plan = DailyRunPlan(
+        target_date=date(2026, 5, 19),
+        phases=[
+            OrchestrationPhase.DATA_PIPELINE,
+            OrchestrationPhase.PUBLISH_GATED_JOBS,
+        ],
+        planned_tasks=[
+            PlannedTask(
+                task_id="data_control.publish",
+                phase=OrchestrationPhase.DATA_PIPELINE,
+                lab_id=None,
+                entrypoint="fake.publish",
+                depends_on=[],
+                outputs=[],
+                requires_publish_status=False,
+            ),
+            PlannedTask(
+                task_id="paper_simulation_lab.daily_run",
+                phase=OrchestrationPhase.PUBLISH_GATED_JOBS,
+                lab_id="paper_simulation_lab",
+                entrypoint="fake.lab",
+                depends_on=["data_control.publish"],
+                outputs=[],
+                requires_publish_status=True,
+                status=RunStatus.BLOCKED,
+                skip_reason="publish_not_successful",
+            ),
+        ],
+    )
+
+    execution_plan = app._build_execution_run_plan(plan)
+
+    assert plan.planned_tasks[1].status == RunStatus.BLOCKED
+    assert execution_plan.planned_tasks[1].status == RunStatus.PLANNED
+    assert execution_plan.planned_tasks[1].skip_reason is None
+
+
+def test_bootstrap_worker_uses_effective_publish_status_from_task_results() -> None:
+    app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
+
+    failed_results = [
+        TaskResult(
+            task_id="data_control.publish",
+            phase=OrchestrationPhase.DATA_PIPELINE,
+            status=RunStatus.FAILED,
+        )
+    ]
+    ok_results = [
+        TaskResult(
+            task_id="data_control.publish",
+            phase=OrchestrationPhase.DATA_PIPELINE,
+            status=RunStatus.OK,
+        )
+    ]
+
+    assert app._effective_publish_succeeded(failed_results) is False
+    assert app._effective_publish_succeeded(ok_results) is True
 
 
 def test_issue_center_collects_placeholder_orchestration_signals() -> None:
@@ -340,10 +676,84 @@ def test_learning_loop_builds_metrics_candidates_and_audit_records() -> None:
     )
 
 
-def test_bootstrap_worker_writes_snapshot_files(tmp_path: Path) -> None:
+def test_issue_center_root_cause_does_not_treat_debug_as_database_error() -> None:
+    collector = IssueCenterCollector()
+    case = IssueCase(
+        case_id="case:debug",
+        target_date=date(2026, 5, 19),
+        task_id="debug.task",
+        phase="test",
+        severity=IssueSeverity.ERROR,
+        status="failed",
+        lab_id=None,
+        summary="debug mode enabled for verbose tracing",
+    )
+
+    analysis = collector._analyze_root_cause(case, event=None, entry=None)
+
+    assert analysis.cause_category != "data"
+    assert analysis.primary_cause != "数据库访问失败"
+
+
+def test_issue_center_root_cause_does_not_treat_generic_path_word_as_filesystem_error() -> None:
+    collector = IssueCenterCollector()
+    case = IssueCase(
+        case_id="case:path",
+        target_date=date(2026, 5, 19),
+        task_id="path.task",
+        phase="test",
+        severity=IssueSeverity.ERROR,
+        status="failed",
+        lab_id=None,
+        summary="execution path switched to fallback branch",
+    )
+
+    analysis = collector._analyze_root_cause(case, event=None, entry=None)
+
+    assert analysis.cause_category != "environment"
+    assert analysis.primary_cause != "文件系统或路径问题"
+
+
+def test_issue_center_root_cause_keeps_matching_real_database_and_path_errors() -> None:
+    collector = IssueCenterCollector()
+    db_case = IssueCase(
+        case_id="case:sqlite",
+        target_date=date(2026, 5, 19),
+        task_id="db.task",
+        phase="test",
+        severity=IssueSeverity.ERROR,
+        status="failed",
+        lab_id=None,
+        summary="sqlite database locked during write",
+    )
+    path_case = IssueCase(
+        case_id="case:file",
+        target_date=date(2026, 5, 19),
+        task_id="file.task",
+        phase="test",
+        severity=IssueSeverity.ERROR,
+        status="failed",
+        lab_id=None,
+        summary="file not found while reading ledger",
+    )
+
+    db_analysis = collector._analyze_root_cause(db_case, event=None, entry=None)
+    path_analysis = collector._analyze_root_cause(path_case, event=None, entry=None)
+
+    assert db_analysis.cause_category == "data"
+    assert db_analysis.primary_cause == "数据库访问失败"
+    assert path_analysis.cause_category == "environment"
+    assert path_analysis.primary_cause == "文件系统或路径问题"
+
+
+def test_bootstrap_worker_writes_snapshot_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
     app.paths["ledgers_root"] = tmp_path / "ledgers"
     app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, app)
 
     snapshot = app.run(
         target_date=date(2026, 5, 19),
@@ -356,6 +766,31 @@ def test_bootstrap_worker_writes_snapshot_files(tmp_path: Path) -> None:
     assert (tmp_path / "ledgers/2026-05-19/orchestration_run_snapshot.json").exists()
     assert (tmp_path / "artifacts/2026-05-19/issue_center_snapshot.json").exists()
     assert (tmp_path / "artifacts/2026-05-19/learning_snapshot.json").exists()
+
+
+def test_bootstrap_worker_writes_summary_artifact_with_orchestration_excerpt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
+    app.paths["ledgers_root"] = tmp_path / "ledgers"
+    app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, app)
+
+    snapshot = app.run(
+        target_date=date(2026, 5, 19),
+        publish_succeeded=False,
+        write_outputs=True,
+    )
+
+    summary_path = tmp_path / "artifacts/2026-05-19/bootstrap_run_summary.json"
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert payload["target_date"] == "2026-05-19"
+    assert payload["publish_succeeded"] == snapshot["publish_succeeded"]
+    assert payload["requested_publish_succeeded"] is False
+    assert payload["summary"] == snapshot["summary"]
+    assert payload["orchestration"]["task_results"] == snapshot["orchestration"]["task_results"]
 
 
 def test_bootstrap_api_service_and_router_expose_read_only_snapshot() -> None:
@@ -516,10 +951,14 @@ def test_bootstrap_api_feature_mapping_coverage_is_complete() -> None:
         assert report["extra_count"] == 0
 
 
-def test_bootstrap_api_service_reads_stored_snapshot_files(tmp_path: Path) -> None:
+def test_bootstrap_api_service_reads_stored_snapshot_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = BootstrapWorkerApp(project_root=PROJECT_ROOT)
     app.paths["ledgers_root"] = tmp_path / "ledgers"
     app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, app)
     app.run(
         target_date=date(2026, 5, 19),
         publish_succeeded=False,
@@ -547,12 +986,219 @@ def test_bootstrap_api_service_reads_stored_snapshot_files(tmp_path: Path) -> No
     assert "issue_center" in issue_payload
 
 
+def test_orchestration_run_view_uses_worker_runtime_and_writes_wrapper_files(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    captured: dict[str, object] = {}
+    original_require_trading_day = service.require_trading_day
+    original_worker_run = service.worker_app.run
+
+    def _fake_require_trading_day(*, target_date, requested_by="api"):
+        return {"is_trading_day": True, "date": target_date, "source": requested_by}
+
+    def _fake_worker_run(
+        target_date,
+        publish_succeeded,
+        write_outputs,
+        *,
+        requested_by="BootstrapWorkerApp.run",
+        dry_run=False,
+    ):
+        captured["target_date"] = target_date.isoformat()
+        captured["publish_succeeded"] = publish_succeeded
+        captured["write_outputs"] = write_outputs
+        captured["requested_by"] = requested_by
+        captured["dry_run"] = dry_run
+        return {
+            "target_date": target_date.isoformat(),
+            "publish_succeeded": True,
+            "requested_publish_succeeded": False,
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "data_control.publish",
+                        "phase": "data_pipeline",
+                        "status": "ok",
+                        "message": "publish ok",
+                        "artifact_refs": [],
+                    }
+                ]
+            },
+            "summary": {"planned_task_count": 1},
+        }
+
+    service.require_trading_day = _fake_require_trading_day
+    service.worker_app.run = _fake_worker_run
+    try:
+        payload = service.orchestration_run_view(
+            target_date="2026-05-19",
+            publish_succeeded=False,
+            requested_by="test",
+            dry_run=False,
+        )
+    finally:
+        service.require_trading_day = original_require_trading_day
+        service.worker_app.run = original_worker_run
+
+    ledger_path = tmp_path / "var/ledgers/orchestration_runs/2026-05-19/orchestrator_run.json"
+    artifact_path = tmp_path / "var/artifacts/orchestration_runs/2026-05-19/orchestrator_result.json"
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert captured == {
+        "target_date": "2026-05-19",
+        "publish_succeeded": False,
+        "write_outputs": False,
+        "requested_by": "test",
+        "dry_run": False,
+    }
+    assert payload["_meta"]["status"] == "ok"
+    assert payload["orchestrator_run"]["publish_succeeded"] is True
+    assert ledger_payload["publish_succeeded"] is True
+    assert artifact_payload["tasks"][0]["task_id"] == "data_control.publish"
+
+
+def test_worker_main_returns_nonzero_for_blocked_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {"target_date": "2026-05-19", "publish_succeeded": False, "dry_run": True},
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _BlockedApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run(self, *, target_date, publish_succeeded, write_outputs):
+            return {
+                "status": "blocked",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 0},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _BlockedApp)
+
+    assert worker_main.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "blocked"
+
+
+def test_worker_main_returns_zero_for_ok_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {"target_date": "2026-05-19", "publish_succeeded": False, "dry_run": True},
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _OkApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run(self, *, target_date, publish_succeeded, write_outputs):
+            return {
+                "status": "ok",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _OkApp)
+
+    assert worker_main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+
+
+def test_issue_center_loads_baseline_from_summary_artifact(tmp_path: Path) -> None:
+    baseline_date = date(2026, 5, 18)
+    summary_path = (
+        tmp_path
+        / "var/artifacts/bootstrap_runs"
+        / baseline_date.isoformat()
+        / "bootstrap_run_summary.json"
+    )
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "target_date": baseline_date.isoformat(),
+                "publish_succeeded": True,
+                "requested_publish_succeeded": False,
+                "summary": {"planned_task_count": 1},
+                "orchestration": {
+                    "task_results": [
+                        {"task_id": "data_control.publish", "status": "ok"}
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    collector = IssueCenterCollector(project_root=tmp_path)
+    baseline = collector._load_baseline("data_control.publish", date(2026, 5, 19))
+
+    assert baseline is not None
+    assert baseline["status"] == "ok"
+    assert baseline["success_rate"] == 1.0
+
+
+def test_issue_center_detects_ok_status_as_success_for_degradation() -> None:
+    collector = IssueCenterCollector(project_root=PROJECT_ROOT)
+    original_loader = collector._load_baseline
+    collector._load_baseline = lambda task_id, target_date: {
+        "date": date(2026, 5, 18),
+        "success_rate": 1.0,
+        "status": "ok",
+    }
+    try:
+        degradation = collector._detect_degradation(
+            IssueCase(
+                case_id="case:data_control.publish",
+                target_date=date(2026, 5, 19),
+                task_id="data_control.publish",
+                phase="data_pipeline",
+                severity=IssueSeverity.ERROR,
+                status="ok",
+                lab_id=None,
+                summary="publish ok",
+            ),
+            date(2026, 5, 19),
+        )
+    finally:
+        collector._load_baseline = original_loader
+
+    assert degradation.current_value == 1.0
+    assert degradation.is_degradation is False
+
+
 def test_bootstrap_api_reports_structured_errors_and_invalid_source(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     service.worker_app.paths["ledgers_root"] = tmp_path / "ledgers"
     service.worker_app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, service.worker_app)
     router = BootstrapApiRouter(service)
 
     try:
@@ -693,7 +1339,13 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
                 payload["screener_result"]["parameters"]["universe_filters"][
                     "min_market_cap"
                 ]
-                == 123
+                == 20_000_000_000.0
+            )
+            assert (
+                payload["screener_result"]["parameters"]["universe_filters"][
+                    "max_market_cap"
+                ]
+                == 50_000_000_000.0
             )
 
         with urlopen(
@@ -720,7 +1372,12 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
         body = json.dumps(
             {
                 "requested_by": "test",
-                "current_parameters": {"universe_filters": {"min_market_cap": 123.0}},
+                "current_parameters": {
+                    "universe_filters": {
+                        "min_market_cap": 20_000_000_000.0,
+                        "max_market_cap": 50_000_000_000.0,
+                    }
+                },
             }
         ).encode("utf-8")
         request = Request(
@@ -738,7 +1395,13 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
                 payload["screener_config"]["current_parameters"]["universe_filters"][
                     "min_market_cap"
                 ]
-                == 123.0
+                == 20_000_000_000.0
+            )
+            assert (
+                payload["screener_config"]["current_parameters"]["universe_filters"][
+                    "max_market_cap"
+                ]
+                == 50_000_000_000.0
             )
 
         body = json.dumps(
@@ -747,7 +1410,12 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
                 "date": "2026-05-19",
                 "requested_by": "test",
                 "dry_run": False,
-                "parameters": {"universe_filters": {"min_market_cap": 456}},
+                "parameters": {
+                    "universe_filters": {
+                        "min_market_cap": 25_000_000_000.0,
+                        "max_market_cap": 50_000_000_000.0,
+                    }
+                },
             }
         ).encode("utf-8")
         request = Request(
@@ -767,7 +1435,13 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
                 payload["screener_result"]["parameters"]["universe_filters"][
                     "min_market_cap"
                 ]
-                == 456
+                == 25_000_000_000.0
+            )
+            assert (
+                payload["screener_result"]["parameters"]["universe_filters"][
+                    "max_market_cap"
+                ]
+                == 50_000_000_000.0
             )
 
         artifact_path = (
@@ -791,7 +1465,9 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
             csv_text = response.read().decode("utf-8-sig")
             lines = [line for line in csv_text.splitlines() if line.strip()]
             assert lines[0] == "rank,stock_code,stock_name"
-            assert any(",000001," in line for line in lines[1:])
+            assert any(
+                (",000001," in line) or (",000001.SZ," in line) for line in lines[1:]
+            )
 
         bulk_result_path = (
             PROJECT_ROOT / "var/artifacts/screener_runs/2026-05-19/bulk_run_result.json"
@@ -926,6 +1602,56 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
                 calendar_path.write_text(previous_calendar_text, encoding="utf-8")
 
 
+def test_v1_screener_results_endpoint_returns_not_implemented() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    handler = build_handler(service)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/v1/screeners/cup_handle_v4/results",
+            method="GET",
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(request)
+
+        assert exc_info.value.code == 501
+        payload = json.loads(exc_info.value.read().decode("utf-8"))
+        assert payload["error"]["code"] == "screener_results_not_implemented"
+        assert payload["error"]["details"]["screener_id"] == "cup_handle_v4"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_v1_stock_check_endpoint_returns_not_implemented() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    handler = build_handler(service)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/v1/stock/000001/check",
+            method="GET",
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(request)
+
+        assert exc_info.value.code == 501
+        payload = json.loads(exc_info.value.read().decode("utf-8"))
+        assert payload["error"]["code"] == "stock_check_not_implemented"
+        assert payload["error"]["details"]["stock_code"] == "000001"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None:
     test_db_path = PROJECT_ROOT / "var/db/test_daily_hot_cold_stock_data.db"
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -943,11 +1669,11 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO daily_prices(trade_date,code,amount) VALUES (?,?,?)",
@@ -1022,7 +1748,7 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
             assert response.status == 200
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["screener_result"]["status"] == "ok"
-            assert payload["screener_result"]["picks"] == ["600519"]
+            assert payload["screener_result"]["picks"] == ["000001"]
             assert isinstance(payload["screener_result"]["decision_trace"], list)
             assert payload["screener_result"]["decision_trace"]
 
@@ -1033,7 +1759,7 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
             csv_text = response.read().decode("utf-8-sig")
             lines = [line for line in csv_text.splitlines() if line.strip()]
             assert lines[0] == "rank,stock_code,stock_name"
-            assert any(",600519," in line for line in lines[1:])
+            assert any(",000001," in line for line in lines[1:])
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/pools?date=2026-05-19"
@@ -1049,7 +1775,7 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
         ) as response:
             assert response.status == 200
             payload = json.loads(response.read().decode("utf-8"))
-            assert "600519" in payload["pool"]["members"]
+            assert "000001" in payload["pool"]["members"]
 
         body = json.dumps(
             {
@@ -1127,11 +1853,11 @@ def test_er_ban_hui_tiao_screener_run_produces_picks_and_decision_trace() -> Non
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO daily_prices(trade_date,code,open,high,low,close,pct_change,amount,volume) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -1315,11 +2041,11 @@ def test_zhang_ting_bei_liang_yin_screener_run_produces_picks_and_decision_trace
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
 
         cursor.execute(
@@ -1472,11 +2198,11 @@ def test_jin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
 
         cursor.execute(
@@ -1638,11 +2364,11 @@ def test_yin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
 
         cursor.execute(
@@ -1801,7 +2527,7 @@ def test_shi_pan_xian_screener_run_produces_picks_and_decision_trace() -> None:
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
 
         for idx, day in enumerate(trading_days):
@@ -1987,11 +2713,11 @@ def test_cup_handle_v4_screener_run_produces_picks_and_decision_trace() -> None:
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("000001", "平安银行", "stock", 0, 200_000_000_000.0),
+            ("000001", "平安银行", "stock", 0, 30_000_000_000.0),
         )
         cursor.execute(
             "INSERT INTO stocks(code,name,asset_type,is_delisted,circulating_market_cap) VALUES (?,?,?,?,?)",
-            ("600519", "贵州茅台", "stock", 0, 900_000_000_000.0),
+            ("600519", "贵州茅台", "stock", 0, 90_000_000_000.0),
         )
 
         left_rim_idx = 30
@@ -2292,6 +3018,15 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
                 == "top5_sectors_by_amount_proxy"
             )
 
+        with urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/sector-prosperity/daily?date=2026-05-19"
+        ) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+            assert payload["_meta"]["status"] == "ok"
+            assert payload["target_date"] == "2026-05-19"
+            assert isinstance(payload["sectors"], list)
+
         body = json.dumps(
             {
                 "lab_id": "cup_handle_lab",
@@ -2386,14 +3121,11 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["target_date"] == "2026-05-19"
 
-        with urlopen(
-            f"http://127.0.0.1:{server.server_port}/api/labs/runs/2026-05-19/five_flags_lab"
-        ) as response:
-            assert response.status == 200
-            payload = json.loads(response.read().decode("utf-8"))
-            assert payload["lab_result"]["lab_id"] == "five_flags_lab"
-            scan = payload["lab_result"]["artifacts"]["five_flags_scan_results"]
-            assert scan["pool"]
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/labs/runs/2026-05-19/five_flags_lab"
+            )
+        assert exc_info.value.code == 404
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/labs/runs/2026-05-19/paper_simulation_lab"
@@ -2470,6 +3202,36 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["_meta"]["status"] == "ok"
             assert payload["factor_matrix_run"]["target_date"] == "2026-05-19"
+            assert "drift_path" in payload["factor_matrix_run"]
+
+        body = json.dumps(
+            {"date": "2026-05-19", "requested_by": "test", "dry_run": False}
+        ).encode("utf-8")
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/sector-prosperity/daily/run",
+            data=body,
+            headers={"Content-Type": "application/json", "X-API-Key": "test-key"},
+            method="POST",
+        )
+        with urlopen(request) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+            assert payload["_meta"]["status"] == "ok"
+            assert payload["sector_prosperity_run"]["target_date"] == "2026-05-19"
+
+        with urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/sector-prosperity/daily/2026-05-19"
+        ) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+            assert payload["_meta"]["status"] == "ok"
+            assert payload["sector_prosperity_daily"]["target_date"] == "2026-05-19"
+
+        with urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/sector-prosperity/daily/2026-05-19/download"
+        ) as response:
+            assert response.status == 200
+            assert "attachment" in response.headers.get("Content-Disposition", "")
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/factor-matrix/daily?date=2026-05-19"
@@ -2486,13 +3248,6 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             assert all_candidates
             assert any(
                 any(
-                    sig.get("source") == "lab" and sig.get("name") == "老鸭头五图"
-                    for sig in cand.get("signals", [])
-                )
-                for cand in all_candidates
-            )
-            assert any(
-                any(
                     sig.get("source") == "lab"
                     and sig.get("name") == "量化模拟交易实验室"
                     for sig in cand.get("signals", [])
@@ -2507,6 +3262,14 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             assert "attachment" in response.headers.get("Content-Disposition", "")
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["target_date"] == "2026-05-19"
+
+        drift_path = (
+            PROJECT_ROOT
+            / "var/ledgers/factor_matrix"
+            / "2026-05-19"
+            / "factor_matrix_drift.json"
+        )
+        assert drift_path.exists()
     finally:
         server.shutdown()
         server.server_close()
@@ -2527,6 +3290,14 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
         shutil.rmtree(
             PROJECT_ROOT / "var/artifacts/factor_matrix" / "2026-05-19",
+            ignore_errors=True,
+        )
+        shutil.rmtree(
+            PROJECT_ROOT / "var/ledgers/sector_prosperity" / "2026-05-19",
+            ignore_errors=True,
+        )
+        shutil.rmtree(
+            PROJECT_ROOT / "var/artifacts/sector_prosperity" / "2026-05-19",
             ignore_errors=True,
         )
         shutil.rmtree(
@@ -2612,10 +3383,14 @@ def test_dashboard_page_builder_loads_static_assets() -> None:
         dashboard_thread.join(timeout=2)
 
 
-def test_http_end_to_end_api_and_error_paths(tmp_path: Path) -> None:
+def test_http_end_to_end_api_and_error_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     worker = BootstrapWorkerApp(project_root=PROJECT_ROOT)
     worker.paths["ledgers_root"] = tmp_path / "ledgers"
     worker.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, worker)
     worker.run(
         target_date=date(2026, 5, 19),
         publish_succeeded=False,
@@ -2625,6 +3400,7 @@ def test_http_end_to_end_api_and_error_paths(tmp_path: Path) -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     service.worker_app.paths["ledgers_root"] = tmp_path / "ledgers"
     service.worker_app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, service.worker_app)
     handler = build_handler(service)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -2718,10 +3494,12 @@ def test_http_end_to_end_api_and_error_paths(tmp_path: Path) -> None:
 
 def test_http_end_to_end_domain_endpoints_cover_current_api_views(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = BootstrapWorkerApp(project_root=PROJECT_ROOT)
     worker.paths["ledgers_root"] = tmp_path / "ledgers"
     worker.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, worker)
     worker.run(
         target_date=date(2026, 5, 19),
         publish_succeeded=False,
@@ -2731,6 +3509,7 @@ def test_http_end_to_end_domain_endpoints_cover_current_api_views(
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     service.worker_app.paths["ledgers_root"] = tmp_path / "ledgers"
     service.worker_app.paths["artifacts_root"] = tmp_path / "artifacts"
+    _install_fast_lab_runtime(monkeypatch, service.worker_app)
     handler = build_handler(service)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -2794,3 +3573,104 @@ def test_http_end_to_end_dashboard_shell_points_to_api() -> None:
         api_server.shutdown()
         api_server.server_close()
         api_thread.join(timeout=2)
+
+
+def test_lowfreq_advance_does_not_execute_pending_when_disallowed() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+
+    calls = {"n": 0}
+
+    def _fake_execute(*args, **kwargs):
+        calls["n"] += 1
+        return {}
+
+    service._lowfreq_execute_pending_intents_for_date = _fake_execute  # type: ignore[attr-defined]
+
+    class DummyEngine:
+        def _get_trading_dates(self, start, end):
+            return [end]
+
+        def generate_sell_signals(self, requested_date, positions):
+            return {"sell_signals": []}
+
+        def generate_buy_signals(self, requested_date):
+            return {"buy_signals": []}
+
+    state = {
+        "settings": {"autopilot_enabled": True},
+        "last_date": None,
+        "positions": {},
+        "cash": 1_000_000.0,
+        "closed_trades": [],
+        "day_index": 0,
+        "manual": {"intents": []},
+    }
+    service._advance_lowfreq_sim_state(  # type: ignore[arg-type]
+        state=state,
+        engine=DummyEngine(),
+        target_date=date(2026, 6, 10),
+        allow_execute=False,
+    )
+    assert calls["n"] == 0
+
+
+def test_trade_execution_rt_postpones_when_no_price() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+
+    service.trading_day_view = (  # type: ignore[method-assign]
+        lambda *, target_date, requested_by="test": {"is_trading_day": True, "date": target_date, "source": "test"}
+    )
+    service._lowfreq_engine_v16 = (  # type: ignore[method-assign]
+        lambda: type(
+            "E",
+            (),
+            {"MAX_POSITIONS": 10, "_count_trading_days": lambda self, a, b: 1},
+        )()
+    )
+    service._lowfreq_get_rt_exec_price = (  # type: ignore[method-assign]
+        lambda *, code, execute_date, timeout_seconds=10: (None, {"status": "error", "reason": "no_price"})
+    )
+    service._lowfreq_next_trading_day = (  # type: ignore[method-assign]
+        lambda after_date: "2026-06-12"
+    )
+
+    state = {
+        "cash": 1_000_000.0,
+        "positions": {},
+        "closed_trades": [],
+        "settings": {"autopilot_enabled": True},
+        "manual": {
+            "intents": [
+                {
+                    "intent_id": "i1",
+                    "intent_type": "buy_intent",
+                    "status": "pending",
+                    "code": "000001",
+                    "requested_date": "2026-06-10",
+                    "execute_date": "2026-06-11",
+                    "attempt_count": 0,
+                    "created_at": "2026-06-10T00:00:00Z",
+                }
+            ]
+        },
+    }
+    saved: dict[str, object] = {}
+
+    service._load_lowfreq_sim_state = (  # type: ignore[method-assign]
+        lambda: json.loads(json.dumps(state))
+    )
+    service._save_lowfreq_sim_state = (  # type: ignore[method-assign]
+        lambda s: saved.setdefault("state", s)
+    )
+
+    out = service.trade_execution_rt_run_view(
+        target_date="2026-06-11",
+        requested_by="test.trade_execution_rt",
+        timeout_seconds=1,
+    )
+    assert (out.get("_meta") or {}).get("status") == "ok"
+    saved_state = saved.get("state") or {}
+    intents = ((saved_state.get("manual") or {}).get("intents") or []) if isinstance(saved_state, dict) else []
+    assert len(intents) == 1
+    assert intents[0]["execute_date"] == "2026-06-12"
+    assert int(intents[0]["attempt_count"]) == 1

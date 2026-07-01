@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Play, Filter, AlertCircle, CheckCircle, Clock, Download, Loader2, Settings, Save } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
+import { fetchApi } from '../services/api';
+import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
 
 // 状态中文映射
 const STATUS_CN = {
@@ -11,6 +13,27 @@ const STATUS_CN = {
   running: '运行中',
   planned: '计划中',
 };
+
+function BlockMessage({ tone = 'gray', message, onRetry }) {
+  const toneClass =
+    tone === 'red'
+      ? 'bg-red-50 border-red-200 text-red-700'
+      : 'bg-gray-50 border-gray-200 text-gray-600';
+  return (
+    <div className={`rounded-lg border p-4 text-sm flex items-center justify-between gap-3 ${toneClass}`}>
+      <span>{message}</span>
+      {typeof onRetry === 'function' ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="px-3 py-1 rounded bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+        >
+          重试
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 function flattenSchemaFields(schema, prefix) {
   const root = schema && typeof schema === 'object' ? schema : {};
@@ -114,14 +137,13 @@ function parseParamValue(raw, schema) {
 export default function Screeners() {
   const { selectedDate } = useApp();
   const [activeTab, setActiveTab] = useState('runs');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [runLoading, setRunLoading] = useState(false);
   const [runResult, setRunResult] = useState(null);
-  const [data, setData] = useState({
-    screeners: null,
-    runs: null,
-    bulkRuns: null,
+  const [blocks, setBlocks] = useState({
+    screeners: createBlockState(),
+    runs: createBlockState(),
+    bulkRuns: createBlockState(),
   });
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState(null);
@@ -132,32 +154,42 @@ export default function Screeners() {
   const [paramInputs, setParamInputs] = useState({});
   const [saveLoading, setSaveLoading] = useState(false);
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
-    
+  const loadScreenersBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, screeners: startBlock(prev.screeners, true) }));
     try {
-      const [screenersRes, runsRes, bulkRunsRes] = await Promise.all([
-        fetch(`/api/screeners?date=${selectedDate}`),
-        fetch(`/api/screeners/runs?date=${selectedDate}`),
-        fetch(`/api/screeners/bulk-runs?limit=1`),
-      ]);
-
-      const screeners = screenersRes.ok ? await screenersRes.json() : null;
-      const runs = runsRes.ok ? await runsRes.json() : null;
-      const bulkRuns = bulkRunsRes.ok ? await bulkRunsRes.json() : null;
-
-      setData({
-        screeners,
-        runs,
-        bulkRuns,
-      });
+      const screeners = await fetchApi(`/api/screeners?date=${encodeURIComponent(selectedDate)}`, {}, { timeoutMs: 45000 });
+      setBlocks((prev) => ({ ...prev, screeners: resolveBlock(screeners) }));
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      setBlocks((prev) => ({ ...prev, screeners: rejectBlock(prev.screeners, err, true) }));
     }
-  };
+  }, [selectedDate]);
+
+  const loadRunsBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, runs: startBlock(prev.runs, true) }));
+    try {
+      const runs = await fetchApi(`/api/screeners/runs?date=${encodeURIComponent(selectedDate)}`, {}, { timeoutMs: 45000 });
+      setBlocks((prev) => ({ ...prev, runs: resolveBlock(runs) }));
+    } catch (err) {
+      setBlocks((prev) => ({ ...prev, runs: rejectBlock(prev.runs, err, true) }));
+    }
+  }, [selectedDate]);
+
+  const loadBulkRunsBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, bulkRuns: startBlock(prev.bulkRuns, true) }));
+    try {
+      const bulkRuns = await fetchApi('/api/screeners/bulk-runs?limit=1', {}, { timeoutMs: 60000 });
+      setBlocks((prev) => ({ ...prev, bulkRuns: resolveBlock(bulkRuns) }));
+    } catch (err) {
+      setBlocks((prev) => ({ ...prev, bulkRuns: rejectBlock(prev.bulkRuns, err, true) }));
+    }
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    setError(null);
+    void loadScreenersBlock();
+    void loadRunsBlock();
+    void loadBulkRunsBlock();
+  }, [loadBulkRunsBlock, loadRunsBlock, loadScreenersBlock]);
 
   // 一键运行全部筛选器
   const handleRunAll = async () => {
@@ -166,23 +198,17 @@ export default function Screeners() {
     setError(null);
     
     try {
-      const response = await fetch('/api/screeners/bulk-run', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const result = await fetchApi(
+        '/api/screeners/bulk-run',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            date: selectedDate,
+            requested_by: 'dashboard.react',
+          }),
         },
-        body: JSON.stringify({
-          date: selectedDate,
-          requested_by: 'dashboard.react',
-        }),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `请求失败: ${response.status}`);
-      }
-
-      const result = await response.json();
+        { timeoutMs: 60000 }
+      );
       setRunResult(result);
       
       // 刷新数据
@@ -203,7 +229,7 @@ export default function Screeners() {
         )}/download.csv`
       );
       if (!response.ok) {
-        throw new Error('下载失败');
+        throw new Error(`下载失败：HTTP ${response.status}`);
       }
       
       const blob = await response.blob();
@@ -216,7 +242,7 @@ export default function Screeners() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
-      setError(err.message);
+      setError(err?.message || '下载失败');
     }
   };
 
@@ -225,14 +251,11 @@ export default function Screeners() {
     setConfigError(null);
     setConfigStatus(null);
     try {
-      const response = await fetch(
-        `/api/screeners/config/${encodeURIComponent(screenerId)}`
+      const payload = await fetchApi(
+        `/api/screeners/config/${encodeURIComponent(screenerId)}`,
+        {},
+        { timeoutMs: 45000 }
       );
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `请求失败: ${response.status}`);
-      }
-      const payload = await response.json();
       setConfigPayload(payload);
 
       const cfg = payload?.screener_config || {};
@@ -280,24 +303,16 @@ export default function Screeners() {
         if (parsed.value === undefined) continue;
         setByPath(currentParameters, field.path, parsed.value);
       }
-      const response = await fetch(
+      const payload = await fetchApi(
         `/api/screeners/config/${encodeURIComponent(cfg.screener_id)}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify({
             current_parameters: currentParameters,
             requested_by: 'dashboard.react',
           }),
         }
       );
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `请求失败: ${response.status}`);
-      }
-      const payload = await response.json();
       setConfigPayload(payload);
       setConfigStatus('保存成功');
       await fetchData();
@@ -310,14 +325,16 @@ export default function Screeners() {
 
   useEffect(() => {
     fetchData();
-  }, [selectedDate]);
+  }, [fetchData]);
 
-  const screenerList = data.screeners?.screeners_registry?.screeners || [];
-  const screenerRuns = data.runs?.screener_runs || [];
-  const latestBulk = Array.isArray(data.bulkRuns?.bulk_runs)
-    ? data.bulkRuns.bulk_runs[0]
+  const loading = Object.values(blocks).some((block) => block.loading);
+  const screenerList = blocks.screeners.data?.screeners_registry?.screeners || [];
+  const screenerRuns = blocks.runs.data?.screener_runs || [];
+  const latestBulk = Array.isArray(blocks.bulkRuns.data?.bulk_runs)
+    ? blocks.bulkRuns.data.bulk_runs[0]
     : null;
   const latestBulkDate = latestBulk?.target_date || '--';
+  const pageError = error || (!blocks.screeners.loaded && blocks.screeners.error ? blocks.screeners.error : null);
   const latestRunByScreenerId = (() => {
     const m = new Map();
     for (const run of screenerRuns) {
@@ -412,24 +429,11 @@ export default function Screeners() {
         </nav>
       </div>
 
-      {/* Run Result */}
-      {runResult && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-green-700 font-medium mb-2">
-            <CheckCircle size={20} />
-            运行完成
-          </div>
-          <div className="text-sm text-green-600">
-            {runResult.message || `已运行 ${runResult.runs?.length || 0} 个筛选器`}
-          </div>
-        </div>
-      )}
-
       {/* Error Display */}
-      {error && (
+      {pageError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700">
           <AlertCircle size={20} />
-          <span>{error}</span>
+          <span>{pageError}</span>
         </div>
       )}
 
@@ -446,14 +450,19 @@ export default function Screeners() {
               <div className="text-2xl font-bold text-green-600">{screenerList.filter(s => s.enabled).length}</div>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="text-sm text-gray-500 mb-1">今日运行</div>
+              <div className="text-sm text-gray-500 mb-1">当日运行记录</div>
               <div className="text-2xl font-bold text-blue-600">{screenerRuns.length}</div>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="text-sm text-gray-500 mb-1">最新运行日期</div>
+              <div className="text-sm text-gray-500 mb-1">最近批量运行日期</div>
               <div className="text-2xl font-bold text-purple-600">
                 {latestBulkDate}
               </div>
+              {blocks.bulkRuns.error && !blocks.bulkRuns.loaded ? (
+                <div className="mt-2 text-sm text-red-700">
+                  {blocks.bulkRuns.error}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -463,96 +472,108 @@ export default function Screeners() {
               <Filter size={20} />
               筛选器列表
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {screenerList.map((screener) => (
-                <div key={screener.screener_id} className="border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-start justify-between mb-2 gap-2">
-                    <h4 className="font-medium text-gray-900">{screener.display_name}</h4>
-                    <span className={`px-2 py-0.5 rounded text-xs ${
-                      screener.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {screener.enabled ? '启用' : '禁用'}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-3 line-clamp-2">{screener.notes}</p>
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {screener.tags?.map((tag, idx) => (
-                      <span key={idx} className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
-                        {tag}
+            {blocks.screeners.loading && !blocks.screeners.loaded ? (
+              <BlockMessage message="筛选器列表加载中..." />
+            ) : blocks.screeners.error && !blocks.screeners.loaded ? (
+              <BlockMessage tone="red" message={blocks.screeners.error} onRetry={loadScreenersBlock} />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {screenerList.map((screener) => (
+                  <div key={screener.screener_id} className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-start justify-between mb-2 gap-2">
+                      <h4 className="font-medium text-gray-900">{screener.display_name}</h4>
+                      <span className={`px-2 py-0.5 rounded text-xs ${
+                        screener.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {screener.enabled ? '启用' : '禁用'}
                       </span>
-                    ))}
+                    </div>
+                    <p className="text-sm text-gray-500 mb-3 line-clamp-2">{screener.notes}</p>
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {screener.tags?.map((tag, idx) => (
+                        <span key={idx} className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-gray-400 font-mono truncate">{screener.screener_id}</div>
+                      <button
+                        onClick={() => handleDownload(selectedDate, screener.screener_id)}
+                        disabled={!latestRunByScreenerId.has(String(screener.screener_id || '').trim())}
+                        className="flex items-center gap-1 px-3 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded disabled:text-gray-400 disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm transition-colors"
+                      >
+                        <Download size={14} />
+                        下载 CSV
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-gray-400 font-mono truncate">{screener.screener_id}</div>
-                    <button
-                      onClick={() => handleDownload(selectedDate, screener.screener_id)}
-                      disabled={!latestRunByScreenerId.has(String(screener.screener_id || '').trim())}
-                      className="flex items-center gap-1 px-3 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded disabled:text-gray-400 disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm transition-colors"
-                    >
-                      <Download size={14} />
-                      下载 CSV
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Recent Runs */}
-          {screenerRuns.length > 0 && (
+          {(screenerRuns.length > 0 || blocks.runs.loading || (blocks.runs.error && !blocks.runs.loaded)) && (
             <div className="bg-white rounded-lg border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Clock size={20} />
                 最近运行记录
               </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">筛选器</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">运行时间</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">命中数</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {screenerRuns.slice(0, 10).map((run, index) => (
-                      <tr key={index} className="border-b border-gray-100">
-                        <td className="py-3 px-4 text-gray-900">{run.screener_id}</td>
-                        <td className="py-3 px-4 text-gray-500">{run.run_at || run.created_at || '--'}</td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm ${
-                            run.status === 'success' || run.status === 'completed'
-                              ? 'bg-green-100 text-green-700' 
-                              : run.status === 'failed'
-                              ? 'bg-red-100 text-red-700'
-                              : run.status === 'running'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {run.status === 'success' || run.status === 'completed' ? <CheckCircle size={14} /> : 
-                             run.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
-                            {STATUS_CN[run.status] || run.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-gray-900">{run.hit_count || 0}</td>
-                        <td className="py-3 px-4">
-                          {run.hit_count > 0 && (
-                            <button
-                              onClick={() => handleDownload(selectedDate, run.screener_id)}
-                              className="flex items-center gap-1 px-2 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
-                            >
-                              <Download size={14} />
-                              <span className="text-sm">下载 CSV</span>
-                            </button>
-                          )}
-                        </td>
+              {blocks.runs.loading && !blocks.runs.loaded ? (
+                <BlockMessage message="最近运行记录加载中..." />
+              ) : blocks.runs.error && !blocks.runs.loaded ? (
+                <BlockMessage tone="red" message={blocks.runs.error} onRetry={loadRunsBlock} />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">筛选器</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">运行时间</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">命中数</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">操作</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {screenerRuns.slice(0, 10).map((run, index) => (
+                        <tr key={index} className="border-b border-gray-100">
+                          <td className="py-3 px-4 text-gray-900">{run.screener_id}</td>
+                          <td className="py-3 px-4 text-gray-500">{run.finished_at || run.requested_at || '--'}</td>
+                          <td className="py-3 px-4">
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm ${
+                              run.status === 'success' || run.status === 'completed'
+                                ? 'bg-green-100 text-green-700' 
+                                : run.status === 'failed'
+                                ? 'bg-red-100 text-red-700'
+                                : run.status === 'running'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              {run.status === 'success' || run.status === 'completed' ? <CheckCircle size={14} /> : 
+                               run.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                              {STATUS_CN[run.status] || run.status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-gray-900">{run.picks_count || 0}</td>
+                          <td className="py-3 px-4">
+                            {run.picks_count > 0 && (
+                              <button
+                                onClick={() => handleDownload(selectedDate, run.screener_id)}
+                                className="flex items-center gap-1 px-2 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                              >
+                                <Download size={14} />
+                                <span className="text-sm">下载 CSV</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </>

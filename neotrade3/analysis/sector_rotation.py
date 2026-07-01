@@ -8,15 +8,20 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from enum import Enum
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 # 政策主线板块映射
 POLICY_MAINLINE_SECTORS = {
     "AI": ["人工智能", "计算机", "软件服务", "云计算", "大数据"],
+    "AiDC": ["AIDC", "AiDC", "算力", "数据中心", "IDC", "服务器", "液冷", "光模块", "通信设备"],
     "储能": ["储能", "电池", "锂电池", "钠离子电池", "固态电池"],
     "新能源": ["新能源", "光伏", "风电", "新能源汽车", "充电桩"],
-    "国产替代": ["半导体", "芯片", "集成电路", "光刻机", "电子元器件"]
+    "新材料": ["新材料", "稀土", "碳纤维", "高端材料", "特种材料"],
+    "国产替代": ["半导体", "芯片", "集成电路", "光刻机", "电子元器件", "信创", "国产软件", "操作系统", "数据库", "工业软件"]
 }
 
 
@@ -223,7 +228,7 @@ class SectorRotationAnalyzer:
             return sector_returns
             
         except Exception as e:
-            print(f"计算板块收益率时出错: {e}")
+            logger.warning("计算板块收益率时出错: target_date=%s error=%s", target_date, e)
             return {}
     
     def _calc_sector_rps(
@@ -469,7 +474,7 @@ class SectorRotationAnalyzer:
             return stock_rps_list[:top_n]
             
         except Exception as e:
-            print(f"计算个股RPS时出错: {e}")
+            logger.warning("计算个股RPS时出错: target_date=%s sector=%s error=%s", target_date, sector, e)
             return []
     
     def _determine_rotation_signal(

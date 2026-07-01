@@ -1,4 +1,13 @@
-"""Simple task scheduler using APScheduler for periodic NeoTrade3 tasks."""
+"""NeoTrade3 scheduler entrypoints.
+
+This module serves three distinct purposes:
+1. Defines the task functions that can be executed by id.
+2. Provides `--run-once` manual entrypoints used by production LaunchAgents.
+3. Provides APScheduler registrations for local development and debugging.
+
+Current production enablement is defined by `config/launchd/` templates and the
+installed LaunchAgents, not by the APScheduler registrations in this file.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +21,8 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 
 logger = logging.getLogger(__name__)
 
@@ -55,20 +66,34 @@ def _load_env_file() -> None:
 
 _load_env_file()
 
+
+def _require_scheduler_python() -> None:
+    require_python_310(entrypoint="neotrade3.scheduler.task_scheduler")
+
 # ---------------------------------------------------------------------------
 # Job functions (called by the scheduler)
 # ---------------------------------------------------------------------------
 
 
-def _run_update_daily_prices_tencent() -> None:
+def _run_update_daily_prices_authoritative() -> bool:
     try:
         from apps.api.main import BootstrapApiService
 
-        if not (str(sys.version_info.major) == "3" and int(sys.version_info.minor) >= 9):
-            logger.error("update_daily_prices_tencent aborted: requires Python >= 3.9")
-            return
-
+        _require_scheduler_python()
         service = BootstrapApiService(project_root=_PROJECT_ROOT)
+        service._ensure_no_proxy(hosts=["api.waditu.com", "api.tushare.pro"])
+        # #region debug-point B:scheduler-run-start
+        service._dbg_emit(
+            run_id="pre-fix",
+            hypothesis_id="B",
+            location="neotrade3/scheduler/task_scheduler.py:_run_update_daily_prices_authoritative",
+            msg="[DEBUG] scheduler run_once start",
+            data={
+                "env_file": str(_ENV_FILE_LOADED_FROM) if _ENV_FILE_LOADED_FROM else None,
+                "project_root": str(_PROJECT_ROOT),
+            },
+        )
+        # #endregion
         now_cn = datetime.now(ZoneInfo("Asia/Shanghai"))
         cutoff = now_cn.date()
         if now_cn.time() < datetime.strptime("15:10:00", "%H:%M:%S").time():
@@ -122,16 +147,16 @@ def _run_update_daily_prices_tencent() -> None:
 
         if not run_dates:
             logger.info(
-                "update_daily_prices_tencent: up-to-date (latest=%s cutoff=%s)",
+                "update_daily_prices_authoritative: up-to-date (latest=%s cutoff=%s)",
                 latest_in_db,
                 cutoff_iso,
             )
-            return
+            return True
 
         for d in run_dates:
             payload = service.daily_pipeline_run_view(
                 target_date=str(d),
-                requested_by="scheduler.update_daily_prices_tencent",
+                requested_by="scheduler.update_daily_prices_authoritative",
             )
             ledger = payload.get("ledger") or {}
             steps = ledger.get("steps") or []
@@ -140,6 +165,21 @@ def _run_update_daily_prices_tencent() -> None:
                 for s in steps
                 if isinstance(s, dict)
             }
+            # #region debug-point C:scheduler-run-result
+            service._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="C",
+                location="neotrade3/scheduler/task_scheduler.py:_run_update_daily_prices_authoritative",
+                msg="[DEBUG] scheduler run_once done",
+                data={
+                    "cutoff_iso": str(cutoff_iso),
+                    "ledger_path": payload.get("ledger_path"),
+                    "target_date": ledger.get("target_date"),
+                    "trade_date": ledger.get("trade_date"),
+                    "steps": step_status,
+                },
+            )
+            # #endregion
             logger.info(
                 "daily_pipeline done: target_date=%s trade_date=%s ledger=%s steps=%s",
                 ledger.get("target_date"),
@@ -147,16 +187,59 @@ def _run_update_daily_prices_tencent() -> None:
                 payload.get("ledger_path"),
                 step_status,
             )
+        return True
     except Exception as exc:
-        logger.error("update_daily_prices_tencent failed: %s", exc)
+        logger.error("update_daily_prices_authoritative failed: %s", exc)
+        return False
 
 
-def _run_update_financial_data() -> None:
+def _run_trade_execution_rt_0935() -> bool:
+    try:
+        from apps.api.main import BootstrapApiService
+
+        _require_scheduler_python()
+        service = BootstrapApiService(project_root=_PROJECT_ROOT)
+        service._ensure_no_proxy(hosts=["qt.gtimg.cn", "api.waditu.com", "api.tushare.pro"])
+
+        now_cn = datetime.now(ZoneInfo("Asia/Shanghai"))
+        allow_offwindow = str(os.environ.get("NEOTRADE3_ALLOW_OFFWINDOW") or "").strip() in {"1", "true", "True", "yes", "Y"}
+        window_start = now_cn.replace(hour=9, minute=33, second=0, microsecond=0)
+        window_end = now_cn.replace(hour=9, minute=37, second=59, microsecond=0)
+        if not allow_offwindow and not (window_start <= now_cn <= window_end):
+            logger.info(
+                "trade_execution_rt_0935 skipped: outside time window (now=%s window=%s~%s)",
+                now_cn.strftime("%H:%M:%S"),
+                window_start.strftime("%H:%M:%S"),
+                window_end.strftime("%H:%M:%S"),
+            )
+            return True
+
+        target_date = now_cn.date().isoformat()
+        out = service.trade_execution_rt_run_view(
+            target_date=target_date,
+            requested_by="scheduler.trade_execution_rt_0935",
+            timeout_seconds=10,
+        )
+        ledger = out.get("ledger") or {}
+        summary = ledger.get("summary") or {}
+        logger.info(
+            "trade_execution_rt done: date=%s ledger=%s summary=%s",
+            target_date,
+            out.get("ledger_path"),
+            summary,
+        )
+        return True
+    except Exception as exc:
+        logger.error("trade_execution_rt_0935 failed: %s", exc)
+        return False
+
+
+def _run_update_financial_data() -> bool:
     """Run scripts/update_financial_data.py."""
     script = _SCRIPTS_DIR / "update_financial_data.py"
     if not script.exists():
         logger.error("脚本不存在: %s", script)
-        return
+        return False
     logger.info("开始执行 update_financial_data ...")
     try:
         result = subprocess.run(
@@ -168,31 +251,49 @@ def _run_update_financial_data() -> None:
         )
         if result.returncode == 0:
             logger.info("update_financial_data 执行成功")
+            return True
         else:
             logger.error(
                 "update_financial_data 执行失败 (rc=%d): %s",
                 result.returncode,
                 result.stderr.strip()[-500:],
             )
+            return False
     except subprocess.TimeoutExpired:
         logger.error("update_financial_data 执行超时")
+        return False
     except Exception as exc:
         logger.error("update_financial_data 异常: %s", exc)
+        return False
 
 
-def _run_fetch_news() -> None:
+def _run_fetch_news() -> bool:
     """Fetch latest news from Cailianpress."""
     try:
+        from apps.api.main import BootstrapApiService
         from neotrade3.data_sources.cls_adapter import ClsNewsAdapter
+
+        service = BootstrapApiService(project_root=_PROJECT_ROOT)
+        target_date = date.today().isoformat()
+        trading_day = service.trading_day_view(target_date=target_date)
+        if not bool(trading_day.get("is_trading_day")):
+            logger.info(
+                "fetch_news skipped: non-trading day (target_date=%s nearest_trading_day=%s)",
+                target_date,
+                trading_day.get("nearest_trading_day"),
+            )
+            return True
 
         adapter = ClsNewsAdapter()
         items = adapter.fetch_telegraph(limit=20)
         logger.info("财联社快讯抓取完成, 共 %d 条", len(items))
+        return True
     except Exception as exc:
         logger.error("抓取财联社快讯失败: %s", exc)
+        return False
 
 
-def _run_warm_tushare_theme_cache() -> None:
+def _run_warm_tushare_theme_cache() -> bool:
     try:
         from apps.api.main import BootstrapApiService
 
@@ -214,8 +315,10 @@ def _run_warm_tushare_theme_cache() -> None:
             out.get("members_missing_count"),
             (out.get("errors") or [])[:1],
         )
+        return True
     except Exception as exc:
         logger.error("warm_tushare_theme_cache failed: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +327,10 @@ def _run_warm_tushare_theme_cache() -> None:
 
 
 class NeoTradeScheduler:
-    """Wraps APScheduler BackgroundScheduler with pre-defined NeoTrade3 jobs.
+    """Wraps APScheduler BackgroundScheduler for local/dev NeoTrade3 jobs.
+
+    This wrapper is for code-level scheduling and debugging only. Current
+    production automation is enabled via launchd LaunchAgents.
 
     Usage:
         scheduler = NeoTradeScheduler()
@@ -305,7 +411,7 @@ class NeoTradeScheduler:
     # ------------------------------------------------------------------
 
     def _init_scheduler(self) -> None:
-        """Initialize APScheduler and register pre-defined jobs."""
+        """Initialize APScheduler jobs for local development/debugging."""
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
             from apscheduler.triggers.cron import CronTrigger
@@ -323,19 +429,23 @@ class NeoTradeScheduler:
             job_defaults={"coalesce": True, "max_instances": 1},
         )
 
-        # Job 0: update_daily_prices_tencent - 每个交易日 18:05 尝试同步当日行情
+        # APScheduler local/dev definition only.
+        # Production enablement and schedule are controlled by launchd templates.
+        # Keep the local/dev cron aligned with the production launchd schedule.
+        # Job 0: update_daily_prices_authoritative - 工作日 15:45 尝试同步当日行情
         self._scheduler.add_job(
-            _run_update_daily_prices_tencent,
+            _run_update_daily_prices_authoritative,
             trigger=CronTrigger(
                 day_of_week="mon-fri",
-                hour=18,
-                minute=5,
+                hour=15,
+                minute=45,
             ),
-            id="update_daily_prices_tencent",
-            name="腾讯同步日线行情",
+            id="update_daily_prices_authoritative",
+            name="权威源同步日线行情",
             replace_existing=True,
         )
 
+        # Local/dev APScheduler definition. No production LaunchAgent is enabled.
         # Job 1: update_financial_data - 每天 18:00 执行
         self._scheduler.add_job(
             _run_update_financial_data,
@@ -345,6 +455,7 @@ class NeoTradeScheduler:
             replace_existing=True,
         )
 
+        # Local/dev APScheduler definition. No production LaunchAgent is enabled.
         # Job 2: fetch_news - 交易时段每 30 分钟
         self._scheduler.add_job(
             _run_fetch_news,
@@ -358,6 +469,7 @@ class NeoTradeScheduler:
             replace_existing=True,
         )
 
+        # Local/dev APScheduler definition. No production LaunchAgent is enabled.
         # Job 3: warm_tushare_theme_cache - 每 2 分钟增量预热一次（避免刷新时触发频控）
         self._scheduler.add_job(
             _run_warm_tushare_theme_cache,
@@ -372,17 +484,25 @@ class NeoTradeScheduler:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run NeoTrade3 scheduler.")
-    parser.add_argument("--list-jobs", action="store_true", help="List all jobs then exit.")
-    parser.add_argument("--run-now", default=None, help="Trigger a job id immediately then exit.")
+    parser.add_argument(
+        "--list-jobs",
+        action="store_true",
+        help="List APScheduler local/dev job registrations, not production launchd jobs.",
+    )
+    parser.add_argument(
+        "--run-now",
+        default=None,
+        help="Trigger an APScheduler local/dev job id immediately then exit.",
+    )
     parser.add_argument(
         "--run-once",
         default=None,
-        help="Run a job id in foreground once then exit (no APScheduler required).",
+        help="Run a job id in foreground once then exit; used by production launchd run-once entrypoints.",
     )
     parser.add_argument(
         "--run-forever",
         action="store_true",
-        help="Run scheduler in foreground until interrupted.",
+        help="Run APScheduler local/dev loop in foreground until interrupted; does not define production scheduling.",
     )
     return parser
 
@@ -391,9 +511,16 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = build_parser()
     args = parser.parse_args()
+    log_python_runtime(entrypoint="neotrade3.scheduler.task_scheduler", logger=logger)
+    try:
+        _require_scheduler_python()
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        return 2
 
     run_once_map = {
-        "update_daily_prices_tencent": _run_update_daily_prices_tencent,
+        "update_daily_prices_authoritative": _run_update_daily_prices_authoritative,
+        "trade_execution_rt_0935": _run_trade_execution_rt_0935,
         "update_financial_data": _run_update_financial_data,
         "fetch_news": _run_fetch_news,
         "warm_tushare_theme_cache": _run_warm_tushare_theme_cache,
@@ -404,8 +531,7 @@ def main() -> int:
         fn = run_once_map.get(job_id)
         if fn is None:
             raise SystemExit(f"unknown job_id: {job_id}")
-        fn()
-        return 0
+        return 0 if fn() else 1
 
     scheduler = NeoTradeScheduler()
 

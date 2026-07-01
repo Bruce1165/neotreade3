@@ -273,7 +273,7 @@ class SignalBacktester:
                 continue
             
             # Check exit conditions for open positions
-            self._check_exits(
+            capital += self._check_exits(
                 current_date=current_date,
                 open_positions=open_positions,
                 all_trades=all_trades,
@@ -360,8 +360,9 @@ class SignalBacktester:
         open_positions: dict[str, BacktestTrade],
         all_trades: list[BacktestTrade],
         capital: float,
-    ) -> None:
-        """Check and execute exits for open positions."""
+    ) -> float:
+        """Check and execute exits for open positions, returning released cash."""
+        released_capital = 0.0
         for code, trade in list(open_positions.items()):
             current_price = self._get_price(code, current_date)
             if not current_price:
@@ -378,6 +379,7 @@ class SignalBacktester:
             if current_return <= -8:
                 trade.close(current_date, current_price, ExitReason.STOP_LOSS)
                 all_trades.append(trade)
+                released_capital += current_price * trade.quantity
                 del open_positions[code]
                 continue
             
@@ -385,6 +387,7 @@ class SignalBacktester:
             if current_return >= tp1:
                 trade.close(current_date, current_price, ExitReason.TAKE_PROFIT)
                 all_trades.append(trade)
+                released_capital += current_price * trade.quantity
                 del open_positions[code]
                 continue
             
@@ -393,8 +396,10 @@ class SignalBacktester:
             if holding_days >= 50:
                 trade.close(current_date, current_price, ExitReason.TIME_EXIT)
                 all_trades.append(trade)
+                released_capital += current_price * trade.quantity
                 del open_positions[code]
                 continue
+        return released_capital
     
     def _get_price(self, code: str, target_date: date) -> float | None:
         """Get closing price for a stock on a date."""
