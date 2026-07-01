@@ -4,15 +4,14 @@ import {
   LayoutDashboard, 
   Filter, 
   Search, 
-  TrendingUp, 
-  Settings,
-  Calendar,
-  Activity
+  TrendingUp,
+  Target,
 } from 'lucide-react';
 import Overview from './pages/Overview';
 import Screeners from './pages/Screeners';
 import StockCheck from './pages/StockCheck';
 import Lowfreq from './pages/Lowfreq';
+import MarketIntelligence from './pages/MarketIntelligence';
 import { AppProvider } from './context/AppContext';
 import { getDataStatus } from './services/api';
 
@@ -21,6 +20,7 @@ function Sidebar() {
   
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: '今日总览' },
+    { path: '/market-intelligence', icon: Target, label: '主线审阅' },
     { path: '/lowfreq', icon: TrendingUp, label: '低频交易' },
     { path: '/screeners', icon: Filter, label: '筛选器' },
     { path: '/stock-check', icon: Search, label: '单股核验' },
@@ -65,11 +65,11 @@ function Header() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">量化选股控制台</h2>
-          <p className="text-sm text-gray-500">团队控制台：执行 / 监控 / 复盘</p>
+          <p className="text-sm text-gray-500">团队控制台：审阅 / 监控 / 复盘</p>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-sm text-gray-500">
-            API: <span className="text-gray-700 font-medium">Connected</span>
+            API: <span className="text-gray-700 font-medium">本地模式</span>
           </div>
         </div>
       </div>
@@ -93,8 +93,9 @@ function GlobalBanner() {
         if (!alive) return;
         setTushare(null);
       } finally {
-        if (!alive) return;
-        timerId = setTimeout(tick, 60000);
+        if (alive) {
+          timerId = setTimeout(tick, 60000);
+        }
       }
     }
 
@@ -119,7 +120,7 @@ function GlobalBanner() {
     <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-3">
       <div className="text-sm text-yellow-900">
         <span className="font-semibold">Tushare 黄旗：</span>
-        <span>检测到积分不足，备用数据源可能不可用。</span>
+        <span>检测到 Tushare 积分不足，日线主源可能受影响。</span>
         <span className="ml-3">last_insufficient={lastAt}</span>
         <span className="ml-3">api={lastApi}</span>
         {lastOkAt ? <span className="ml-3">last_ok={lastOkAt}</span> : null}
@@ -141,6 +142,7 @@ function App() {
             <main className="p-6">
               <Routes>
                 <Route path="/" element={<Overview />} />
+                <Route path="/market-intelligence" element={<MarketIntelligence />} />
                 <Route path="/screeners" element={<Screeners />} />
                 <Route path="/stock-check" element={<StockCheck />} />
                 <Route path="/lowfreq" element={<Lowfreq />} />

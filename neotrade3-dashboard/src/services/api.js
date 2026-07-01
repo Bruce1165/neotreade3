@@ -1,31 +1,77 @@
-async function fetchApi(endpoint, options = {}) {
+const DEFAULT_TIMEOUT_MS = 45000;
+
+function createApiError(message, extra = {}) {
+  const error = new Error(message);
+  error.code = extra.code || null;
+  error.details = extra.details || null;
+  error.status = extra.status || null;
+  return error;
+}
+
+async function fetchApi(endpoint, options = {}, config = {}) {
   const normalized = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   const url = normalized;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+  const timeoutMs = Number.isFinite(Number(config?.timeoutMs))
+    ? Number(config.timeoutMs)
+    : DEFAULT_TIMEOUT_MS;
+
+  let controller = null;
+  let timerId = null;
+  const mergedOptions = { ...options };
+  if (!mergedOptions.signal) {
+    controller = new AbortController();
+    mergedOptions.signal = controller.signal;
+    timerId = window.setTimeout(() => controller.abort(), timeoutMs);
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      ...mergedOptions,
+      headers: {
+        "Content-Type": "application/json",
+        ...(mergedOptions.headers || {}),
+      },
+    });
+  } catch (error) {
+    if (timerId) window.clearTimeout(timerId);
+    if (error && String(error.name || "") === "AbortError") {
+      throw new Error("请求超时：后端不可达或响应过慢（/api）");
+    }
+    throw new Error(`请求失败：后端不可达（/api）`);
+  } finally {
+    if (timerId) window.clearTimeout(timerId);
+  }
 
   const contentType = response.headers.get("Content-Type") || "";
   const isJson = contentType.toLowerCase().includes("application/json");
 
-  if (!response.ok) {
-    const errorPayload = isJson ? await response.json().catch(() => null) : null;
-    const message =
-      (errorPayload && errorPayload.message) ||
-      (errorPayload &&
-        errorPayload.error &&
-        typeof errorPayload.error.message === "string" &&
-        errorPayload.error.message) ||
-      `HTTP ${response.status}`;
-    throw new Error(message);
+  let payload = null;
+  if (isJson) {
+    payload = await response.json().catch(() => null);
   }
 
-  return isJson ? response.json() : response.text();
+  if (!response.ok) {
+    const errorPayload =
+      payload && typeof payload.error === "object" && payload.error ? payload.error : null;
+    const message =
+      (payload && typeof payload.message === "string" && payload.message) ||
+      (errorPayload &&
+        typeof errorPayload.message === "string" &&
+        errorPayload.message) ||
+      (payload && typeof payload.error === "string" && payload.error) ||
+      `HTTP ${response.status}`;
+    throw createApiError(message, {
+      code: errorPayload && typeof errorPayload.code === "string" ? errorPayload.code : null,
+      details: errorPayload && typeof errorPayload.details === "object" ? errorPayload.details : null,
+      status: response.status,
+    });
+  }
+
+  return isJson ? payload : response.text();
 }
+
+export { fetchApi };
 
 export const checkHealth = () => fetchApi("/healthz");
 export const getApiDocs = () => fetchApi("/api");
@@ -105,3 +151,21 @@ export const runFactorMatrix = (date, apiKey) =>
     headers: apiKey ? { "X-API-Key": apiKey } : {},
     body: JSON.stringify({ date }),
   });
+
+export const getMarketIntelligenceReviewBoard = (date, topN = 10) =>
+  fetchApi(
+    `/api/market-intelligence/review-board?trade_date=${encodeURIComponent(
+      date
+    )}&top_n=${encodeURIComponent(topN)}`,
+    {},
+    { timeoutMs: 60000 }
+  );
+
+export const getMarketIntelligenceDecisionSummary = (date, topN = 10) =>
+  fetchApi(
+    `/api/market-intelligence/decision-summary?trade_date=${encodeURIComponent(
+      date
+    )}&top_n=${encodeURIComponent(topN)}`,
+    {},
+    { timeoutMs: 60000 }
+  );

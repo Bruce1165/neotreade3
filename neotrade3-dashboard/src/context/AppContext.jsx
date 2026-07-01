@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 
-import { getTradingDay } from '../services/api';
+import { getDataStatus, getTradingDay } from '../services/api';
 
 const AppContext = createContext();
 
@@ -17,22 +17,48 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [bootstrapped, setBootstrapped] = useState(false);
+  const bootstrapDateRef = useRef(selectedDate);
 
   useEffect(() => {
     let alive = true;
 
     async function bootstrap() {
       try {
-        const info = await getTradingDay(selectedDate);
+        const [dayInfo, statusInfo] = await Promise.all([
+          getTradingDay(bootstrapDateRef.current),
+          getDataStatus(),
+        ]);
         if (!alive) return;
-        if (info && info.is_trading_day === false && typeof info.nearest_trading_day === 'string' && info.nearest_trading_day) {
-          setSelectedDate(info.nearest_trading_day);
+        if (
+          dayInfo &&
+          dayInfo.is_trading_day === false &&
+          typeof dayInfo.nearest_trading_day === 'string' &&
+          dayInfo.nearest_trading_day
+        ) {
+          setSelectedDate(dayInfo.nearest_trading_day);
+          return;
+        }
+
+        const latestAvailableDate =
+          (statusInfo && (statusInfo.latest_available_date || statusInfo.latest_trade_date)) ||
+          (dayInfo && dayInfo.max_trading_day) ||
+          null;
+        if (
+          latestAvailableDate &&
+          dayInfo &&
+          dayInfo.is_trading_day === true &&
+          typeof latestAvailableDate === 'string' &&
+          latestAvailableDate &&
+          bootstrapDateRef.current > latestAvailableDate
+        ) {
+          setSelectedDate(latestAvailableDate);
         }
       } catch {
         if (!alive) return;
       } finally {
-        if (!alive) return;
-        setBootstrapped(true);
+        if (alive) {
+          setBootstrapped(true);
+        }
       }
     }
 

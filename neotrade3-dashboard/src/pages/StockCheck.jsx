@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Search, AlertCircle, TrendingUp, Layers, Target } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
+import SemanticBadge from '../components/SemanticBadge';
+import StockCodeLink from '../components/StockCodeLink';
+import { fetchApi } from '../services/api';
 
 export default function StockCheck() {
   const { selectedDate } = useApp();
@@ -20,16 +23,11 @@ export default function StockCheck() {
     setResult(null);
 
     try {
-      const response = await fetch(
-        `/api/check-stock?code=${encodeURIComponent(stockCode.trim())}&date=${encodeURIComponent(selectedDate)}`
+      const data = await fetchApi(
+        `/api/check-stock?code=${encodeURIComponent(stockCode.trim())}&date=${encodeURIComponent(selectedDate)}`,
+        {},
+        { timeoutMs: 45000 }
       );
-      
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error?.message || '查询失败');
-      }
-
-      const data = await response.json();
       setResult(data);
     } catch (err) {
       setError(err.message);
@@ -101,7 +99,14 @@ export default function StockCheck() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <div className="text-sm text-gray-500">股票代码</div>
-                <div className="text-lg font-semibold text-gray-900">{result.stock_code || stockCode.trim()}</div>
+                <div className="text-lg font-semibold text-gray-900">
+                  <StockCodeLink
+                    code={result.stock_code || stockCode.trim()}
+                    className="hover:text-blue-600 hover:underline"
+                  >
+                    {result.stock_code || stockCode.trim()}
+                  </StockCodeLink>
+                </div>
               </div>
               <div>
                 <div className="text-sm text-gray-500">核验日期</div>
@@ -139,7 +144,13 @@ export default function StockCheck() {
                   <div key={idx} className="p-3 bg-gray-50 rounded border border-gray-100 text-sm">
                     <div className="flex items-center justify-between">
                       <div className="font-medium text-gray-900">{m.sector}</div>
-                      <div className="text-gray-500">{m.role}</div>
+                      <div className="flex items-center gap-2">
+                        <SemanticBadge
+                          semanticKey={m.buy_signal === true ? 'entry_ready' : 'watch_follower'}
+                          label={m.buy_signal === true ? '可出手' : '跟踪观察'}
+                        />
+                        <div className="text-gray-500">{m.role}</div>
+                      </div>
                     </div>
                     <div className="text-gray-600 mt-1">
                       入场信号：{m.buy_signal === true ? '是' : m.buy_signal === false ? '否' : '—'}
@@ -181,7 +192,10 @@ export default function StockCheck() {
                         <div key={x.screener_id} className="p-3 bg-green-50 border border-green-200 rounded text-sm">
                           <div className="flex items-center justify-between">
                             <div className="font-medium text-gray-900">{x.name}</div>
-                            <div className="text-green-700">{x.screener_id}</div>
+                            <div className="flex items-center gap-2">
+                              <SemanticBadge semanticKey="check_pass" label="通过" />
+                              <div className="text-green-700">{x.screener_id}</div>
+                            </div>
                           </div>
                           <div className="text-green-800 mt-1">{x.explain_cn || '通过'}</div>
                         </div>
@@ -200,7 +214,10 @@ export default function StockCheck() {
                         <div key={x.screener_id} className="p-3 bg-red-50 border border-red-200 rounded text-sm">
                           <div className="flex items-center justify-between">
                             <div className="font-medium text-gray-900">{x.name}</div>
-                            <div className="text-red-700">{x.screener_id}</div>
+                            <div className="flex items-center gap-2">
+                              <SemanticBadge semanticKey="check_fail" label="未通过" />
+                              <div className="text-red-700">{x.screener_id}</div>
+                            </div>
                           </div>
                           <div className="text-red-800 mt-1">{x.explain_cn || '未通过'}</div>
                         </div>

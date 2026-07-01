@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
   server: {
     port: 5173,
     proxy: {
@@ -19,11 +23,6 @@ export default defineConfig({
       output: {
         manualChunks: undefined,
       },
-    },
-  },
-  resolve: {
-    alias: {
-      'scheduler': 'scheduler/index.js',
     },
   },
 })
