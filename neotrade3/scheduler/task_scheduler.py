@@ -542,9 +542,9 @@ def main() -> int:
 
     if args.run_now:
         scheduler.start()
-        scheduler.run_now(str(args.run_now))
+        triggered = scheduler.run_now(str(args.run_now))
         time.sleep(2.0)
-        return 0
+        return 0 if triggered else 1
 
     scheduler.start()
     if args.run_forever:

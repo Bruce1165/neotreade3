@@ -1218,6 +1218,30 @@ def test_bootstrap_api_reports_structured_errors_and_invalid_source(
     assert ok_payload["target_date"] == "2026-05-19"
 
 
+def test_lowfreq_backtest_views_reject_invalid_report_id(tmp_path: Path) -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    service._lowfreq_backtest_artifacts_dir = tmp_path / "lowfreq_backtest"
+    service._lowfreq_backtest_artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    operations = [
+        lambda: service.lowfreq_backtest_status_view(report_id="../escape"),
+        lambda: service.lowfreq_backtest_report_download_view(
+            report_id="/tmp/escape", format="json"
+        ),
+    ]
+
+    for operation in operations:
+        try:
+            operation()
+        except Exception as exc:
+            status, payload = format_api_error(exc)
+        else:
+            raise AssertionError("expected invalid report_id to raise ApiError")
+
+        assert status == 400
+        assert payload["error"]["code"] == "invalid_report_id"
+
+
 def test_bootstrap_api_router_ignores_source_query_param() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)

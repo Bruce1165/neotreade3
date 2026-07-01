@@ -208,11 +208,11 @@ function logProxyResult({ method, path, statusCode, startedAt, detail = null, le
   writer(line.join(" "));
 }
 
-function proxyRequest(request, response, apiBase) {
+function proxyRequest(request, response, apiBase, upstreamPath) {
   const startedAt = Date.now();
   const method = request.method || "GET";
   const path = request.url || "/";
-  const upstreamUrl = new URL(request.url, apiBase);
+  const upstreamUrl = new URL(upstreamPath, apiBase);
   const transport = upstreamUrl.protocol === "https:" ? https : http;
   const headers = { ...request.headers };
   delete headers.authorization;
@@ -301,7 +301,7 @@ export function buildServer({ distDir, apiBase, dashboardPassword }) {
     }
 
     if (shouldProxy(pathname)) {
-      proxyRequest(request, response, apiBase);
+      proxyRequest(request, response, apiBase, `${pathname}${url.search}`);
       return;
     }
 

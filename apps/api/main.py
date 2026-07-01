@@ -62,6 +62,7 @@ from neotrade3.analysis.stock_tiering import StockTieringAnalyzer, StockTier
 from neotrade3.analysis.signal_generator import SignalGenerator, SignalGrade
 from neotrade3.analysis.backtest import SignalBacktester
 from neotrade3.learning.evolution_report import EvolutionReportGenerator
+from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 
 from apps.api.router import BootstrapApiRouter
 from apps.api.shared import ApiBinaryResponse, ApiError, _safe_ref_path, format_api_error
@@ -119,6 +120,15 @@ class BootstrapApiService:
         self._source_registry_config = (
             self.project_root / "config/data_control/source_registry.json"
         )
+        self._market_intelligence_config_dir = (
+            self.project_root / "config/market_intelligence"
+        )
+        self._market_penetration_stage_file = (
+            self._market_intelligence_config_dir / "penetration_stages.json"
+        )
+        self._market_boundary_recovered_candidates_file = (
+            self._market_intelligence_config_dir / "boundary_recovered_candidates.json"
+        )
         self._screeners_registry_config = (
             self.project_root / "config/screeners/screeners_registry.json"
         )
@@ -138,8 +148,97 @@ class BootstrapApiService:
             self.project_root / "var/artifacts/lowfreq_backtest"
         )
         self._daily_runs_dir = self.project_root / "var/ledgers/daily_runs"
+        self._trade_closeout_dir = self.project_root / "var/ledgers/trade_closeout"
+        self._trade_execution_rt_dir = self.project_root / "var/ledgers/trade_execution_rt"
         self._themes_snapshot_dir = self.project_root / "var/ledgers/team_themes"
         self._tushare_status_file = self._themes_snapshot_dir / "_tushare_status.json"
+        self._source_strategy_by_resource: dict[str, dict[str, Any]] = {
+            "daily_prices": {
+                "primary_provider": "tushare",
+                "fallback_provider": "tencent",
+                "hard_fail_on_primary_only": False,
+            },
+            "concept_theme_cache": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "company_announcements": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "policy_documents": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "research_reports": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "report_consensus": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "institutional_surveys": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "etf_basic": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "fund_daily": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "etf_share_size": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "etf_index": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "fund_basic": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "fund_portfolio": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "index_announcements": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "index_weight": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "stock_fundamentals_daily_basic": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+            "financial_reports": {
+                "primary_provider": "tushare",
+                "fallback_provider": None,
+                "hard_fail_on_primary_only": True,
+            },
+        }
         self._auto_opt_dir = self.project_root / "var/ledgers/auto_optimization"
         self._feature_inventory_file = (
             self.project_root / "docs/migration/neotrade2_feature_inventory.v3.json"
@@ -162,11 +261,21 @@ class BootstrapApiService:
         )
         self._cache: dict[tuple[str, ...], ApiCacheEntry] = {}
         self._cache_lock = threading.RLock()
+        self._ths_concept_cache_signature: Optional[
+            tuple[tuple[str, bool, int, int], tuple[str, bool, int, int]]
+        ] = None
+        self._ths_concept_cache_value: Optional[
+            tuple[dict[str, str], dict[str, list[str]]]
+        ] = None
         self._cache_ttl_seconds = {
             "snapshot": 15.0,
             "source_registry": 300.0,
             "labs_registry": 300.0,
+            "market_intelligence_review_board": 15.0,
+            "lowfreq_hot_sectors": 8.0,
         }
+        self._market_intelligence_inflight: dict[tuple[str, ...], threading.Event] = {}
+        self._lowfreq_hot_sectors_inflight: dict[tuple[str, ...], threading.Event] = {}
 
     @staticmethod
     def _stock_db_v2_path() -> Optional[Path]:
@@ -202,6 +311,81 @@ class BootstrapApiService:
             if not key:
                 continue
             os.environ[key] = val
+
+    @staticmethod
+    def _ensure_no_proxy(*, hosts: list[str]) -> None:
+        raw = str(os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or "").strip()
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        existed = set(parts)
+        for h in (["127.0.0.1", "localhost"] + list(hosts or [])):
+            hh = str(h or "").strip()
+            if not hh or hh in existed:
+                continue
+            parts.append(hh)
+            existed.add(hh)
+        if not parts:
+            return
+        merged = ",".join(parts)
+        os.environ["NO_PROXY"] = merged
+        os.environ["no_proxy"] = merged
+
+    @staticmethod
+    def _tushare_market_adapter(*, timeout_seconds: int = 20):
+        from neotrade3.data_sources.tushare_market_adapter import TushareMarketAdapter
+
+        return TushareMarketAdapter(timeout_seconds=int(timeout_seconds))
+
+    # #region debug-point A:dbg-emit
+    def _dbg_emit(
+        self,
+        *,
+        run_id: str,
+        hypothesis_id: str,
+        location: str,
+        msg: str,
+        data: Optional[dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
+    ) -> None:
+        try:
+            import json as _json
+            import time as _time
+            import urllib.request as _urllib_request
+
+            env_path = str(self.project_root / ".dbg" / "scheduler-missed-day.env")
+            url = "http://127.0.0.1:7777/event"
+            session_id = "scheduler-missed-day"
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f.read().splitlines():
+                        if line.startswith("DEBUG_SERVER_URL="):
+                            url = line.split("=", 1)[1].strip() or url
+                        elif line.startswith("DEBUG_SESSION_ID="):
+                            session_id = line.split("=", 1)[1].strip() or session_id
+            except Exception:
+                pass
+
+            payload: dict[str, Any] = {
+                "sessionId": session_id,
+                "runId": str(run_id),
+                "hypothesisId": str(hypothesis_id),
+                "location": str(location),
+                "msg": str(msg),
+                "data": data or {},
+                "ts": int(_time.time() * 1000),
+            }
+            if trace_id:
+                payload["traceId"] = str(trace_id)
+
+            req = _urllib_request.Request(
+                url,
+                data=_json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            _urllib_request.urlopen(req, timeout=2.0).read()
+        except Exception:
+            return
+    # #endregion
 
     @staticmethod
     def _now_cn() -> datetime:
@@ -244,12 +428,60 @@ class BootstrapApiService:
             return {"status": "skipped", "reason": "invalid_target_date", "target_date": target_date}
 
         try:
+            self._ensure_no_proxy(hosts=["api.waditu.com", "api.tushare.pro"])
+            # #region debug-point A:tushare-daily-call
+            try:
+                import urllib.request as _urllib_request
+                import urllib.parse as _urllib_parse
+
+                raw_proxies = _urllib_request.getproxies() or {}
+                proxies: dict[str, str] = {}
+                for k, v in raw_proxies.items():
+                    try:
+                        u = _urllib_parse.urlparse(str(v))
+                        host = str(u.hostname or "").strip()
+                        port = str(u.port or "").strip()
+                        if host and port:
+                            proxies[str(k)] = f"{host}:{port}"
+                        elif host:
+                            proxies[str(k)] = host
+                    except Exception:
+                        continue
+            except Exception:
+                proxies = {}
+
+            self._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="A",
+                location="apps/api/main.py:_backfill_daily_prices_from_tushare_daily",
+                msg="[DEBUG] tushare.daily request",
+                data={
+                    "target_date": str(target_date),
+                    "trade_date": str(trade_date),
+                    "requested_by": str(requested_by),
+                    "reason": str(reason),
+                    "no_proxy": str(os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""),
+                    "system_proxies": proxies,
+                },
+                trace_id=f"tushare-daily-{target_date}",
+            )
+            # #endregion
             pro = ts.pro_api(raw_token)
             df = pro.daily(
                 trade_date=trade_date,
                 fields="ts_code,open,high,low,close,vol,amount,pre_close,pct_chg",
             )
         except Exception as exc:
+            # #region debug-point A:tushare-daily-exc
+            self._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="A",
+                location="apps/api/main.py:_backfill_daily_prices_from_tushare_daily",
+                msg="[DEBUG] tushare.daily exception",
+                data={"target_date": str(target_date), "error_type": type(exc).__name__, "error": str(exc)},
+                trace_id=f"tushare-daily-{target_date}",
+            )
+            # #endregion
             return {"status": "skipped", "reason": "tushare_daily_failed", "error": str(exc)}
 
         try:
@@ -386,6 +618,34 @@ class BootstrapApiService:
         if not payload_rows:
             return {"status": "skipped", "reason": "tushare_rows_filtered_out", "target_date": target_date}
 
+        format_gate_rows = [
+            {
+                "code": row[0],
+                "trade_date": row[1],
+                "open": row[2],
+                "high": row[3],
+                "low": row[4],
+                "close": row[5],
+                "volume": row[6],
+                "amount": row[7],
+                "turnover": row[8],
+                "preclose": row[9],
+                "pct_change": row[10],
+            }
+            for row in payload_rows
+        ]
+        format_gate = self._daily_price_format_gate(
+            rows=format_gate_rows,
+            target_date=target_date,
+        )
+        if not bool(format_gate.get("passed")):
+            return {
+                "status": "skipped",
+                "reason": "tushare_daily_format_invalid",
+                "target_date": target_date,
+                "format_gate": format_gate,
+            }
+
         conn.executemany(
             """
             INSERT INTO daily_prices (
@@ -520,6 +780,7 @@ class BootstrapApiService:
             "after_rows": after,
             "db_upserted": requested,
             "coverage": coverage,
+            "format_gate": format_gate,
             "volume_normalized_rows": volume_normalized_rows,
             "synthesized_suspended_count": int(len(synthesized_suspended_codes)),
             "synthesized_suspended_codes": synthesized_suspended_codes,
@@ -826,12 +1087,16 @@ class BootstrapApiService:
             except ApiError as exc:
                 if getattr(exc, "code", None) != "snapshot_not_found":
                     raise
-                self.worker_app.run(
+                snapshot = self.worker_app.run(
                     target_date=target_date,
                     publish_succeeded=publish_succeeded,
                     write_outputs=True,
                 )
-                snapshot = self.load_stored_snapshot(target_date)
+                try:
+                    snapshot = self.load_stored_snapshot(target_date)
+                except ApiError as read_exc:
+                    if getattr(read_exc, "code", None) != "snapshot_not_found":
+                        raise
                 self_heal = "generated"
 
             snapshot["_meta"] = {"cache_status": "miss", "self_heal": self_heal}
@@ -1041,16 +1306,19 @@ class BootstrapApiService:
                 message="requested_by must be a non-empty string",
             )
 
-        orchestrator = DailyMasterOrchestrator.from_files(
-            orchestrator_config_path=self.project_root
-            / "config/orchestrator/daily_master_orchestrator.json",
-            labs_registry_path=self._labs_config,
-        )
         target_date_obj = date.fromisoformat(target_date)
-        plan = orchestrator.build_run_plan(
-            DailyRunRequest(
-                target_date=target_date_obj, publish_succeeded=bool(publish_succeeded)
-            )
+        snapshot = self.worker_app.run(
+            target_date=target_date_obj,
+            publish_succeeded=bool(publish_succeeded),
+            write_outputs=False,
+            requested_by=requested_by.strip(),
+            dry_run=dry_run,
+        )
+        self._materialize_lab_runs_from_snapshot(
+            snapshot=snapshot,
+            target_date=target_date,
+            requested_by=requested_by.strip(),
+            dry_run=dry_run,
         )
 
         ledger_path, artifact_path = self._orchestration_run_paths(
@@ -1058,251 +1326,7 @@ class BootstrapApiService:
         )
         requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         run_id = f"orchestrator:{target_date}:{int(time.time())}"
-
-        task_results: list[dict[str, Any]] = []
-        task_status: dict[str, str] = {}
-        publish_ok = False
-
-        for task in plan.planned_tasks:
-            status: str
-            message: str
-            if task.status.value == "skipped":
-                status = task.status.value
-                message = task.skip_reason or ""
-                task_results.append(
-                    {
-                        "task_id": task.task_id,
-                        "phase": task.phase.value,
-                        "lab_id": task.lab_id,
-                        "status": status,
-                        "message": message,
-                        "artifact_refs": [],
-                    }
-                )
-                task_status[task.task_id] = status
-                continue
-
-            if task.status.value == "blocked":
-                if task.requires_publish_status and publish_ok:
-                    pass
-                else:
-                    status = task.status.value
-                    message = task.skip_reason or ""
-                    task_results.append(
-                        {
-                            "task_id": task.task_id,
-                            "phase": task.phase.value,
-                            "lab_id": task.lab_id,
-                            "status": status,
-                            "message": message,
-                            "artifact_refs": [],
-                        }
-                    )
-                    task_status[task.task_id] = status
-                    continue
-
-            unmet = [
-                dep
-                for dep in task.depends_on
-                if task_status.get(dep) not in {None, "ok", "pending_implementation"}
-            ]
-            if unmet:
-                status = "blocked"
-                message = f"dependency_not_ok: {', '.join(unmet)}"
-                task_results.append(
-                    {
-                        "task_id": task.task_id,
-                        "phase": task.phase.value,
-                        "lab_id": task.lab_id,
-                        "status": status,
-                        "message": message,
-                        "artifact_refs": [],
-                    }
-                )
-                task_status[task.task_id] = status
-                continue
-
-            if task.task_id.startswith("data_control."):
-                pipeline = DataControlPipeline.from_registry_file(
-                    self._source_registry_config
-                )
-                stage_name = task.task_id.split(".", 1)[1]
-                if stage_name == "capture":
-                    result = pipeline.capture(
-                        target_date=target_date_obj,
-                        requested_by=requested_by.strip(),
-                        dry_run=dry_run,
-                    )
-                elif stage_name == "compose":
-                    result = pipeline.compose(
-                        target_date=target_date_obj,
-                        requested_by=requested_by.strip(),
-                        dry_run=dry_run,
-                    )
-                elif stage_name == "publish":
-                    result = pipeline.publish(
-                        target_date=target_date_obj,
-                        requested_by=requested_by.strip(),
-                        dry_run=dry_run,
-                    )
-                else:
-                    result = None
-
-                if result is None:
-                    status = "failed"
-                    message = "unknown data_control stage"
-                else:
-                    status = str(getattr(result, "status", "pending_implementation"))
-                    message = str(getattr(result, "message", ""))
-
-                _, stage_artifact_path = self._data_control_stage_paths(
-                    target_date=target_date,
-                    stage=stage_name,
-                )
-                details: Optional[dict[str, Any]] = None
-                if not dry_run and stage_artifact_path.exists():
-                    try:
-                        stage_payload = json.loads(
-                            stage_artifact_path.read_text(encoding="utf-8")
-                        )
-                    except (OSError, json.JSONDecodeError):
-                        stage_payload = None
-                    if isinstance(stage_payload, dict):
-                        if stage_name in {"capture", "publish"}:
-                            units_validation = stage_payload.get("units_validation")
-                            prerequisites = stage_payload.get("prerequisites")
-                            details = {}
-                            if isinstance(units_validation, dict):
-                                details["units_validation"] = units_validation
-                            if isinstance(prerequisites, dict):
-                                details["prerequisites"] = prerequisites
-                        elif stage_name == "compose":
-                            warnings = stage_payload.get("warnings")
-                            candidate_universe = stage_payload.get("candidate_universe")
-                            details = {
-                                "warning_count": (
-                                    len(warnings) if isinstance(warnings, list) else 0
-                                ),
-                                "candidate_count": (
-                                    len(candidate_universe)
-                                    if isinstance(candidate_universe, list)
-                                    else 0
-                                ),
-                                "warnings": (
-                                    [str(item) for item in warnings]
-                                    if isinstance(warnings, list)
-                                    else []
-                                ),
-                            }
-                task_results.append(
-                    {
-                        "task_id": task.task_id,
-                        "phase": task.phase.value,
-                        "lab_id": task.lab_id,
-                        "status": status,
-                        "message": message,
-                        "details": details,
-                        "artifact_refs": (
-                            [self._safe_ref_path(str(stage_artifact_path))]
-                            if (not dry_run and stage_artifact_path.exists())
-                            else []
-                        ),
-                    }
-                )
-                task_status[task.task_id] = status
-                if task.task_id == "data_control.publish":
-                    publish_ok = status == "ok"
-                continue
-
-            if task.lab_id:
-                response = self.lab_run_view(
-                    target_date=target_date,
-                    lab_id=task.lab_id,
-                    requested_by=requested_by.strip(),
-                    dry_run=dry_run,
-                )
-                ledger = response.get("lab_run")
-                artifact_ref = (
-                    ledger.get("artifact_path") if isinstance(ledger, dict) else None
-                )
-                task_results.append(
-                    {
-                        "task_id": task.task_id,
-                        "phase": task.phase.value,
-                        "lab_id": task.lab_id,
-                        "status": "ok",
-                        "message": "lab executed",
-                        "artifact_refs": [artifact_ref] if artifact_ref else [],
-                    }
-                )
-                task_status[task.task_id] = "ok"
-                continue
-
-            task_results.append(
-                {
-                    "task_id": task.task_id,
-                    "phase": task.phase.value,
-                    "lab_id": task.lab_id,
-                    "status": "pending_implementation",
-                    "message": "task execution has not been implemented",
-                    "artifact_refs": [],
-                }
-            )
-            task_status[task.task_id] = "pending_implementation"
-
-        extra_task_results: list[dict[str, Any]] = []
-        bulk = self.screeners_bulk_run_view(
-            target_date=target_date,
-            screener_ids=None,
-            requested_by=requested_by.strip(),
-            parameters=None,
-            dry_run=dry_run,
-        )
-        bulk_ledger = bulk.get("bulk_run")
-        bulk_artifact_ref = (
-            bulk_ledger.get("artifact_path") if isinstance(bulk_ledger, dict) else None
-        )
-        extra_task_results.append(
-            {
-                "task_id": "screeners.bulk_run",
-                "phase": "daily_lab_jobs",
-                "lab_id": None,
-                "status": "ok",
-                "message": "screeners bulk-run executed",
-                "artifact_refs": (
-                    [self._safe_ref_path(str(bulk_artifact_ref))]
-                    if bulk_artifact_ref
-                    else []
-                ),
-            }
-        )
-
-        fm = self.factor_matrix_daily_run_view(
-            target_date=target_date,
-            requested_by=requested_by.strip(),
-            dry_run=dry_run,
-            debug=False,
-        )
-        fm_ledger = fm.get("factor_matrix_run")
-        fm_artifact_ref = (
-            fm_ledger.get("artifact_path") if isinstance(fm_ledger, dict) else None
-        )
-        extra_task_results.append(
-            {
-                "task_id": "factor_matrix.daily_run",
-                "phase": "learning_loop",
-                "lab_id": None,
-                "status": "ok",
-                "message": "factor matrix daily run executed",
-                "artifact_refs": (
-                    [self._safe_ref_path(str(fm_artifact_ref))]
-                    if fm_artifact_ref
-                    else []
-                ),
-            }
-        )
-
-        all_results = task_results + extra_task_results
+        all_results = self._snapshot_task_results(snapshot)
         status_counts: dict[str, int] = {}
         for item in all_results:
             status_counts[str(item.get("status"))] = (
@@ -1314,7 +1338,10 @@ class BootstrapApiService:
             "version": 1,
             "orchestrator_run_id": run_id,
             "target_date": target_date,
-            "publish_succeeded": bool(publish_ok),
+            "publish_succeeded": bool(snapshot.get("publish_succeeded", False)),
+            "requested_publish_succeeded": bool(
+                snapshot.get("requested_publish_succeeded", False)
+            ),
             "requested_by": requested_by.strip(),
             "requested_at": requested_at,
             "status": overall_status,
@@ -1326,7 +1353,10 @@ class BootstrapApiService:
             "version": 1,
             "orchestrator_run_id": run_id,
             "target_date": target_date,
-            "publish_succeeded": bool(publish_ok),
+            "publish_succeeded": bool(snapshot.get("publish_succeeded", False)),
+            "requested_publish_succeeded": bool(
+                snapshot.get("requested_publish_succeeded", False)
+            ),
             "requested_by": requested_by.strip(),
             "requested_at": requested_at,
             "status": overall_status,
@@ -1352,6 +1382,44 @@ class BootstrapApiService:
             )
 
         return {"_meta": {"status": "ok"}, "orchestrator_run": run_ledger_payload}
+
+    @staticmethod
+    def _snapshot_task_results(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        orchestration = snapshot.get("orchestration", {})
+        if not isinstance(orchestration, dict):
+            return []
+        task_results = orchestration.get("task_results", [])
+        if not isinstance(task_results, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in task_results:
+            if isinstance(item, dict):
+                normalized.append(item)
+        return normalized
+
+    def _materialize_lab_runs_from_snapshot(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        target_date: str,
+        requested_by: str,
+        dry_run: bool,
+    ) -> None:
+        seen_lab_ids: set[str] = set()
+        for item in self._snapshot_task_results(snapshot):
+            lab_id = item.get("lab_id")
+            status = str(item.get("status", ""))
+            if not isinstance(lab_id, str) or not lab_id.strip():
+                continue
+            if status not in {"ok", "skipped"} or lab_id in seen_lab_ids:
+                continue
+            self.lab_run_view(
+                target_date=target_date,
+                lab_id=lab_id,
+                requested_by=requested_by,
+                dry_run=dry_run,
+            )
+            seen_lab_ids.add(lab_id)
 
     def orchestration_runs_view(
         self,
@@ -3007,6 +3075,11 @@ class BootstrapApiService:
                 "details": {},
             }
 
+        market_intelligence = self._load_market_intelligence_for_stock(
+            db_path=self._stock_db_default_path,
+            stock_code=normalized_code,
+        )
+
         return {
             "_meta": {
                 "status": "ok",
@@ -3018,6 +3091,7 @@ class BootstrapApiService:
                 "screeners": {"items": screener_items},
                 "hot_sectors": hot_presence,
                 "weekly_duck_head": duck_payload,
+                "market_intelligence": market_intelligence,
                 "certainty": {
                     "value": certainty_value,
                     "source": certainty_source,
@@ -3645,6 +3719,7 @@ class BootstrapApiService:
 
     @dataclass(frozen=True)
     class _TencentQuoteBar:
+        symbol: str
         code: str
         trade_date: str
         open: Optional[float]
@@ -3660,6 +3735,13 @@ class BootstrapApiService:
         line = line.strip()
         if not line.startswith("v_") or "=\"" not in line:
             return None
+        symbol = ""
+        try:
+            head = line.split("=", 1)[0].strip()
+            if head.startswith("v_"):
+                symbol = head[2:].strip()
+        except Exception:
+            symbol = ""
         try:
             payload = line.split("=\"", 1)[1].rsplit("\"", 1)[0]
         except Exception:
@@ -3691,6 +3773,7 @@ class BootstrapApiService:
                 amount = self._safe_float(segs[2])
 
         return self._TencentQuoteBar(
+            symbol=symbol,
             code=code,
             trade_date=trade_date,
             open=open_px,
@@ -3708,6 +3791,87 @@ class BootstrapApiService:
         if preclose and preclose > 0 and close is not None:
             return ((close / preclose) - 1.0) * 100.0
         return None
+
+    @staticmethod
+    def _daily_price_format_gate(
+        *,
+        rows: list[dict[str, Any]],
+        target_date: str,
+    ) -> dict[str, Any]:
+        gate_reasons: list[str] = []
+        checked_rows = 0
+        invalid_rows = 0
+        if not rows:
+            return {
+                "passed": False,
+                "gate_reasons": ["no_rows_prepared"],
+                "checked_rows": 0,
+                "invalid_rows": 0,
+            }
+
+        for row in rows:
+            if not isinstance(row, dict):
+                invalid_rows += 1
+                gate_reasons.append("row_not_dict")
+                continue
+            checked_rows += 1
+            code = str(row.get("code") or "").strip()
+            trade_date = str(row.get("trade_date") or "").strip()
+            open_px = row.get("open")
+            high = row.get("high")
+            low = row.get("low")
+            close = row.get("close")
+            preclose = row.get("preclose")
+            pct_change = row.get("pct_change")
+            if not code:
+                invalid_rows += 1
+                gate_reasons.append("missing_code")
+                continue
+            if trade_date != str(target_date):
+                invalid_rows += 1
+                gate_reasons.append(f"trade_date_mismatch {trade_date} != {target_date}")
+                continue
+            if not isinstance(close, (int, float)):
+                invalid_rows += 1
+                gate_reasons.append("missing_close")
+                continue
+            if isinstance(open_px, (int, float)) and isinstance(high, (int, float)):
+                if float(high) < float(open_px):
+                    invalid_rows += 1
+                    gate_reasons.append("high_below_open")
+                    continue
+            if isinstance(close, (int, float)) and isinstance(high, (int, float)):
+                if float(high) < float(close):
+                    invalid_rows += 1
+                    gate_reasons.append("high_below_close")
+                    continue
+            if isinstance(low, (int, float)) and isinstance(open_px, (int, float)):
+                if float(low) > float(open_px):
+                    invalid_rows += 1
+                    gate_reasons.append("low_above_open")
+                    continue
+            if isinstance(low, (int, float)) and isinstance(close, (int, float)):
+                if float(low) > float(close):
+                    invalid_rows += 1
+                    gate_reasons.append("low_above_close")
+                    continue
+            if isinstance(preclose, (int, float)) and float(preclose) > 0 and isinstance(pct_change, (int, float)):
+                expected_pct = ((float(close) / float(preclose)) - 1.0) * 100.0
+                if abs(expected_pct - float(pct_change)) > 1.5:
+                    invalid_rows += 1
+                    gate_reasons.append("pct_change_mismatch")
+                    continue
+
+        deduped_reasons: list[str] = []
+        for reason in gate_reasons:
+            if reason not in deduped_reasons:
+                deduped_reasons.append(reason)
+        return {
+            "passed": invalid_rows == 0,
+            "gate_reasons": deduped_reasons,
+            "checked_rows": int(checked_rows),
+            "invalid_rows": int(invalid_rows),
+        }
 
     def tencent_quote_meta_view(self, *, symbol: str = "sh000001", timeout_seconds: int = 10) -> dict[str, Any]:
         symbol = str(symbol or "").strip()
@@ -3756,6 +3920,7 @@ class BootstrapApiService:
             preclose = self._safe_float(parts[4]) if len(parts) > 4 else None
             open_px = self._safe_float(parts[5]) if len(parts) > 5 else None
             volume = self._safe_float(parts[6]) if len(parts) > 6 else None
+            pct_change = self._compute_pct_change(preclose=preclose, close=close)
             return {
                 "status": "ok",
                 "url": url,
@@ -3767,7 +3932,10 @@ class BootstrapApiService:
                 "close": close,
                 "preclose": preclose,
                 "open": open_px,
+                "high": bar.high,
+                "low": bar.low,
                 "volume": volume,
+                "pct_change": pct_change,
             }
 
         return {
@@ -3951,6 +4119,20 @@ class BootstrapApiService:
                 if self._market_symbol(code):
                     codes.append(code)
 
+            extra_symbols: list[str] = []
+            for key in ("NEOTRADE3_TENCENT_INDEX_SYMBOLS", "NEOTRADE3_TENCENT_ETF_SYMBOLS"):
+                raw = str(os.environ.get(key) or "").strip()
+                if not raw:
+                    continue
+                for seg in raw.split(","):
+                    sym = seg.strip()
+                    if not sym:
+                        continue
+                    if re.fullmatch(r"(sh|sz)\d{6}", sym):
+                        extra_symbols.append(sym)
+            extra_symbols = sorted(set(extra_symbols))
+            extra_symbol_set = set(extra_symbols)
+
             requested = len(codes)
             if requested == 0:
                 raise ApiError(
@@ -3968,12 +4150,18 @@ class BootstrapApiService:
             missing_codes: list[str] = []
             trade_dates: list[str] = []
 
-            for chunk in chunks(codes, chunk_size):
-                symbols = [
-                    symbol
-                    for code in chunk
-                    if (symbol := self._market_symbol(code)) is not None
-                ]
+            code_groups = chunks(codes, chunk_size)
+            symbol_groups = chunks(extra_symbols, chunk_size) if extra_symbols else []
+
+            for chunk in code_groups + symbol_groups:
+                symbols: list[str] = []
+                for item in chunk:
+                    if re.fullmatch(r"(sh|sz)\d{6}", str(item)):
+                        symbols.append(str(item))
+                        continue
+                    symbol = self._market_symbol(str(item))
+                    if symbol is not None:
+                        symbols.append(symbol)
                 if not symbols:
                     continue
 
@@ -4013,16 +4201,17 @@ class BootstrapApiService:
                     bar = self._parse_tencent_quote_line(seg)
                     if not bar:
                         continue
-                    if bar.code in parsed_codes:
+                    key = bar.symbol or bar.code
+                    if key in parsed_codes:
                         continue
-                    parsed_codes.add(bar.code)
+                    parsed_codes.add(key)
                     got += 1
                     trade_dates.append(bar.trade_date)
                     bars.append(bar)
                 if got < len(chunk):
-                    for code in chunk:
-                        if code not in parsed_codes:
-                            missing_codes.append(code)
+                    for item in chunk:
+                        if str(item) not in parsed_codes:
+                            missing_codes.append(str(item))
                 time.sleep(max(0.0, float(sleep_seconds)))
 
             quotes_parsed = len(bars)
@@ -4044,11 +4233,12 @@ class BootstrapApiService:
 
             capture_rows_payload = []
             for b in bars:
+                stored_code = b.symbol if b.symbol in extra_symbol_set else b.code
                 capture_rows_payload.append(
                     (
                         capture_batch_id,
                         "tencent",
-                        b.code,
+                        stored_code,
                         b.trade_date,
                         b.open,
                         b.high,
@@ -4060,7 +4250,7 @@ class BootstrapApiService:
                         b.preclose,
                         self._compute_pct_change(b.preclose, b.close),
                         "normalized",
-                        json.dumps({}, ensure_ascii=False),
+                        json.dumps({"symbol": b.symbol, "raw_code": b.code}, ensure_ascii=False),
                         now,
                     )
                 )
@@ -4191,9 +4381,10 @@ class BootstrapApiService:
                 upsert_rows = []
                 updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 for b in bars:
+                    stored_code = b.symbol if b.symbol in extra_symbol_set else b.code
                     upsert_rows.append(
                         (
-                            b.code,
+                            stored_code,
                             b.trade_date,
                             b.open,
                             b.high,
@@ -4531,6 +4722,160 @@ class BootstrapApiService:
                 payload, project_root=self.project_root, target_date=target_date
             )
 
+            def _quantile(sorted_vals: list[float], q: float) -> Optional[float]:
+                if not sorted_vals:
+                    return None
+                if q <= 0:
+                    return float(sorted_vals[0])
+                if q >= 1:
+                    return float(sorted_vals[-1])
+                idx = (len(sorted_vals) - 1) * float(q)
+                lo = int(idx)
+                hi = min(len(sorted_vals) - 1, lo + 1)
+                if lo == hi:
+                    return float(sorted_vals[lo])
+                w = idx - lo
+                return float(sorted_vals[lo] * (1.0 - w) + sorted_vals[hi] * w)
+
+            def _extract_values(fm_payload: dict[str, Any]) -> dict[str, list[float]]:
+                tiers = fm_payload.get("tiers") if isinstance(fm_payload.get("tiers"), dict) else {}
+                all_items: list[dict[str, Any]] = []
+                for key in ("ge_80", "ge_70", "ge_60"):
+                    bucket = tiers.get(key)
+                    if isinstance(bucket, list):
+                        all_items.extend([x for x in bucket if isinstance(x, dict)])
+
+                out: dict[str, list[float]] = {
+                    "certainty": [],
+                    "sub_technical": [],
+                    "sub_sentiment": [],
+                    "sub_composite": [],
+                    "sub_overall": [],
+                }
+                for it in all_items:
+                    c = it.get("certainty")
+                    if isinstance(c, (int, float)):
+                        out["certainty"].append(float(c))
+                    subs = it.get("subscores") if isinstance(it.get("subscores"), dict) else {}
+                    t = subs.get("technical")
+                    s = subs.get("sentiment")
+                    cp = subs.get("composite")
+                    o = subs.get("overall")
+                    if isinstance(t, (int, float)):
+                        out["sub_technical"].append(float(t))
+                    if isinstance(s, (int, float)):
+                        out["sub_sentiment"].append(float(s))
+                    if isinstance(cp, (int, float)):
+                        out["sub_composite"].append(float(cp))
+                    if isinstance(o, (int, float)):
+                        out["sub_overall"].append(float(o))
+                return out
+
+            def _stats(values: list[float]) -> dict[str, Any]:
+                import statistics
+
+                vals = [float(v) for v in values if isinstance(v, (int, float))]
+                vals.sort()
+                if not vals:
+                    return {"count": 0, "mean": None, "std": None, "p05": None, "p50": None, "p95": None}
+                mean_v = float(statistics.mean(vals))
+                std_v = float(statistics.pstdev(vals)) if len(vals) >= 2 else 0.0
+                return {
+                    "count": int(len(vals)),
+                    "mean": float(round(mean_v, 6)),
+                    "std": float(round(std_v, 6)),
+                    "p05": _quantile(vals, 0.05),
+                    "p50": _quantile(vals, 0.50),
+                    "p95": _quantile(vals, 0.95),
+                }
+
+            def _merge_baseline(baseline_payloads: list[dict[str, Any]]) -> dict[str, list[float]]:
+                merged: dict[str, list[float]] = {
+                    "certainty": [],
+                    "sub_technical": [],
+                    "sub_sentiment": [],
+                    "sub_composite": [],
+                    "sub_overall": [],
+                }
+                for p in baseline_payloads:
+                    vals = _extract_values(p)
+                    for k, arr in vals.items():
+                        merged[k].extend(arr)
+                return merged
+
+            baseline_days_requested = 60
+            baseline_dates: list[str] = []
+            for i in range(1, baseline_days_requested + 1):
+                d = self._trading_day_at_offset(end_date=target_date, offset=i)
+                if not isinstance(d, str) or not d:
+                    break
+                baseline_dates.append(d)
+
+            baseline_payloads: list[dict[str, Any]] = []
+            for d in baseline_dates:
+                p = (
+                    self.project_root
+                    / "var"
+                    / "artifacts"
+                    / "factor_matrix"
+                    / str(d)
+                    / "factor_matrix_daily.json"
+                )
+                if not p.exists():
+                    continue
+                try:
+                    x = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(x, dict):
+                        baseline_payloads.append(x)
+                except Exception:
+                    continue
+
+            current_vals = _extract_values(payload)
+            baseline_vals = _merge_baseline(baseline_payloads)
+
+            drift_metrics: dict[str, Any] = {}
+            anomalies: list[dict[str, Any]] = []
+            for key in ("certainty", "sub_technical", "sub_sentiment", "sub_composite", "sub_overall"):
+                cur_stat = _stats(current_vals.get(key, []))
+                base_stat = _stats(baseline_vals.get(key, []))
+                z = None
+                if (
+                    isinstance(cur_stat.get("mean"), (int, float))
+                    and isinstance(base_stat.get("mean"), (int, float))
+                    and isinstance(base_stat.get("std"), (int, float))
+                    and float(base_stat.get("std") or 0.0) > 1e-9
+                ):
+                    z = (float(cur_stat["mean"]) - float(base_stat["mean"])) / float(base_stat["std"])
+                drift_metrics[key] = {"current": cur_stat, "baseline": base_stat, "z": z}
+                if z is not None and abs(float(z)) >= 3.0:
+                    anomalies.append(
+                        {
+                            "metric": key,
+                            "z": float(round(float(z), 6)),
+                            "current_mean": cur_stat.get("mean"),
+                            "baseline_mean": base_stat.get("mean"),
+                            "baseline_std": base_stat.get("std"),
+                        }
+                    )
+
+            drift_status = "ok" if baseline_payloads else "insufficient_baseline"
+            drift_report = {
+                "_meta": {"status": drift_status},
+                "target_date": target_date,
+                "baseline_days_requested": int(baseline_days_requested),
+                "baseline_dates": baseline_dates,
+                "baseline_artifacts_found": int(len(baseline_payloads)),
+                "metrics": drift_metrics,
+                "anomalies": anomalies,
+            }
+            drift_path = ledger_path.parent / "factor_matrix_drift.json"
+            drift_path.write_text(
+                json.dumps(drift_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            ledger_payload["drift_path"] = self._safe_ref_path(str(drift_path))
+            ledger_payload["drift_status"] = str(drift_status)
+
         return {
             "_meta": {"status": "ok"},
             "factor_matrix_run": ledger_payload,
@@ -4564,10 +4909,20 @@ class BootstrapApiService:
                 message="factor matrix stored payloads are not JSON objects",
                 details={"target_date": target_date},
             )
+        drift_path = ledger_path.parent / "factor_matrix_drift.json"
+        drift_payload: Optional[dict[str, Any]] = None
+        if drift_path.exists():
+            try:
+                x = json.loads(drift_path.read_text(encoding="utf-8"))
+                if isinstance(x, dict):
+                    drift_payload = x
+            except Exception:
+                drift_payload = None
         return {
             "_meta": {"status": "ok"},
             "factor_matrix_run": ledger_payload,
             "factor_matrix_daily": artifact_payload,
+            "factor_matrix_drift": drift_payload,
         }
 
     def factor_matrix_daily_download_view(
@@ -4579,6 +4934,149 @@ class BootstrapApiService:
                 status_code=HTTPStatus.NOT_FOUND,
                 code="factor_matrix_not_found",
                 message="factor matrix daily artifact not found",
+                details={"target_date": target_date},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def sector_prosperity_daily_view(self, *, target_date: str) -> dict[str, Any]:
+        self.require_trading_day(target_date=target_date)
+        from neotrade3.analysis.sector_prosperity import SectorProsperityBuilder
+
+        payload = SectorProsperityBuilder.load(
+            project_root=self.project_root, target_date=target_date
+        )
+        if isinstance(payload, dict):
+            meta = payload.get("_meta")
+            if isinstance(meta, dict):
+                meta.update({"status": "ok"})
+                payload["_meta"] = meta
+            else:
+                payload["_meta"] = {"status": "ok"}
+            return payload
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        builder = SectorProsperityBuilder(
+            db_path=str(db_path),
+            project_root=self.project_root,
+        )
+        payload = builder.build(target_date=target_date)
+        SectorProsperityBuilder.save(
+            payload, project_root=self.project_root, target_date=payload.get("target_date") or target_date
+        )
+        payload = SectorProsperityBuilder.load(
+            project_root=self.project_root, target_date=payload.get("target_date") or target_date
+        )
+        if not isinstance(payload, dict):
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="sector_prosperity_invalid",
+                message="sector prosperity stored payloads are not JSON objects",
+                details={"target_date": target_date},
+            )
+        meta = payload.get("_meta")
+        if isinstance(meta, dict):
+            meta.update({"status": "ok"})
+            payload["_meta"] = meta
+        else:
+            payload["_meta"] = {"status": "ok"}
+        return payload
+
+    def sector_prosperity_daily_run_view(
+        self,
+        *,
+        target_date: str,
+        requested_by: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        self.require_trading_day(target_date=target_date)
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+        from neotrade3.analysis.sector_prosperity import SectorProsperityBuilder
+
+        ledger_path, artifact_path = self._sector_prosperity_paths(target_date=target_date)
+        requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        builder = SectorProsperityBuilder(
+            db_path=str(db_path),
+            project_root=self.project_root,
+        )
+        payload = builder.build(target_date=target_date)
+
+        ledger_payload = {
+            "version": 1,
+            "target_date": str(payload.get("target_date") or target_date),
+            "requested_by": requested_by,
+            "requested_at": requested_at,
+            "status": "ok",
+            "artifact_path": self._safe_ref_path(str(artifact_path)),
+            "inputs": {"stock_db_path": self._safe_ref_path(str(db_path))},
+        }
+
+        if not dry_run:
+            SectorProsperityBuilder.save(
+                payload,
+                project_root=self.project_root,
+                target_date=str(payload.get("target_date") or target_date),
+            )
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            ledger_path.write_text(
+                json.dumps(ledger_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        return {"_meta": {"status": "ok"}, "sector_prosperity_run": ledger_payload}
+
+    def sector_prosperity_daily_detail_view(self, *, target_date: str) -> dict[str, Any]:
+        ledger_path, artifact_path = self._sector_prosperity_paths(target_date=target_date)
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="sector_prosperity_not_found",
+                message="sector prosperity run ledger not found",
+                details={"target_date": target_date},
+            )
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="sector_prosperity_not_found",
+                message="sector prosperity daily artifact not found",
+                details={"target_date": target_date},
+            )
+        ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if not isinstance(ledger_payload, dict) or not isinstance(artifact_payload, dict):
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="sector_prosperity_invalid",
+                message="sector prosperity stored payloads are not JSON objects",
+                details={"target_date": target_date},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "sector_prosperity_run": ledger_payload,
+            "sector_prosperity_daily": artifact_payload,
+        }
+
+    def sector_prosperity_daily_download_view(self, *, target_date: str) -> ApiBinaryResponse:
+        _, artifact_path = self._sector_prosperity_paths(target_date=target_date)
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="sector_prosperity_not_found",
+                message="sector prosperity daily artifact not found",
                 details={"target_date": target_date},
             )
         filename = artifact_path.name
@@ -4923,6 +5421,13 @@ class BootstrapApiService:
         artifacts_dir = self.project_root / "var/artifacts/factor_matrix" / target_date
         ledger_path = ledgers_dir / "factor_matrix_run.json"
         artifact_path = artifacts_dir / "factor_matrix_daily.json"
+        return ledger_path, artifact_path
+
+    def _sector_prosperity_paths(self, *, target_date: str) -> tuple[Path, Path]:
+        ledgers_dir = self.project_root / "var/ledgers/sector_prosperity" / target_date
+        artifacts_dir = self.project_root / "var/artifacts/sector_prosperity" / target_date
+        ledger_path = ledgers_dir / "sector_prosperity_run.json"
+        artifact_path = artifacts_dir / "sector_prosperity_daily.json"
         return ledger_path, artifact_path
 
     def _lab_run_paths(self, *, target_date: str, lab_id: str) -> tuple[Path, Path]:
@@ -5778,6 +6283,3100 @@ class BootstrapApiService:
                 result.setdefault(code_str, []).append(text)
         return result
 
+    def _load_market_intelligence_for_stocks(
+        self, *, db_path: Path, stock_codes: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        normalized_codes: list[str] = []
+        summaries: dict[str, dict[str, Any]] = {}
+        ts_code_by_code: dict[str, str] = {}
+        seen_codes: set[str] = set()
+        for raw_code in stock_codes:
+            normalized_code = self._normalize_stock_code(raw_code)
+            if not normalized_code or normalized_code in seen_codes:
+                continue
+            seen_codes.add(normalized_code)
+            normalized_codes.append(normalized_code)
+            ts_code = self._ts_code_from_stock_code(normalized_code)
+            if not ts_code:
+                summaries[normalized_code] = {
+                    "status": "invalid",
+                    "stock_code": normalized_code,
+                    "signals": {},
+                }
+                continue
+            ts_code_by_code[normalized_code] = ts_code
+        if not normalized_codes:
+            return summaries
+
+        valid_codes = [code for code in normalized_codes if code in ts_code_by_code]
+        if not valid_codes:
+            return summaries
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+        except Exception:
+            for code in valid_codes:
+                summaries[code] = {"status": "error", "stock_code": code, "signals": {}}
+            return summaries
+
+        try:
+            cur = conn.cursor()
+            table_names = {
+                str(row["name"] or "").strip()
+                for row in cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+                if str(row["name"] or "").strip()
+            }
+
+            def table_exists(table: str) -> bool:
+                return table in table_names
+
+            def iter_chunks(values: list[str], *, chunk_size: int = 800) -> list[list[str]]:
+                return [
+                    values[index : index + chunk_size]
+                    for index in range(0, len(values), chunk_size)
+                ]
+
+            concept_name_by_code, concept_members = self._load_ths_concept_caches()
+            stock_code_set = set(valid_codes)
+            stock_concepts_by_code: dict[str, list[dict[str, str]]] = {
+                code: [] for code in valid_codes
+            }
+            for concept_code, members in concept_members.items():
+                normalized_members = {
+                    self._normalize_stock_code(member) for member in members or []
+                }
+                target_members = normalized_members & stock_code_set
+                if not target_members:
+                    continue
+                concept_payload = {
+                    "concept_code": str(concept_code),
+                    "concept_name": str(
+                        concept_name_by_code.get(str(concept_code)) or concept_code
+                    ),
+                }
+                for code in target_members:
+                    stock_concepts_by_code.setdefault(code, []).append(
+                        dict(concept_payload)
+                    )
+
+            stock_name_by_code: dict[str, Optional[str]] = {}
+            if table_exists("stocks"):
+                for chunk in iter_chunks(valid_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"SELECT code, name FROM stocks WHERE code IN ({placeholders})",
+                        tuple(chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["code"])
+                        if code:
+                            stock_name_by_code[code] = (
+                                str(row["name"] or "").strip() or None
+                            )
+
+            ts_codes = [ts_code_by_code[code] for code in valid_codes]
+            announcements_latest_by_code: dict[str, list[dict[str, Any]]] = {}
+            announcements_count_by_code: dict[str, int] = {}
+            if table_exists("announcements"):
+                for chunk in iter_chunks(valid_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT code, publish_date, title, type
+                        FROM (
+                            SELECT
+                                code,
+                                publish_date,
+                                title,
+                                type,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY code
+                                    ORDER BY publish_date DESC, updated_at DESC
+                                ) AS rn
+                            FROM announcements
+                            WHERE code IN ({placeholders})
+                        )
+                        WHERE rn <= 3
+                        ORDER BY code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["code"])
+                        if not code:
+                            continue
+                        announcements_latest_by_code.setdefault(code, []).append(
+                            {
+                                "publish_date": str(row["publish_date"]),
+                                "title": str(row["title"] or ""),
+                                "type": str(row["type"] or "") or None,
+                            }
+                        )
+                    for row in cur.execute(
+                        f"""
+                        SELECT code, COUNT(1) AS cnt
+                        FROM announcements
+                        WHERE code IN ({placeholders})
+                          AND DATE(publish_date) >= DATE('now', '-30 day')
+                        GROUP BY code
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["code"])
+                        if code:
+                            announcements_count_by_code[code] = int(row["cnt"] or 0)
+
+            research_latest_by_ts_code: dict[str, list[dict[str, Any]]] = {}
+            research_counts_by_ts_code: dict[str, dict[str, int]] = {}
+            if table_exists("research_reports"):
+                for chunk in iter_chunks(ts_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT ts_code, trade_date, title, inst_csname, report_type
+                        FROM (
+                            SELECT
+                                ts_code,
+                                trade_date,
+                                title,
+                                inst_csname,
+                                report_type,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY ts_code
+                                    ORDER BY trade_date DESC, updated_at DESC
+                                ) AS rn
+                            FROM research_reports
+                            WHERE ts_code IN ({placeholders})
+                        )
+                        WHERE rn <= 3
+                        ORDER BY ts_code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if not ts_code:
+                            continue
+                        research_latest_by_ts_code.setdefault(ts_code, []).append(
+                            {
+                                "trade_date": str(row["trade_date"]),
+                                "title": str(row["title"] or ""),
+                                "institution": str(row["inst_csname"] or "") or None,
+                                "report_type": str(row["report_type"] or "") or None,
+                            }
+                        )
+                    for row in cur.execute(
+                        f"""
+                        SELECT
+                            ts_code,
+                            COUNT(1) AS row_count,
+                            COUNT(DISTINCT inst_csname) AS distinct_institutions
+                        FROM research_reports
+                        WHERE ts_code IN ({placeholders})
+                          AND DATE(trade_date) >= DATE('now', '-90 day')
+                        GROUP BY ts_code
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if ts_code:
+                            research_counts_by_ts_code[ts_code] = {
+                                "recent_90d_count": int(row["row_count"] or 0),
+                                "distinct_institutions_90d": int(
+                                    row["distinct_institutions"] or 0
+                                ),
+                            }
+
+            report_consensus_latest_by_ts_code: dict[str, list[dict[str, Any]]] = {}
+            report_consensus_agg_by_ts_code: dict[str, dict[str, Any]] = {}
+            if table_exists("report_consensus"):
+                for chunk in iter_chunks(ts_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT ts_code, report_date, quarter, org_name, rating, eps, pe, roe, imp_dg
+                        FROM (
+                            SELECT
+                                ts_code,
+                                report_date,
+                                quarter,
+                                org_name,
+                                rating,
+                                eps,
+                                pe,
+                                roe,
+                                imp_dg,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY ts_code
+                                    ORDER BY report_date DESC, quarter DESC
+                                ) AS rn
+                            FROM report_consensus
+                            WHERE ts_code IN ({placeholders})
+                        )
+                        WHERE rn <= 5
+                        ORDER BY ts_code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if not ts_code:
+                            continue
+                        report_consensus_latest_by_ts_code.setdefault(ts_code, []).append(
+                            {
+                                "report_date": str(row["report_date"]),
+                                "quarter": str(row["quarter"] or "") or None,
+                                "org_name": str(row["org_name"] or "") or None,
+                                "rating": str(row["rating"] or "") or None,
+                                "eps": row["eps"],
+                                "pe": row["pe"],
+                                "roe": row["roe"],
+                                "imp_dg": str(row["imp_dg"] or "") or None,
+                            }
+                        )
+                    for row in cur.execute(
+                        f"""
+                        SELECT
+                            ts_code,
+                            MAX(report_date) AS latest_report_date,
+                            COUNT(DISTINCT org_name) AS distinct_orgs
+                        FROM report_consensus
+                        WHERE ts_code IN ({placeholders})
+                        GROUP BY ts_code
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if ts_code:
+                            report_consensus_agg_by_ts_code[ts_code] = {
+                                "latest_report_date": (
+                                    str(row["latest_report_date"])
+                                    if row["latest_report_date"] is not None
+                                    else None
+                                ),
+                                "distinct_orgs": int(row["distinct_orgs"] or 0),
+                            }
+
+            surveys_latest_by_ts_code: dict[str, list[dict[str, Any]]] = {}
+            surveys_agg_by_ts_code: dict[str, dict[str, Any]] = {}
+            if table_exists("institutional_surveys"):
+                for chunk in iter_chunks(ts_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT ts_code, surv_date, rece_org, rece_mode, org_type
+                        FROM (
+                            SELECT
+                                ts_code,
+                                surv_date,
+                                rece_org,
+                                rece_mode,
+                                org_type,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY ts_code
+                                    ORDER BY surv_date DESC, updated_at DESC
+                                ) AS rn
+                            FROM institutional_surveys
+                            WHERE ts_code IN ({placeholders})
+                        )
+                        WHERE rn <= 5
+                        ORDER BY ts_code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if not ts_code:
+                            continue
+                        surveys_latest_by_ts_code.setdefault(ts_code, []).append(
+                            {
+                                "surv_date": str(row["surv_date"]),
+                                "rece_org": str(row["rece_org"] or "") or None,
+                                "rece_mode": str(row["rece_mode"] or "") or None,
+                                "org_type": str(row["org_type"] or "") or None,
+                            }
+                        )
+                    for row in cur.execute(
+                        f"""
+                        SELECT
+                            ts_code,
+                            COUNT(1) AS row_count,
+                            COUNT(DISTINCT rece_org) AS distinct_orgs,
+                            MAX(surv_date) AS latest_survey_date
+                        FROM institutional_surveys
+                        WHERE ts_code IN ({placeholders})
+                          AND DATE(surv_date) >= DATE('now', '-180 day')
+                        GROUP BY ts_code
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["ts_code"] or "").strip()
+                        if ts_code:
+                            surveys_agg_by_ts_code[ts_code] = {
+                                "recent_180d_count": int(row["row_count"] or 0),
+                                "distinct_orgs_180d": int(row["distinct_orgs"] or 0),
+                                "latest_survey_date": (
+                                    str(row["latest_survey_date"])
+                                    if row["latest_survey_date"] is not None
+                                    else None
+                                ),
+                            }
+
+            fund_portfolio_latest_ann_by_code: dict[str, Optional[str]] = {}
+            fund_portfolio_rows_by_code: dict[str, list[dict[str, Any]]] = {}
+            if table_exists("fund_portfolios"):
+                for chunk in iter_chunks(valid_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT symbol, MAX(ann_date) AS latest_ann_date
+                        FROM fund_portfolios
+                        WHERE symbol IN ({placeholders})
+                        GROUP BY symbol
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["symbol"])
+                        if code:
+                            fund_portfolio_latest_ann_by_code[code] = (
+                                str(row["latest_ann_date"])
+                                if row["latest_ann_date"] is not None
+                                else None
+                            )
+                    for row in cur.execute(
+                        f"""
+                        WITH latest_fp AS (
+                            SELECT symbol, MAX(ann_date) AS latest_ann_date
+                            FROM fund_portfolios
+                            WHERE symbol IN ({placeholders})
+                            GROUP BY symbol
+                        )
+                        SELECT
+                            fp.symbol,
+                            fp.ts_code,
+                            fp.mkv,
+                            fp.stk_mkv_ratio,
+                            COALESCE(fb.name, eb.csname) AS fund_name,
+                            CASE WHEN eb.ts_code IS NOT NULL THEN 1 ELSE 0 END AS is_etf
+                        FROM fund_portfolios fp
+                        JOIN latest_fp lf
+                          ON lf.symbol = fp.symbol
+                         AND lf.latest_ann_date = fp.ann_date
+                        LEFT JOIN fund_basic_info fb ON fb.ts_code = fp.ts_code
+                        LEFT JOIN etf_basic_info eb ON eb.ts_code = fp.ts_code
+                        WHERE fp.symbol IN ({placeholders})
+                        ORDER BY fp.symbol ASC, COALESCE(fp.mkv, 0) DESC, fp.ts_code ASC
+                        """,
+                        tuple(chunk + chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["symbol"])
+                        if not code:
+                            continue
+                        fund_portfolio_rows_by_code.setdefault(code, []).append(
+                            {
+                                "ts_code": str(row["ts_code"]),
+                                "fund_name": str(row["fund_name"] or "") or None,
+                                "mkv": row["mkv"],
+                                "stk_mkv_ratio": row["stk_mkv_ratio"],
+                                "is_etf": bool(row["is_etf"]),
+                            }
+                        )
+
+            index_weight_rows_by_ts_code: dict[str, list[dict[str, Any]]] = {}
+            if table_exists("index_weights"):
+                for chunk in iter_chunks(ts_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT con_code, index_code, trade_date, weight
+                        FROM (
+                            SELECT
+                                con_code,
+                                index_code,
+                                trade_date,
+                                weight,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY con_code
+                                    ORDER BY trade_date DESC, weight DESC
+                                ) AS rn
+                            FROM index_weights
+                            WHERE con_code IN ({placeholders})
+                        )
+                        WHERE rn <= 5
+                        ORDER BY con_code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        ts_code = str(row["con_code"] or "").strip()
+                        if not ts_code:
+                            continue
+                        index_weight_rows_by_ts_code.setdefault(ts_code, []).append(
+                            {
+                                "index_code": str(row["index_code"]),
+                                "trade_date": str(row["trade_date"]),
+                                "weight": row["weight"],
+                            }
+                        )
+
+            daily_price_rows_by_code: dict[str, list[dict[str, Any]]] = {}
+            if table_exists("daily_prices"):
+                for chunk in iter_chunks(valid_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    for row in cur.execute(
+                        f"""
+                        SELECT code, trade_date, close, amount, turnover, pct_change
+                        FROM (
+                            SELECT
+                                code,
+                                trade_date,
+                                close,
+                                amount,
+                                turnover,
+                                pct_change,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY code
+                                    ORDER BY trade_date DESC
+                                ) AS rn
+                            FROM daily_prices
+                            WHERE code IN ({placeholders})
+                        )
+                        WHERE rn <= 20
+                        ORDER BY code ASC, rn ASC
+                        """,
+                        tuple(chunk),
+                    ).fetchall():
+                        code = self._normalize_stock_code(row["code"])
+                        if not code:
+                            continue
+                        daily_price_rows_by_code.setdefault(code, []).append(
+                            {
+                                "trade_date": str(row["trade_date"]),
+                                "close": row["close"],
+                                "amount": row["amount"],
+                                "turnover": row["turnover"],
+                                "pct_change": row["pct_change"],
+                            }
+                        )
+
+            latest_ths_trade_date: Optional[str] = None
+            ths_rows_by_concept_code: dict[str, dict[str, Any]] = {}
+            if table_exists("ths_concept_daily"):
+                latest_ths_row = cur.execute(
+                    """
+                    SELECT MAX(trade_date)
+                    FROM ths_concept_daily
+                    WHERE provider = 'ths'
+                    """
+                ).fetchone()
+                latest_ths_trade_date = (
+                    str(latest_ths_row[0])
+                    if latest_ths_row and latest_ths_row[0] is not None
+                    else None
+                )
+                concept_codes = sorted(
+                    {
+                        str(item.get("concept_code") or "").strip()
+                        for concepts in stock_concepts_by_code.values()
+                        for item in concepts
+                        if isinstance(item, dict)
+                        and str(item.get("concept_code") or "").strip()
+                    }
+                )
+                if latest_ths_trade_date and concept_codes:
+                    for chunk in iter_chunks(concept_codes):
+                        placeholders = ",".join(["?"] * len(chunk))
+                        for row in cur.execute(
+                            f"""
+                            SELECT concept_code, concept_name, mainline_score, mainline_rank, heat_score, heat_rank, trend_state, risk_level
+                            FROM ths_concept_daily
+                            WHERE provider = 'ths'
+                              AND trade_date = ?
+                              AND concept_code IN ({placeholders})
+                            """,
+                            tuple([latest_ths_trade_date] + chunk),
+                        ).fetchall():
+                            concept_code = str(row["concept_code"] or "").strip()
+                            if concept_code:
+                                ths_rows_by_concept_code[concept_code] = {
+                                    "concept_code": concept_code,
+                                    "concept_name": str(row["concept_name"] or "") or None,
+                                    "mainline_score": row["mainline_score"],
+                                    "mainline_rank": row["mainline_rank"],
+                                    "heat_rank": row["heat_rank"],
+                                    "trend_state": str(row["trend_state"] or "") or None,
+                                    "risk_level": str(row["risk_level"] or "") or None,
+                                }
+
+            for code in valid_codes:
+                ts_code = ts_code_by_code[code]
+                stock_name = stock_name_by_code.get(code)
+                stock_concepts = list(stock_concepts_by_code.get(code) or [])
+                signals: dict[str, Any] = {}
+
+                if table_exists("announcements"):
+                    signals["announcements"] = {
+                        "available": True,
+                        "recent_30d_count": int(announcements_count_by_code.get(code) or 0),
+                        "latest": list(announcements_latest_by_code.get(code) or []),
+                    }
+
+                if table_exists("research_reports"):
+                    research_counts = research_counts_by_ts_code.get(ts_code) or {}
+                    signals["research_reports"] = {
+                        "available": True,
+                        "recent_90d_count": int(
+                            research_counts.get("recent_90d_count") or 0
+                        ),
+                        "distinct_institutions_90d": int(
+                            research_counts.get("distinct_institutions_90d") or 0
+                        ),
+                        "latest": list(research_latest_by_ts_code.get(ts_code) or []),
+                    }
+
+                if table_exists("report_consensus"):
+                    report_consensus_agg = report_consensus_agg_by_ts_code.get(ts_code) or {}
+                    signals["report_consensus"] = {
+                        "available": True,
+                        "latest_report_date": report_consensus_agg.get(
+                            "latest_report_date"
+                        ),
+                        "distinct_orgs": int(
+                            report_consensus_agg.get("distinct_orgs") or 0
+                        ),
+                        "latest": list(
+                            report_consensus_latest_by_ts_code.get(ts_code) or []
+                        ),
+                    }
+
+                if table_exists("institutional_surveys"):
+                    surveys_agg = surveys_agg_by_ts_code.get(ts_code) or {}
+                    signals["institutional_surveys"] = {
+                        "available": True,
+                        "recent_180d_count": int(
+                            surveys_agg.get("recent_180d_count") or 0
+                        ),
+                        "distinct_orgs_180d": int(
+                            surveys_agg.get("distinct_orgs_180d") or 0
+                        ),
+                        "latest_survey_date": surveys_agg.get("latest_survey_date"),
+                        "latest": list(surveys_latest_by_ts_code.get(ts_code) or []),
+                    }
+
+                if table_exists("fund_portfolios"):
+                    portfolio_rows = list(fund_portfolio_rows_by_code.get(code) or [])
+                    holder_fund_codes = {
+                        str(item.get("ts_code") or "").strip()
+                        for item in portfolio_rows
+                        if str(item.get("ts_code") or "").strip()
+                    }
+                    holder_etf_codes = {
+                        str(item.get("ts_code") or "").strip()
+                        for item in portfolio_rows
+                        if bool(item.get("is_etf"))
+                        and str(item.get("ts_code") or "").strip()
+                    }
+                    mkv_values = [
+                        float(item["mkv"])
+                        for item in portfolio_rows
+                        if isinstance(item.get("mkv"), (int, float))
+                    ]
+                    ratio_values = [
+                        float(item["stk_mkv_ratio"])
+                        for item in portfolio_rows
+                        if isinstance(item.get("stk_mkv_ratio"), (int, float))
+                    ]
+                    signals["fund_portfolios"] = {
+                        "available": True,
+                        "latest_ann_date": fund_portfolio_latest_ann_by_code.get(code),
+                        "holder_fund_count": len(holder_fund_codes),
+                        "holder_etf_count": len(holder_etf_codes),
+                        "total_mkv": sum(mkv_values) if mkv_values else None,
+                        "avg_stk_mkv_ratio": (
+                            statistics.fmean(ratio_values) if ratio_values else None
+                        ),
+                        "top_holders": [
+                            {
+                                "ts_code": str(item.get("ts_code") or ""),
+                                "fund_name": (
+                                    str(item.get("fund_name") or "").strip() or None
+                                ),
+                                "mkv": item.get("mkv"),
+                                "stk_mkv_ratio": item.get("stk_mkv_ratio"),
+                            }
+                            for item in portfolio_rows[:5]
+                        ],
+                    }
+
+                if table_exists("index_weights"):
+                    index_rows = list(index_weight_rows_by_ts_code.get(ts_code) or [])
+                    signals["index_weights"] = {
+                        "available": True,
+                        "latest_trade_date": (
+                            index_rows[0].get("trade_date") if index_rows else None
+                        ),
+                        "index_count": len(
+                            {
+                                str(item.get("index_code") or "").strip()
+                                for item in index_rows
+                                if str(item.get("index_code") or "").strip()
+                            }
+                        ),
+                        "latest": index_rows,
+                    }
+
+                if table_exists("daily_prices"):
+                    price_rows = list(daily_price_rows_by_code.get(code) or [])
+                    closes = [
+                        float(item["close"])
+                        for item in price_rows
+                        if isinstance(item.get("close"), (int, float))
+                    ]
+                    amounts = [
+                        float(item["amount"])
+                        for item in price_rows
+                        if isinstance(item.get("amount"), (int, float))
+                    ]
+                    turnovers = [
+                        float(item["turnover"])
+                        for item in price_rows
+                        if isinstance(item.get("turnover"), (int, float))
+                    ]
+                    pct_changes = [
+                        float(item["pct_change"])
+                        for item in price_rows
+                        if isinstance(item.get("pct_change"), (int, float))
+                    ]
+                    latest_close = closes[0] if closes else None
+                    earliest_close = closes[-1] if len(closes) >= 2 else None
+                    return_20d = (
+                        (latest_close / earliest_close) - 1.0
+                        if isinstance(latest_close, float)
+                        and isinstance(earliest_close, float)
+                        and earliest_close > 0
+                        else None
+                    )
+                    signals["trading_profile"] = {
+                        "available": True,
+                        "latest_trade_date": (
+                            price_rows[0].get("trade_date") if price_rows else None
+                        ),
+                        "rows_20d": len(price_rows),
+                        "latest_amount": amounts[0] if amounts else None,
+                        "avg_amount_5d": statistics.fmean(amounts[:5]) if amounts[:5] else None,
+                        "avg_amount_20d": statistics.fmean(amounts) if amounts else None,
+                        "latest_turnover": turnovers[0] if turnovers else None,
+                        "avg_turnover_5d": (
+                            statistics.fmean(turnovers[:5]) if turnovers[:5] else None
+                        ),
+                        "median_turnover_20d": (
+                            statistics.median(turnovers) if turnovers else None
+                        ),
+                        "return_20d": return_20d,
+                        "avg_pct_change_5d": (
+                            statistics.fmean(pct_changes[:5]) if pct_changes[:5] else None
+                        ),
+                        "positive_days_5d": sum(1 for value in pct_changes[:5] if value > 0),
+                    }
+
+                if stock_concepts and latest_ths_trade_date:
+                    leading_concepts = [
+                        ths_rows_by_concept_code[concept_code]
+                        for concept_code in (
+                            str(item.get("concept_code") or "").strip()
+                            for item in stock_concepts
+                            if isinstance(item, dict)
+                        )
+                        if concept_code in ths_rows_by_concept_code
+                    ]
+                    leading_concepts.sort(
+                        key=lambda item: (
+                            int(item["mainline_rank"])
+                            if isinstance(item.get("mainline_rank"), (int, float))
+                            else 999999,
+                            int(item["heat_rank"])
+                            if isinstance(item.get("heat_rank"), (int, float))
+                            else 999999,
+                        )
+                    )
+                    if leading_concepts:
+                        mainline_ranks = [
+                            int(item["mainline_rank"])
+                            for item in leading_concepts
+                            if isinstance(item.get("mainline_rank"), (int, float))
+                        ]
+                        heat_ranks = [
+                            int(item["heat_rank"])
+                            for item in leading_concepts
+                            if isinstance(item.get("heat_rank"), (int, float))
+                        ]
+                        mainline_scores = [
+                            float(item["mainline_score"])
+                            for item in leading_concepts
+                            if isinstance(item.get("mainline_score"), (int, float))
+                        ]
+                        signals["theme_momentum"] = {
+                            "available": True,
+                            "trade_date": latest_ths_trade_date,
+                            "best_mainline_rank": (
+                                min(mainline_ranks) if mainline_ranks else None
+                            ),
+                            "best_heat_rank": min(heat_ranks) if heat_ranks else None,
+                            "best_mainline_score": (
+                                max(mainline_scores) if mainline_scores else None
+                            ),
+                            "leading_concepts": [
+                                {
+                                    "concept_code": str(item.get("concept_code") or ""),
+                                    "concept_name": (
+                                        str(item.get("concept_name") or "").strip() or None
+                                    ),
+                                    "mainline_rank": item.get("mainline_rank"),
+                                    "heat_rank": item.get("heat_rank"),
+                                    "mainline_score": item.get("mainline_score"),
+                                    "trend_state": (
+                                        str(item.get("trend_state") or "").strip() or None
+                                    ),
+                                    "risk_level": (
+                                        str(item.get("risk_level") or "").strip() or None
+                                    ),
+                                }
+                                for item in leading_concepts
+                            ],
+                        }
+
+                derived_tags = self._derive_market_intelligence_tags(signals=signals)
+                thematic_tags = self._derive_market_thematic_tags_for_stock(
+                    stock_code=code,
+                    stock_name=stock_name,
+                    concepts=stock_concepts,
+                    derived_tags=derived_tags,
+                )
+                summaries[code] = {
+                    "status": "ok",
+                    "stock_code": code,
+                    "ts_code": ts_code,
+                    "stock_name": stock_name,
+                    "signals": signals,
+                    "derived_tags": derived_tags,
+                    "thematic_tags": thematic_tags,
+                    "concepts": stock_concepts,
+                }
+        finally:
+            conn.close()
+
+        return summaries
+
+    def _load_market_intelligence_for_stock(
+        self, *, db_path: Path, stock_code: str
+    ) -> dict[str, Any]:
+        normalized_code = self._normalize_stock_code(stock_code)
+        if not normalized_code:
+            return {"status": "invalid", "stock_code": normalized_code, "signals": {}}
+        summaries = self._load_market_intelligence_for_stocks(
+            db_path=db_path,
+            stock_codes=[normalized_code],
+        )
+        return summaries.get(
+            normalized_code,
+            {"status": "error", "stock_code": normalized_code, "signals": {}},
+        )
+
+    @staticmethod
+    def _derive_market_intelligence_tags(*, signals: dict[str, Any]) -> dict[str, Any]:
+        fund_portfolios = signals.get("fund_portfolios") if isinstance(signals.get("fund_portfolios"), dict) else {}
+        research_reports = signals.get("research_reports") if isinstance(signals.get("research_reports"), dict) else {}
+        report_consensus = signals.get("report_consensus") if isinstance(signals.get("report_consensus"), dict) else {}
+        institutional_surveys = (
+            signals.get("institutional_surveys")
+            if isinstance(signals.get("institutional_surveys"), dict)
+            else {}
+        )
+        index_weights = signals.get("index_weights") if isinstance(signals.get("index_weights"), dict) else {}
+        trading_profile = (
+            signals.get("trading_profile")
+            if isinstance(signals.get("trading_profile"), dict)
+            else {}
+        )
+        theme_momentum = (
+            signals.get("theme_momentum")
+            if isinstance(signals.get("theme_momentum"), dict)
+            else {}
+        )
+
+        holder_etf_count = int(fund_portfolios.get("holder_etf_count") or 0)
+        holder_fund_count = int(fund_portfolios.get("holder_fund_count") or 0)
+        total_mkv = fund_portfolios.get("total_mkv")
+        avg_ratio = fund_portfolios.get("avg_stk_mkv_ratio")
+        index_count = int(index_weights.get("index_count") or 0)
+
+        config_score = 0
+        config_reasons: list[str] = []
+        if holder_etf_count > 0:
+            config_score += 1
+            config_reasons.append(f"有 ETF 持有人：{holder_etf_count}")
+        if holder_fund_count >= 3:
+            config_score += 1
+            config_reasons.append(f"持有基金数较多：{holder_fund_count}")
+        if isinstance(total_mkv, (int, float)) and float(total_mkv) > 0:
+            config_score += 1
+            config_reasons.append(f"基金合计持仓市值存在：{float(total_mkv):.2f}")
+        if isinstance(avg_ratio, (int, float)) and float(avg_ratio) >= 3.0:
+            config_score += 1
+            config_reasons.append(f"平均持仓占比不低：{float(avg_ratio):.2f}%")
+        if index_count > 0:
+            config_score += 1
+            config_reasons.append(f"已进入指数权重样本：{index_count}")
+        config_level = (
+            "high" if config_score >= 4 else "medium" if config_score >= 2 else "low"
+        )
+
+        research_inst = int(research_reports.get("distinct_institutions_90d") or 0)
+        consensus_orgs = int(report_consensus.get("distinct_orgs") or 0)
+        survey_orgs = int(institutional_surveys.get("distinct_orgs_180d") or 0)
+        survey_count = int(institutional_surveys.get("recent_180d_count") or 0)
+
+        attention_score = 0
+        attention_reasons: list[str] = []
+        if research_inst >= 1:
+            attention_score += 1
+            attention_reasons.append(f"近90天券商覆盖机构数：{research_inst}")
+        if consensus_orgs >= 1:
+            attention_score += 1
+            attention_reasons.append(f"盈利预测覆盖机构数：{consensus_orgs}")
+        if survey_orgs >= 1:
+            attention_score += 1
+            attention_reasons.append(f"近180天调研机构数：{survey_orgs}")
+        if survey_count >= 1:
+            attention_score += 1
+            attention_reasons.append(f"近180天调研次数：{survey_count}")
+        attention_level = (
+            "high"
+            if attention_score >= 3
+            else "medium"
+            if attention_score >= 1
+            else "low"
+        )
+
+        trading_score = 0
+        trading_reasons: list[str] = []
+        latest_amount = trading_profile.get("latest_amount")
+        avg_amount_20d = trading_profile.get("avg_amount_20d")
+        avg_turnover_5d = trading_profile.get("avg_turnover_5d")
+        median_turnover_20d = trading_profile.get("median_turnover_20d")
+        return_20d = trading_profile.get("return_20d")
+        positive_days_5d = int(trading_profile.get("positive_days_5d") or 0)
+        best_mainline_rank = theme_momentum.get("best_mainline_rank")
+        best_heat_rank = theme_momentum.get("best_heat_rank")
+        best_mainline_score = theme_momentum.get("best_mainline_score")
+
+        if (
+            isinstance(latest_amount, (int, float))
+            and isinstance(avg_amount_20d, (int, float))
+            and float(avg_amount_20d) > 0
+            and float(latest_amount) >= float(avg_amount_20d)
+        ):
+            trading_score += 1
+            trading_reasons.append(
+                f"最新成交额不弱于近20日均值：{float(latest_amount):.2f} >= {float(avg_amount_20d):.2f}"
+            )
+        if (
+            isinstance(avg_turnover_5d, (int, float))
+            and isinstance(median_turnover_20d, (int, float))
+            and float(median_turnover_20d) > 0
+            and float(avg_turnover_5d) >= float(median_turnover_20d)
+        ):
+            trading_score += 1
+            trading_reasons.append(
+                f"近5日换手不弱于近20日中位数：{float(avg_turnover_5d):.2f} >= {float(median_turnover_20d):.2f}"
+            )
+        if (
+            isinstance(return_20d, (int, float))
+            and float(return_20d) > 0
+        ) or positive_days_5d >= 3:
+            trading_score += 1
+            if isinstance(return_20d, (int, float)):
+                trading_reasons.append(f"近20日相对强度为正：{float(return_20d) * 100.0:.2f}%")
+            else:
+                trading_reasons.append(f"近5日上涨天数较多：{positive_days_5d}")
+        if (
+            isinstance(best_mainline_rank, (int, float))
+            and int(best_mainline_rank) <= 20
+        ) or (
+            isinstance(best_heat_rank, (int, float))
+            and int(best_heat_rank) <= 20
+        ) or (
+            isinstance(best_mainline_score, (int, float))
+            and float(best_mainline_score) >= 80.0
+        ):
+            trading_score += 1
+            trading_reasons.append(
+                "所属赛道具备主线/热度支持"
+            )
+        trading_level = (
+            "high"
+            if trading_score >= 3
+            else "medium"
+            if trading_score >= 2
+            else "low"
+        )
+
+        return {
+            "config_leader_candidate": {
+                "result": config_score >= 2,
+                "score": config_score,
+                "level": config_level,
+                "reasons": config_reasons,
+                "note": "第一版仅基于 ETF/基金持仓与指数样本证据做轻量候选打标。",
+            },
+            "institutional_attention_candidate": {
+                "result": attention_score >= 1,
+                "score": attention_score,
+                "level": attention_level,
+                "reasons": attention_reasons,
+                "note": "第一版仅基于研报覆盖、盈利预测覆盖和机构调研频度做轻量候选打标。",
+            },
+            "trading_leader_candidate": {
+                "result": trading_score >= 2,
+                "score": trading_score,
+                "level": trading_level,
+                "reasons": trading_reasons,
+                "note": "第一版仅基于成交活跃度、近端强度与赛道主线热度做代理识别。",
+            },
+        }
+
+    @staticmethod
+    def _market_ai_keywords() -> tuple[str, ...]:
+        return (
+            "AI",
+            "人工智能",
+            "算力",
+            "国产算力",
+            "AIDC",
+            "数据中心",
+            "东数西算",
+            "液冷",
+            "服务器",
+            "光模块",
+            "CPO",
+            "铜缆",
+            "GPU",
+            "芯片",
+            "半导体",
+            "存储",
+            "HBM",
+            "先进封装",
+            "机器人",
+            "人形机器人",
+            "减速器",
+            "伺服",
+            "传感器",
+            "控制器",
+            "自动驾驶",
+            "智驾",
+        )
+
+    @classmethod
+    def _market_kshape_up_keywords(cls) -> tuple[str, ...]:
+        return cls._market_ai_keywords() + (
+            "商业航天",
+            "低空经济",
+            "卫星",
+            "火箭",
+            "创新药",
+            "医疗器械",
+            "高端医疗器械",
+            "新材料",
+            "电子特气",
+            "靶材",
+            "光刻",
+            "晶圆",
+            "算力底座",
+        )
+
+    @staticmethod
+    def _market_kshape_down_keywords() -> tuple[str, ...]:
+        return (
+            "高股息",
+            "电力",
+            "公用事业",
+            "银行",
+            "煤炭",
+            "有色",
+            "港口",
+            "高速",
+            "铁路",
+            "基建",
+            "消费",
+            "物流",
+            "文创",
+            "互联网",
+            "保险",
+            "券商",
+            "财富管理",
+            "公募",
+            "资管",
+            "ESG",
+            "信披",
+            "数据服务",
+        )
+
+    @staticmethod
+    def _market_generic_packaging_concept_names() -> tuple[str, ...]:
+        return (
+            "沪深300样本股",
+            "中证500成份股",
+            "融资融券",
+        )
+
+    @staticmethod
+    def _market_generic_packaging_concept_suffixes() -> tuple[str, ...]:
+        return (
+            "样本股",
+            "成份股",
+            "成分股",
+        )
+
+    @classmethod
+    def _is_market_generic_packaging_concept(cls, *, concept_name: str) -> bool:
+        name = str(concept_name or "").strip()
+        return bool(name) and (
+            name in cls._market_generic_packaging_concept_names()
+            or any(name.endswith(suffix) for suffix in cls._market_generic_packaging_concept_suffixes())
+        )
+
+    @staticmethod
+    def _market_broad_anchor_concept_names() -> tuple[str, ...]:
+        return ("芯片概念",)
+
+    @classmethod
+    def _is_market_broad_anchor_concept(cls, *, concept_name: str) -> bool:
+        name = str(concept_name or "").strip()
+        return bool(name) and name in cls._market_broad_anchor_concept_names()
+
+    @classmethod
+    def _market_confirmed_theme_names_for_candidate(
+        cls, *, candidate: dict[str, Any]
+    ) -> list[str]:
+        roles = candidate.get("roles") if isinstance(candidate.get("roles"), dict) else {}
+        confirmed: list[str] = []
+        seen: set[str] = set()
+        for role in roles.values():
+            if not isinstance(role, dict):
+                continue
+            concept_name = str(role.get("best_concept_name") or "").strip()
+            if not concept_name:
+                continue
+            if cls._is_market_generic_packaging_concept(concept_name=concept_name):
+                continue
+            if cls._is_market_broad_anchor_concept(concept_name=concept_name):
+                continue
+            if concept_name in seen:
+                continue
+            seen.add(concept_name)
+            confirmed.append(concept_name)
+        return confirmed
+
+    def _select_market_best_leading_concept(
+        self, *, leading_concepts: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        normalized = [item for item in leading_concepts if isinstance(item, dict)]
+        if not normalized:
+            return {}
+
+        ranked_candidates: list[
+            tuple[int, int, int, int, int, float, int, dict[str, Any]]
+        ] = []
+        fallback_non_packaging: list[dict[str, Any]] = []
+        for index, item in enumerate(normalized):
+            concept_name = str(item.get("concept_name") or "").strip()
+            concept_code = str(item.get("concept_code") or "").strip()
+            if not concept_name:
+                continue
+            if self._is_market_generic_packaging_concept(concept_name=concept_name):
+                continue
+            fallback_non_packaging.append(item)
+            thematic_tags = self._derive_market_thematic_tags_for_theme(
+                concept_code=concept_code,
+                concept_name=concept_name,
+            )
+            ai_related = (
+                thematic_tags.get("ai_related")
+                if isinstance(thematic_tags.get("ai_related"), dict)
+                else {}
+            )
+            kshape_direction = (
+                thematic_tags.get("kshape_direction")
+                if isinstance(thematic_tags.get("kshape_direction"), dict)
+                else {}
+            )
+            is_ai_related = bool(ai_related.get("result"))
+            kshape_value = str(kshape_direction.get("value") or "unknown")
+            mainline_rank = (
+                int(item.get("mainline_rank"))
+                if isinstance(item.get("mainline_rank"), (int, float))
+                else 999999
+            )
+            heat_rank = (
+                int(item.get("heat_rank"))
+                if isinstance(item.get("heat_rank"), (int, float))
+                else 999999
+            )
+            mainline_score = (
+                float(item.get("mainline_score"))
+                if isinstance(item.get("mainline_score"), (int, float))
+                else -1.0
+            )
+            ranked_candidates.append(
+                (
+                    0 if is_ai_related else 1,
+                    0 if kshape_value in {"up", "exception"} else 1,
+                    1 if self._is_market_broad_anchor_concept(concept_name=concept_name) else 0,
+                    mainline_rank,
+                    heat_rank,
+                    -mainline_score,
+                    index,
+                    item,
+                )
+            )
+
+        if ranked_candidates:
+            ranked_candidates.sort()
+            return ranked_candidates[0][-1]
+        if fallback_non_packaging:
+            return fallback_non_packaging[0]
+        return normalized[0]
+
+    @staticmethod
+    def _market_theme_risk_penalty(risk_level: Any) -> int:
+        normalized = str(risk_level or "").strip().lower()
+        if normalized == "exit":
+            return 6
+        if normalized == "warn":
+            return 2
+        return 0
+
+    @staticmethod
+    def _market_theme_risk_sort_key(risk_level: Any) -> int:
+        normalized = str(risk_level or "").strip().lower()
+        order = {
+            "ok": 0,
+            "unknown": 1,
+            "warn": 2,
+            "exit": 3,
+        }
+        return order.get(normalized or "unknown", 1)
+
+    @staticmethod
+    def _market_theme_trend_bonus(trend_state: Any) -> int:
+        normalized = str(trend_state or "").strip().lower()
+        if normalized == "rising":
+            return 4
+        if normalized == "consolidating":
+            return 2
+        if normalized == "diverging":
+            return -2
+        if normalized == "falling":
+            return -4
+        return 0
+
+    @classmethod
+    def _market_theme_base_score(
+        cls,
+        *,
+        concept_name: str,
+        ths_row: Optional[sqlite3.Row],
+    ) -> int:
+        if ths_row is None:
+            return 0
+        mainline_rank = (
+            float(ths_row["mainline_rank"])
+            if ths_row["mainline_rank"] is not None
+            else 60.0
+        )
+        heat_rank = (
+            float(ths_row["heat_rank"]) if ths_row["heat_rank"] is not None else 60.0
+        )
+        mainline_score = (
+            float(ths_row["mainline_score"])
+            if ths_row["mainline_score"] is not None
+            else 0.0
+        )
+        heat_score = (
+            float(ths_row["heat_score"]) if ths_row["heat_score"] is not None else 0.0
+        )
+        trend_bonus = cls._market_theme_trend_bonus(ths_row["trend_state"])
+        risk_penalty = cls._market_theme_risk_penalty(ths_row["risk_level"]) * 8
+        broad_anchor_penalty = (
+            12 if cls._is_market_broad_anchor_concept(concept_name=concept_name) else 0
+        )
+        base_score = (
+            int(max(0.0, 60.0 - mainline_rank))
+            + int(max(0.0, 60.0 - heat_rank) / 2.0)
+            + int(max(0.0, mainline_score - 80.0) / 10.0)
+            + int(max(0.0, heat_score - 50.0) / 10.0)
+            + trend_bonus
+            - risk_penalty
+            - broad_anchor_penalty
+        )
+        return max(base_score, 0)
+
+    @staticmethod
+    def _market_theme_resonance_score(
+        *,
+        config_hits: list[dict[str, Any]],
+        attention_hits: list[dict[str, Any]],
+        trading_hits: list[dict[str, Any]],
+    ) -> int:
+        return (
+            len(config_hits) * 2
+            + len(attention_hits) * 2
+            + len(trading_hits) * 2
+            + sum(int(item.get("score") or 0) for item in config_hits[:3])
+            + sum(int(item.get("score") or 0) for item in attention_hits[:3])
+            + sum(int(item.get("score") or 0) for item in trading_hits[:3])
+        )
+
+    @staticmethod
+    def _market_theme_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            -int(item.get("suggestion_bias") or 0),
+            -int(item.get("base_score") or 0),
+            int(item.get("_risk_sort_key") or 1),
+            -int(item.get("total_score") or 0),
+            -int(item.get("resonance_score") or 0),
+            -int(item.get("config_candidate_count") or 0),
+            -int(item.get("institutional_candidate_count") or 0),
+            -int(item.get("trading_candidate_count") or 0),
+            item.get("concept_code") or "",
+        )
+
+    @staticmethod
+    def _market_head_broker_names() -> tuple[str, ...]:
+        return (
+            "中信证券",
+            "华泰证券",
+            "国泰海通",
+            "东方财富",
+            "中金公司",
+        )
+
+    @staticmethod
+    def _match_market_keywords(*, texts: list[str], keywords: tuple[str, ...]) -> list[str]:
+        hits: list[str] = []
+        seen: set[str] = set()
+        normalized_texts = [
+            str(text or "").strip().lower()
+            for text in texts
+            if str(text or "").strip()
+        ]
+        for keyword in keywords:
+            raw_keyword = str(keyword or "").strip()
+            if not raw_keyword:
+                continue
+            key = raw_keyword.lower()
+            if key in seen:
+                continue
+            if any(key in text for text in normalized_texts):
+                seen.add(key)
+                hits.append(raw_keyword)
+        return hits
+
+    @staticmethod
+    def _normalize_penetration_stage(value: Any) -> str:
+        stage = str(value or "").strip()
+        if stage in {"0_1", "1_10", "10_30", "unknown"}:
+            return stage
+        return "unknown"
+
+    def _load_market_penetration_stage_rules(self) -> list[dict[str, Any]]:
+        path = self._market_penetration_stage_file
+        try:
+            if not path.exists() or not path.is_file():
+                return []
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        items = raw.get("items") if isinstance(raw, dict) else None
+        if not isinstance(items, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            match_type = str(item.get("match_type") or "").strip()
+            match_value = str(item.get("match_value") or "").strip()
+            if match_type not in {"concept_code", "concept_name", "keyword"} or not match_value:
+                continue
+            result.append(
+                {
+                    "match_type": match_type,
+                    "match_value": match_value,
+                    "penetration_stage": self._normalize_penetration_stage(
+                        item.get("penetration_stage")
+                    ),
+                    "reason": str(item.get("reason") or "").strip() or None,
+                    "scope": str(item.get("scope") or "theme").strip() or "theme",
+                }
+            )
+        return result
+
+    def _load_market_boundary_recovered_candidates(
+        self,
+    ) -> dict[str, dict[str, list[str]]]:
+        path = self._market_boundary_recovered_candidates_file
+        try:
+            if not path.exists() or not path.is_file():
+                return {}
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        items = raw.get("items") if isinstance(raw, dict) else None
+        if not isinstance(items, list):
+            return {}
+        result: dict[str, dict[str, list[str]]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            stock_code = self._normalize_stock_code(item.get("stock_code"))
+            marker = str(item.get("marker") or "").strip()
+            note = str(item.get("note") or "").strip()
+            if not stock_code or not marker:
+                continue
+            entry = result.setdefault(
+                stock_code,
+                {"special_markers": [], "special_marker_notes": []},
+            )
+            if marker not in entry["special_markers"]:
+                entry["special_markers"].append(marker)
+            if note and note not in entry["special_marker_notes"]:
+                entry["special_marker_notes"].append(note)
+        return result
+
+    def _market_special_markers_for_stock(
+        self, *, stock_code: Any
+    ) -> dict[str, list[str]]:
+        normalized_code = self._normalize_stock_code(stock_code)
+        if not normalized_code:
+            return {"special_markers": [], "special_marker_notes": []}
+        entry = self._load_market_boundary_recovered_candidates().get(
+            normalized_code, {}
+        )
+        markers = list(entry.get("special_markers") or [])
+        notes = list(entry.get("special_marker_notes") or [])
+        return {
+            "special_markers": [str(item).strip() for item in markers if str(item).strip()],
+            "special_marker_notes": [
+                str(item).strip() for item in notes if str(item).strip()
+            ],
+        }
+
+    @staticmethod
+    def _stage_sort_key(stage: str) -> int:
+        order = {"0_1": 0, "1_10": 1, "10_30": 2, "unknown": 3}
+        return order.get(str(stage or "unknown"), 3)
+
+    def _resolve_market_penetration_for_theme(
+        self,
+        *,
+        concept_code: str,
+        concept_name: str,
+    ) -> dict[str, Any]:
+        code = str(concept_code or "").strip()
+        name = str(concept_name or "").strip()
+        matched_rules: list[dict[str, Any]] = []
+        for rule in self._load_market_penetration_stage_rules():
+            match_type = str(rule.get("match_type") or "").strip()
+            match_value = str(rule.get("match_value") or "").strip()
+            if match_type == "concept_code" and code == match_value:
+                matched_rules.append(rule)
+            elif match_type == "concept_name" and name == match_value:
+                matched_rules.append(rule)
+            elif match_type == "keyword" and match_value.lower() in name.lower():
+                matched_rules.append(rule)
+
+        stages = sorted(
+            {
+                self._normalize_penetration_stage(rule.get("penetration_stage"))
+                for rule in matched_rules
+                if self._normalize_penetration_stage(rule.get("penetration_stage")) != "unknown"
+            },
+            key=self._stage_sort_key,
+        )
+        if not stages:
+            return {
+                "value": "unknown",
+                "values": ["unknown"],
+                "is_multi": False,
+                "reasons": ["未命中人工渗透率标注，暂记为 unknown"],
+                "matched_rules": [],
+                "source": "manual_theme_labels",
+            }
+        return {
+            "value": stages[0],
+            "values": stages,
+            "is_multi": len(stages) > 1,
+            "reasons": [
+                str(rule.get("reason") or "").strip() or f"命中规则：{rule['match_type']}={rule['match_value']}"
+                for rule in matched_rules
+            ],
+            "matched_rules": matched_rules,
+            "source": "manual_theme_labels",
+        }
+
+    def _resolve_market_penetration_for_stock(
+        self,
+        *,
+        concepts: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        matched_concepts: list[dict[str, Any]] = []
+        stages: set[str] = set()
+        reasons: list[str] = []
+        for item in concepts:
+            if not isinstance(item, dict):
+                continue
+            concept_code = str(item.get("concept_code") or "").strip()
+            concept_name = str(item.get("concept_name") or "").strip()
+            resolved = self._resolve_market_penetration_for_theme(
+                concept_code=concept_code,
+                concept_name=concept_name,
+            )
+            matched_concepts.append(
+                {
+                    "concept_code": concept_code,
+                    "concept_name": concept_name,
+                    "value": str(resolved.get("value") or "unknown"),
+                    "values": list(resolved.get("values") or ["unknown"]),
+                }
+            )
+            stage_value = self._normalize_penetration_stage(resolved.get("value"))
+            if stage_value != "unknown":
+                stages.add(stage_value)
+            for reason in resolved.get("reasons") or []:
+                reason_str = str(reason or "").strip()
+                if reason_str:
+                    reasons.append(f"{concept_name}: {reason_str}")
+        ordered_stages = sorted(stages, key=self._stage_sort_key)
+        if not ordered_stages:
+            return {
+                "value": "unknown",
+                "values": ["unknown"],
+                "is_multi": False,
+                "reasons": ["所属概念未命中人工渗透率标注，暂记为 unknown"],
+                "matched_concepts": matched_concepts,
+                "source": "manual_theme_labels",
+            }
+        return {
+            "value": ordered_stages[0],
+            "values": ordered_stages,
+            "is_multi": len(ordered_stages) > 1,
+            "reasons": reasons,
+            "matched_concepts": matched_concepts,
+            "source": "manual_theme_labels",
+        }
+
+    @staticmethod
+    def _attach_penetration_stage_to_tags(
+        *,
+        thematic_tags: dict[str, Any],
+        penetration_stage: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = deepcopy(thematic_tags)
+        labels = list(result.get("labels") or [])
+        for stage in penetration_stage.get("values") or []:
+            stage_str = str(stage or "").strip()
+            if stage_str and stage_str != "unknown":
+                labels.append(f"penetration_{stage_str}")
+        result["labels"] = sorted(set(labels))
+        result["penetration_stage"] = penetration_stage
+        return result
+
+    @classmethod
+    def _build_market_thematic_tags(
+        cls,
+        *,
+        texts: list[str],
+        exception_flags: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        ai_hits = cls._match_market_keywords(
+            texts=texts,
+            keywords=cls._market_ai_keywords(),
+        )
+        up_hits = cls._match_market_keywords(
+            texts=texts,
+            keywords=cls._market_kshape_up_keywords(),
+        )
+        down_hits = cls._match_market_keywords(
+            texts=texts,
+            keywords=cls._market_kshape_down_keywords(),
+        )
+        exception_items = list(exception_flags or [])
+
+        if exception_items:
+            kshape_value = "exception"
+            kshape_reasons = [
+                str(item.get("reason") or "").strip()
+                for item in exception_items
+                if str(item.get("reason") or "").strip()
+            ]
+            suggestion_bias = 2
+            suggestion_note = "命中例外白名单，建议层保留前置观察"
+        elif down_hits:
+            kshape_value = "down"
+            kshape_reasons = [f"命中 K 型向下关键词：{', '.join(down_hits[:4])}"]
+            suggestion_bias = 1 if ai_hits else -2
+            suggestion_note = (
+                "AI 相关宽口径保留，但仍施加 K 型向下风险折扣"
+                if ai_hits
+                else "命中 K 型向下方向，建议层显式后移"
+            )
+        elif up_hits or ai_hits:
+            kshape_value = "up"
+            kshape_reasons = [f"命中 K 型向上关键词：{', '.join((up_hits or ai_hits)[:4])}"]
+            suggestion_bias = 2 if ai_hits else 1
+            suggestion_note = "命中 AI/硬科技主线，建议层前移"
+        else:
+            kshape_value = "unknown"
+            kshape_reasons = []
+            suggestion_bias = 0
+            suggestion_note = "暂无明确主题方向标签"
+
+        ai_reasons = [f"命中 AI 关键词：{', '.join(ai_hits[:4])}"] if ai_hits else []
+        labels: list[str] = []
+        if ai_hits:
+            labels.append("ai_related")
+        if kshape_value != "unknown":
+            labels.append(f"kshape_{kshape_value}")
+        for item in exception_items:
+            code = str(item.get("code") or "").strip()
+            if code:
+                labels.append(code)
+
+        return {
+            "labels": labels,
+            "ai_related": {
+                "result": bool(ai_hits),
+                "reasons": ai_reasons,
+                "matched_keywords": ai_hits,
+            },
+            "kshape_direction": {
+                "value": kshape_value,
+                "reasons": kshape_reasons,
+                "risk_discount_applied": kshape_value == "down",
+            },
+            "exception_flags": exception_items,
+            "suggestion_bias": suggestion_bias,
+            "suggestion_note": suggestion_note,
+        }
+
+    def _derive_market_thematic_tags_for_theme(
+        self,
+        *,
+        concept_code: str,
+        concept_name: str,
+    ) -> dict[str, Any]:
+        name = str(concept_name or "").strip()
+        code = str(concept_code or "").strip()
+        exception_flags: list[dict[str, Any]] = []
+        if "AI小金属" in name:
+            exception_flags.append(
+                {
+                    "code": "ai_metal_exception",
+                    "label": "AI 小金属例外",
+                    "reason": "命中 AI 小金属例外方向",
+                }
+            )
+        thematic_tags = self._build_market_thematic_tags(
+            texts=[name, code],
+            exception_flags=exception_flags,
+        )
+        penetration_stage = self._resolve_market_penetration_for_theme(
+            concept_code=code,
+            concept_name=name,
+        )
+        return self._attach_penetration_stage_to_tags(
+            thematic_tags=thematic_tags,
+            penetration_stage=penetration_stage,
+        )
+
+    def _derive_market_thematic_tags_for_stock(
+        self,
+        *,
+        stock_code: str,
+        stock_name: Optional[str],
+        concepts: list[dict[str, str]],
+        derived_tags: dict[str, Any],
+    ) -> dict[str, Any]:
+        texts = [str(stock_name or "").strip(), str(stock_code or "").strip()]
+        texts.extend(
+            str(item.get("concept_name") or "").strip()
+            for item in concepts
+            if isinstance(item, dict)
+        )
+        exception_flags: list[dict[str, Any]] = []
+        normalized_name = str(stock_name or "").strip()
+        config_tag = (
+            derived_tags.get("config_leader_candidate")
+            if isinstance(derived_tags.get("config_leader_candidate"), dict)
+            else {}
+        )
+        attention_tag = (
+            derived_tags.get("institutional_attention_candidate")
+            if isinstance(derived_tags.get("institutional_attention_candidate"), dict)
+            else {}
+        )
+        if "小金属" in "".join(texts) and self._match_market_keywords(
+            texts=texts,
+            keywords=self._market_ai_keywords(),
+        ):
+            exception_flags.append(
+                {
+                    "code": "ai_metal_exception",
+                    "label": "AI 小金属例外",
+                    "reason": "AI 相关与小金属方向同时命中",
+                }
+            )
+        if normalized_name in self._market_head_broker_names() and (
+            bool(config_tag.get("result")) or bool(attention_tag.get("result"))
+        ):
+            exception_flags.append(
+                {
+                    "code": "head_broker_exception",
+                    "label": "头部证券例外",
+                    "reason": "头部证券且具备配置/机构关注证据",
+                }
+            )
+        thematic_tags = self._build_market_thematic_tags(
+            texts=texts,
+            exception_flags=exception_flags,
+        )
+        penetration_stage = self._resolve_market_penetration_for_stock(
+            concepts=concepts,
+        )
+        return self._attach_penetration_stage_to_tags(
+            thematic_tags=thematic_tags,
+            penetration_stage=penetration_stage,
+        )
+
+    def _market_intelligence_candidate_seed_snapshot(
+        self,
+        *,
+        top_n: int,
+    ) -> dict[str, Any]:
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+
+            def table_exists(table: str) -> bool:
+                row = cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (table,),
+                ).fetchone()
+                return row is not None
+
+            scan_limit = min(max(top_n * 5, 100), 1000)
+            config_seed_codes: list[str] = []
+            if table_exists("fund_portfolios"):
+                rows = cur.execute(
+                    """
+                    WITH latest_fp AS (
+                        SELECT symbol, MAX(ann_date) AS latest_ann_date
+                        FROM fund_portfolios
+                        GROUP BY symbol
+                    )
+                    SELECT fp.symbol, SUM(COALESCE(fp.mkv, 0)) AS total_mkv
+                    FROM fund_portfolios fp
+                    JOIN latest_fp lf
+                      ON lf.symbol = fp.symbol
+                     AND lf.latest_ann_date = fp.ann_date
+                    GROUP BY fp.symbol
+                    ORDER BY total_mkv DESC, fp.symbol ASC
+                    LIMIT ?
+                    """,
+                    (scan_limit,),
+                ).fetchall()
+                config_seed_codes = [
+                    str(r["symbol"]) for r in rows if str(r["symbol"] or "").strip()
+                ]
+
+            attention_seed_codes: list[str] = []
+            attention_map: dict[str, int] = {}
+            if (
+                table_exists("research_reports")
+                or table_exists("report_consensus")
+                or table_exists("institutional_surveys")
+            ):
+                if table_exists("research_reports"):
+                    for row in cur.execute(
+                        """
+                        SELECT substr(ts_code, 1, 6) AS stock_code, COUNT(DISTINCT inst_csname) AS cnt
+                        FROM research_reports
+                        WHERE ts_code IS NOT NULL
+                          AND DATE(trade_date) >= DATE('now', '-90 day')
+                        GROUP BY substr(ts_code, 1, 6)
+                        """
+                    ).fetchall():
+                        code = str(row["stock_code"] or "").strip()
+                        if code:
+                            attention_map[code] = attention_map.get(code, 0) + int(
+                                row["cnt"] or 0
+                            )
+                if table_exists("report_consensus"):
+                    for row in cur.execute(
+                        """
+                        SELECT substr(ts_code, 1, 6) AS stock_code, COUNT(DISTINCT org_name) AS cnt
+                        FROM report_consensus
+                        WHERE ts_code IS NOT NULL
+                        GROUP BY substr(ts_code, 1, 6)
+                        """
+                    ).fetchall():
+                        code = str(row["stock_code"] or "").strip()
+                        if code:
+                            attention_map[code] = attention_map.get(code, 0) + int(
+                                row["cnt"] or 0
+                            )
+                if table_exists("institutional_surveys"):
+                    for row in cur.execute(
+                        """
+                        SELECT substr(ts_code, 1, 6) AS stock_code,
+                               COUNT(DISTINCT rece_org) + COUNT(1) AS cnt
+                        FROM institutional_surveys
+                        WHERE ts_code IS NOT NULL
+                          AND DATE(surv_date) >= DATE('now', '-180 day')
+                        GROUP BY substr(ts_code, 1, 6)
+                        """
+                    ).fetchall():
+                        code = str(row["stock_code"] or "").strip()
+                        if code:
+                            attention_map[code] = attention_map.get(code, 0) + int(
+                                row["cnt"] or 0
+                            )
+                attention_seed_codes = [
+                    code
+                    for code, _ in sorted(
+                        attention_map.items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )[:scan_limit]
+                ]
+
+            trading_seed_codes: list[str] = []
+            if table_exists("daily_prices"):
+                latest_row = cur.execute(
+                    "SELECT MAX(trade_date) FROM daily_prices"
+                ).fetchone()
+                latest_trade_date = (
+                    str(latest_row[0]) if latest_row and latest_row[0] is not None else None
+                )
+                if latest_trade_date:
+                    rows = cur.execute(
+                        """
+                        SELECT code
+                        FROM daily_prices
+                        WHERE trade_date = ?
+                        ORDER BY COALESCE(amount, 0) DESC, code ASC
+                        LIMIT ?
+                        """,
+                        (latest_trade_date, scan_limit),
+                    ).fetchall()
+                    trading_seed_codes = [
+                        str(row["code"]) for row in rows if str(row["code"] or "").strip()
+                    ]
+
+            all_codes = sorted(
+                set(config_seed_codes) | set(attention_seed_codes) | set(trading_seed_codes)
+            )
+            stock_name_map: dict[str, Optional[str]] = {}
+            if all_codes and table_exists("stocks"):
+                placeholders = ",".join(["?"] * len(all_codes))
+                for row in cur.execute(
+                    f"SELECT code, name FROM stocks WHERE code IN ({placeholders})",
+                    tuple(all_codes),
+                ).fetchall():
+                    code = str(row["code"] or "").strip()
+                    if code:
+                        stock_name_map[code] = str(row["name"] or "").strip() or None
+        finally:
+            conn.close()
+
+        return {
+            "db_path": db_path,
+            "config_seed_codes": config_seed_codes,
+            "attention_seed_codes": attention_seed_codes,
+            "trading_seed_codes": trading_seed_codes,
+            "stock_name_map": stock_name_map,
+        }
+
+    def _market_intelligence_candidates_from_seed_snapshot(
+        self,
+        *,
+        top_n: int,
+        seed_snapshot: dict[str, Any],
+        stock_summary_cache: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        db_path = Path(str(seed_snapshot.get("db_path") or "")).expanduser()
+        scan_limit = min(max(top_n * 5, 100), 1000)
+        config_seed_codes = list(seed_snapshot.get("config_seed_codes") or [])[:scan_limit]
+        attention_seed_codes = list(seed_snapshot.get("attention_seed_codes") or [])[
+            :scan_limit
+        ]
+        trading_seed_codes = list(seed_snapshot.get("trading_seed_codes") or [])[:scan_limit]
+        stock_name_map = (
+            seed_snapshot.get("stock_name_map")
+            if isinstance(seed_snapshot.get("stock_name_map"), dict)
+            else {}
+        )
+        all_codes = sorted(
+            set(config_seed_codes) | set(attention_seed_codes) | set(trading_seed_codes)
+        )
+        summary_cache = (
+            stock_summary_cache if stock_summary_cache is not None else {}
+        )
+        if all_codes:
+            missing_codes = [
+                code
+                for code in all_codes
+                if not isinstance(summary_cache.get(code), dict)
+            ]
+            if missing_codes:
+                prefetched = self._load_market_intelligence_for_stocks(
+                    db_path=db_path,
+                    stock_codes=missing_codes,
+                )
+                for raw_code in missing_codes:
+                    normalized_code = self._normalize_stock_code(raw_code)
+                    summary = prefetched.get(normalized_code)
+                    if isinstance(summary, dict):
+                        summary_cache[raw_code] = summary
+
+        config_candidates: list[dict[str, Any]] = []
+        attention_candidates: list[dict[str, Any]] = []
+        trading_candidates: list[dict[str, Any]] = []
+        for code in all_codes:
+            summary = summary_cache.get(code)
+            if not isinstance(summary, dict):
+                summary = self._load_market_intelligence_for_stock(
+                    db_path=db_path, stock_code=code
+                )
+                summary_cache[code] = summary
+            signals = summary.get("signals") if isinstance(summary.get("signals"), dict) else {}
+            tags = (
+                summary.get("derived_tags")
+                if isinstance(summary.get("derived_tags"), dict)
+                else {}
+            )
+            thematic_tags = (
+                summary.get("thematic_tags")
+                if isinstance(summary.get("thematic_tags"), dict)
+                else {}
+            )
+            stock_name = stock_name_map.get(code)
+
+            config_tag = tags.get("config_leader_candidate")
+            if isinstance(config_tag, dict) and bool(config_tag.get("result")):
+                fund_signal = (
+                    signals.get("fund_portfolios", {})
+                    if isinstance(signals.get("fund_portfolios"), dict)
+                    else {}
+                )
+                index_signal = (
+                    signals.get("index_weights", {})
+                    if isinstance(signals.get("index_weights"), dict)
+                    else {}
+                )
+                config_candidates.append(
+                    {
+                        "stock_code": code,
+                        "stock_name": stock_name,
+                        "score": int(config_tag.get("score") or 0),
+                        "level": str(config_tag.get("level") or "low"),
+                        "reasons": list(config_tag.get("reasons") or []),
+                        "latest_ann_date": fund_signal.get("latest_ann_date"),
+                        "holder_fund_count": int(fund_signal.get("holder_fund_count") or 0),
+                        "holder_etf_count": int(fund_signal.get("holder_etf_count") or 0),
+                        "total_mkv": fund_signal.get("total_mkv"),
+                        "avg_stk_mkv_ratio": fund_signal.get("avg_stk_mkv_ratio"),
+                        "index_count": int(index_signal.get("index_count") or 0),
+                        "thematic_tags": thematic_tags,
+                        "suggestion_bias": int(thematic_tags.get("suggestion_bias") or 0),
+                    }
+                )
+
+            attention_tag = tags.get("institutional_attention_candidate")
+            if isinstance(attention_tag, dict) and bool(attention_tag.get("result")):
+                rr_signal = (
+                    signals.get("research_reports", {})
+                    if isinstance(signals.get("research_reports"), dict)
+                    else {}
+                )
+                rc_signal = (
+                    signals.get("report_consensus", {})
+                    if isinstance(signals.get("report_consensus"), dict)
+                    else {}
+                )
+                sv_signal = (
+                    signals.get("institutional_surveys", {})
+                    if isinstance(signals.get("institutional_surveys"), dict)
+                    else {}
+                )
+                attention_candidates.append(
+                    {
+                        "stock_code": code,
+                        "stock_name": stock_name,
+                        "score": int(attention_tag.get("score") or 0),
+                        "level": str(attention_tag.get("level") or "low"),
+                        "reasons": list(attention_tag.get("reasons") or []),
+                        "research_inst_90d": int(rr_signal.get("distinct_institutions_90d") or 0),
+                        "research_count_90d": int(rr_signal.get("recent_90d_count") or 0),
+                        "consensus_orgs": int(rc_signal.get("distinct_orgs") or 0),
+                        "latest_report_date": rc_signal.get("latest_report_date"),
+                        "survey_orgs_180d": int(sv_signal.get("distinct_orgs_180d") or 0),
+                        "survey_count_180d": int(sv_signal.get("recent_180d_count") or 0),
+                        "latest_survey_date": sv_signal.get("latest_survey_date"),
+                        "thematic_tags": thematic_tags,
+                        "suggestion_bias": int(thematic_tags.get("suggestion_bias") or 0),
+                    }
+                )
+
+            trading_tag = tags.get("trading_leader_candidate")
+            if isinstance(trading_tag, dict) and bool(trading_tag.get("result")):
+                trading_signal = (
+                    signals.get("trading_profile")
+                    if isinstance(signals.get("trading_profile"), dict)
+                    else {}
+                )
+                theme_signal = (
+                    signals.get("theme_momentum")
+                    if isinstance(signals.get("theme_momentum"), dict)
+                    else {}
+                )
+                leading_concepts = list(theme_signal.get("leading_concepts") or [])
+                best_concept = self._select_market_best_leading_concept(
+                    leading_concepts=leading_concepts
+                )
+                trading_candidates.append(
+                    {
+                        "stock_code": code,
+                        "stock_name": stock_name,
+                        "score": int(trading_tag.get("score") or 0),
+                        "level": str(trading_tag.get("level") or "low"),
+                        "reasons": list(trading_tag.get("reasons") or []),
+                        "latest_trade_date": trading_signal.get("latest_trade_date"),
+                        "latest_amount": trading_signal.get("latest_amount"),
+                        "avg_amount_5d": trading_signal.get("avg_amount_5d"),
+                        "avg_amount_20d": trading_signal.get("avg_amount_20d"),
+                        "latest_turnover": trading_signal.get("latest_turnover"),
+                        "avg_turnover_5d": trading_signal.get("avg_turnover_5d"),
+                        "return_20d": trading_signal.get("return_20d"),
+                        "positive_days_5d": int(trading_signal.get("positive_days_5d") or 0),
+                        "best_concept_name": (
+                            str(best_concept.get("concept_name") or "").strip() or None
+                        ),
+                        "best_mainline_rank": theme_signal.get("best_mainline_rank"),
+                        "best_heat_rank": theme_signal.get("best_heat_rank"),
+                        "thematic_tags": thematic_tags,
+                        "suggestion_bias": int(thematic_tags.get("suggestion_bias") or 0),
+                    }
+                )
+
+        config_candidates.sort(
+            key=lambda item: (
+                -int(item.get("suggestion_bias") or 0),
+                -int(item.get("score") or 0),
+                -int(item.get("holder_etf_count") or 0),
+                -(float(item.get("total_mkv") or 0.0)),
+                item.get("stock_code") or "",
+            )
+        )
+        attention_candidates.sort(
+            key=lambda item: (
+                -int(item.get("suggestion_bias") or 0),
+                -int(item.get("score") or 0),
+                -int(item.get("consensus_orgs") or 0),
+                -int(item.get("research_inst_90d") or 0),
+                -int(item.get("survey_orgs_180d") or 0),
+                item.get("stock_code") or "",
+            )
+        )
+        trading_candidates.sort(
+            key=lambda item: (
+                -int(item.get("suggestion_bias") or 0),
+                -int(item.get("score") or 0),
+                -(float(item.get("latest_amount") or 0.0)),
+                -(float(item.get("avg_turnover_5d") or 0.0)),
+                item.get("stock_code") or "",
+            )
+        )
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "top_n": top_n,
+            "config_leader_candidates": config_candidates[:top_n],
+            "institutional_attention_candidates": attention_candidates[:top_n],
+            "trading_leader_candidates": trading_candidates[:top_n],
+            "coverage": {
+                "config_seed_codes": len(config_seed_codes),
+                "attention_seed_codes": len(attention_seed_codes),
+                "trading_seed_codes": len(trading_seed_codes),
+                "unique_seed_codes": len(all_codes),
+            },
+        }
+
+    def _market_intelligence_candidates_payload(
+        self,
+        *,
+        top_n: int,
+        stock_summary_cache: Optional[dict[str, dict[str, Any]]] = None,
+        candidate_classified_snapshot: Optional[dict[str, Any]] = None,
+        candidate_seed_snapshot: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if isinstance(candidate_classified_snapshot, dict):
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "top_n": top_n,
+                "config_leader_candidates": list(
+                    candidate_classified_snapshot.get("config_leader_candidates") or []
+                )[:top_n],
+                "institutional_attention_candidates": list(
+                    candidate_classified_snapshot.get(
+                        "institutional_attention_candidates"
+                    )
+                    or []
+                )[:top_n],
+                "trading_leader_candidates": list(
+                    candidate_classified_snapshot.get("trading_leader_candidates") or []
+                )[:top_n],
+                "coverage": dict(candidate_classified_snapshot.get("coverage") or {}),
+            }
+        seed_snapshot = (
+            candidate_seed_snapshot
+            if isinstance(candidate_seed_snapshot, dict)
+            else self._market_intelligence_candidate_seed_snapshot(top_n=top_n)
+        )
+        return self._market_intelligence_candidates_from_seed_snapshot(
+            top_n=top_n,
+            seed_snapshot=seed_snapshot,
+            stock_summary_cache=stock_summary_cache,
+        )
+
+    def market_intelligence_candidates_view(self, *, top_n: int = 20) -> dict[str, Any]:
+        if int(top_n) <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_top_n",
+                message="top_n must be a positive integer",
+            )
+        top_n = min(int(top_n), 200)
+        return self._market_intelligence_candidates_payload(top_n=top_n)
+
+    def _market_intelligence_unified_candidates_payload(
+        self,
+        *,
+        top_n: int,
+        stock_summary_cache: Optional[dict[str, dict[str, Any]]] = None,
+        candidate_classified_snapshot: Optional[dict[str, Any]] = None,
+        candidate_seed_snapshot: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        candidates_payload = self._market_intelligence_candidates_payload(
+            top_n=min(top_n * 3, 200),
+            stock_summary_cache=stock_summary_cache,
+            candidate_classified_snapshot=candidate_classified_snapshot,
+            candidate_seed_snapshot=candidate_seed_snapshot,
+        )
+        config_candidates = candidates_payload.get("config_leader_candidates") or []
+        attention_candidates = (
+            candidates_payload.get("institutional_attention_candidates") or []
+        )
+        trading_candidates = candidates_payload.get("trading_leader_candidates") or []
+
+        merged: dict[str, dict[str, Any]] = {}
+
+        def ensure_item(
+            *,
+            stock_code: str,
+            stock_name: Optional[str],
+            thematic_tags: dict[str, Any],
+            suggestion_bias: int,
+        ) -> dict[str, Any]:
+            item = merged.get(stock_code)
+            if item is None:
+                item = {
+                    "stock_code": stock_code,
+                    "stock_name": stock_name,
+                    "candidate_types": [],
+                    "candidate_type_count": 0,
+                    "primary_candidate_type": None,
+                    "thematic_tags": thematic_tags,
+                    "suggestion_bias": int(suggestion_bias),
+                    "roles": {
+                        "config_leader": None,
+                        "institutional_attention": None,
+                        "trading_leader": None,
+                    },
+                }
+                merged[stock_code] = item
+            else:
+                if not item.get("stock_name") and stock_name:
+                    item["stock_name"] = stock_name
+                if int(suggestion_bias) > int(item.get("suggestion_bias") or 0):
+                    item["suggestion_bias"] = int(suggestion_bias)
+                current_tags = (
+                    item.get("thematic_tags")
+                    if isinstance(item.get("thematic_tags"), dict)
+                    else {}
+                )
+                if not current_tags and thematic_tags:
+                    item["thematic_tags"] = thematic_tags
+            return item
+
+        def attach_role(
+            *,
+            role_key: str,
+            items: list[dict[str, Any]],
+        ) -> None:
+            for raw in items:
+                if not isinstance(raw, dict):
+                    continue
+                stock_code = self._normalize_stock_code(raw.get("stock_code"))
+                if not stock_code:
+                    continue
+                item = ensure_item(
+                    stock_code=stock_code,
+                    stock_name=(
+                        str(raw.get("stock_name") or "").strip() or None
+                    ),
+                    thematic_tags=(
+                        raw.get("thematic_tags")
+                        if isinstance(raw.get("thematic_tags"), dict)
+                        else {}
+                    ),
+                    suggestion_bias=int(raw.get("suggestion_bias") or 0),
+                )
+                role_payload = {
+                    key: value
+                    for key, value in raw.items()
+                    if key not in {"stock_code", "stock_name", "thematic_tags", "suggestion_bias"}
+                }
+                item["roles"][role_key] = role_payload
+                candidate_types = list(item.get("candidate_types") or [])
+                if role_key not in candidate_types:
+                    candidate_types.append(role_key)
+                item["candidate_types"] = candidate_types
+
+        attach_role(role_key="config_leader", items=config_candidates)
+        attach_role(role_key="institutional_attention", items=attention_candidates)
+        attach_role(role_key="trading_leader", items=trading_candidates)
+
+        priority = {
+            "config_leader": 0,
+            "institutional_attention": 1,
+            "trading_leader": 2,
+        }
+        candidates: list[dict[str, Any]] = []
+        for item in merged.values():
+            candidate_types = sorted(
+                list(item.get("candidate_types") or []),
+                key=lambda value: priority.get(str(value), 99),
+            )
+            item["candidate_types"] = candidate_types
+            item["candidate_type_count"] = len(candidate_types)
+            item["primary_candidate_type"] = candidate_types[0] if candidate_types else None
+            candidates.append(item)
+
+        def role_score(item: dict[str, Any], role_key: str) -> int:
+            roles = item.get("roles") if isinstance(item.get("roles"), dict) else {}
+            role = roles.get(role_key) if isinstance(roles.get(role_key), dict) else {}
+            return int(role.get("score") or 0)
+
+        candidates.sort(
+            key=lambda item: (
+                -int(item.get("candidate_type_count") or 0),
+                -int(item.get("suggestion_bias") or 0),
+                -role_score(item, "config_leader"),
+                -role_score(item, "institutional_attention"),
+                -role_score(item, "trading_leader"),
+                item.get("stock_code") or "",
+            )
+        )
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "top_n": top_n,
+            "candidates": candidates[:top_n],
+            "coverage": {
+                "config_leader_candidates": len(config_candidates),
+                "institutional_attention_candidates": len(attention_candidates),
+                "trading_leader_candidates": len(trading_candidates),
+                "unique_candidates": len(candidates),
+            },
+        }
+
+    def market_intelligence_unified_candidates_view(
+        self, *, top_n: int = 20
+    ) -> dict[str, Any]:
+        if int(top_n) <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_top_n",
+                message="top_n must be a positive integer",
+            )
+        top_n = min(int(top_n), 200)
+        return self._market_intelligence_unified_candidates_payload(top_n=top_n)
+
+    @staticmethod
+    def _build_recommendation_payload_from_candidate(
+        candidate: dict[str, Any], *, recommendation_rank: int
+    ) -> dict[str, Any]:
+        candidate_types = list(candidate.get("candidate_types") or [])
+        candidate_type_count = int(candidate.get("candidate_type_count") or 0)
+        thematic_tags = (
+            candidate.get("thematic_tags")
+            if isinstance(candidate.get("thematic_tags"), dict)
+            else {}
+        )
+        kshape_direction = (
+            thematic_tags.get("kshape_direction")
+            if isinstance(thematic_tags.get("kshape_direction"), dict)
+            else {}
+        )
+        penetration_stage = (
+            thematic_tags.get("penetration_stage")
+            if isinstance(thematic_tags.get("penetration_stage"), dict)
+            else {}
+        )
+        ai_related = (
+            thematic_tags.get("ai_related")
+            if isinstance(thematic_tags.get("ai_related"), dict)
+            else {}
+        )
+
+        is_ai_related = bool(ai_related.get("result"))
+        kshape_value = str(kshape_direction.get("value") or "unknown")
+        suggestion_bias = int(candidate.get("suggestion_bias") or 0)
+        primary_candidate_type = str(candidate.get("primary_candidate_type") or "")
+        is_single_role_trading_candidate = (
+            candidate_type_count == 1 and primary_candidate_type == "trading_leader"
+        )
+        confirmed_theme_names = BootstrapApiService._market_confirmed_theme_names_for_candidate(
+            candidate=candidate
+        )
+        has_confirmed_theme = bool(confirmed_theme_names)
+        penetration_value = str(penetration_stage.get("value") or "unknown")
+
+        risk_flags: list[str] = []
+        if kshape_value == "down":
+            risk_flags.append("kshape_down_discount")
+        if not is_ai_related:
+            risk_flags.append("non_ai_theme")
+        if penetration_value == "unknown":
+            risk_flags.append("penetration_unknown")
+        if candidate_type_count <= 1:
+            risk_flags.append("single_role_only")
+        if is_single_role_trading_candidate:
+            risk_flags.append("single_trading_role_only")
+        if candidate_type_count >= 2 and not has_confirmed_theme:
+            risk_flags.append("confirmed_theme_missing")
+
+        recommendation_reasons: list[str] = []
+        if candidate_types:
+            role_cn = {
+                "config_leader": "配置型龙头",
+                "institutional_attention": "机构关注龙头",
+                "trading_leader": "交易型龙头",
+            }
+            readable_roles = [
+                role_cn.get(role, role) for role in candidate_types if str(role).strip()
+            ]
+            if readable_roles:
+                recommendation_reasons.append(
+                    f"龙头身份：{' + '.join(readable_roles)}"
+                )
+        if is_ai_related:
+            recommendation_reasons.append("命中 AI 宽口径主线")
+        if kshape_value == "down":
+            recommendation_reasons.append("命中 K 型向下，建议层后移")
+        elif kshape_value in {"up", "exception"}:
+            recommendation_reasons.append(f"K 型方向：{kshape_value}")
+        penetration_values = list(penetration_stage.get("values") or [])
+        if penetration_values:
+            recommendation_reasons.append(
+                f"渗透率阶段：{', '.join(str(v) for v in penetration_values)}"
+            )
+        if candidate_type_count >= 2 and not is_ai_related:
+            recommendation_reasons.append("未命中 AI 主线，建议层降为观察")
+        if candidate_type_count >= 2 and penetration_value == "unknown":
+            recommendation_reasons.append("渗透率阶段未确认，建议层降为观察")
+        if candidate_type_count >= 2 and not has_confirmed_theme:
+            recommendation_reasons.append("缺少可确认主线锚点，建议层降为观察")
+        if is_single_role_trading_candidate and is_ai_related and suggestion_bias >= 1:
+            recommendation_reasons.append("仅单一交易型证据，建议层降为观察")
+
+        if kshape_value == "down":
+            if candidate_type_count >= 2 and is_ai_related:
+                recommendation_status = "观察"
+            else:
+                recommendation_status = "回避"
+        elif (
+            candidate_type_count >= 2
+            and is_ai_related
+            and penetration_value != "unknown"
+            and has_confirmed_theme
+        ):
+            recommendation_status = "推荐"
+        elif candidate_type_count >= 2:
+            recommendation_status = "观察"
+        elif is_single_role_trading_candidate and is_ai_related and suggestion_bias >= 1:
+            recommendation_status = "观察"
+        elif candidate_type_count == 1 and is_ai_related and suggestion_bias >= 1:
+            recommendation_status = "推荐"
+        elif candidate_type_count >= 1:
+            recommendation_status = "观察"
+        else:
+            recommendation_status = "回避"
+
+        leader_summary = {
+            "candidate_types": candidate_types,
+            "candidate_type_count": candidate_type_count,
+            "primary_candidate_type": primary_candidate_type or None,
+        }
+
+        return {
+            "stock_code": candidate.get("stock_code"),
+            "stock_name": candidate.get("stock_name"),
+            "recommendation_rank": int(recommendation_rank),
+            "recommendation_status": recommendation_status,
+            "recommendation_reasons": recommendation_reasons,
+            "risk_flags": risk_flags,
+            "leader_summary": leader_summary,
+            "thematic_tags": thematic_tags,
+            "suggestion_bias": suggestion_bias,
+            "candidate": candidate,
+        }
+
+    def _market_intelligence_recommendations_payload(
+        self,
+        *,
+        top_n: int,
+        stock_summary_cache: Optional[dict[str, dict[str, Any]]] = None,
+        candidate_classified_snapshot: Optional[dict[str, Any]] = None,
+        candidate_seed_snapshot: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        unified_payload = self._market_intelligence_unified_candidates_payload(
+            top_n=min(top_n * 3, 200),
+            stock_summary_cache=stock_summary_cache,
+            candidate_classified_snapshot=candidate_classified_snapshot,
+            candidate_seed_snapshot=candidate_seed_snapshot,
+        )
+        candidates = list(unified_payload.get("candidates") or [])
+
+        recommendations = [
+            self._build_recommendation_payload_from_candidate(
+                candidate=item,
+                recommendation_rank=index,
+            )
+            for index, item in enumerate(candidates, start=1)
+            if isinstance(item, dict)
+        ]
+        for item in recommendations:
+            marker_payload = self._market_special_markers_for_stock(
+                stock_code=item.get("stock_code")
+            )
+            item["special_markers"] = list(marker_payload.get("special_markers") or [])
+            item["special_marker_notes"] = list(
+                marker_payload.get("special_marker_notes") or []
+            )
+
+        status_priority = {"推荐": 0, "观察": 1, "回避": 2}
+        recommendations.sort(
+            key=lambda item: (
+                status_priority.get(str(item.get("recommendation_status") or "回避"), 9),
+                -int(item.get("suggestion_bias") or 0),
+                int(item.get("recommendation_rank") or 999999),
+                str(item.get("stock_code") or ""),
+            )
+        )
+        for index, item in enumerate(recommendations, start=1):
+            item["recommendation_rank"] = index
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "top_n": top_n,
+            "items": recommendations[:top_n],
+            "coverage": {
+                "source_candidates": len(candidates),
+                "recommended": sum(
+                    1 for item in recommendations if item.get("recommendation_status") == "推荐"
+                ),
+                "watchlist": sum(
+                    1 for item in recommendations if item.get("recommendation_status") == "观察"
+                ),
+                "avoid": sum(
+                    1 for item in recommendations if item.get("recommendation_status") == "回避"
+                ),
+            },
+        }
+
+    def market_intelligence_recommendations_view(
+        self, *, top_n: int = 20
+    ) -> dict[str, Any]:
+        if int(top_n) <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_top_n",
+                message="top_n must be a positive integer",
+            )
+        top_n = min(int(top_n), 200)
+        return self._market_intelligence_recommendations_payload(top_n=top_n)
+
+    def market_intelligence_review_board_view(
+        self,
+        *,
+        top_n: int = 20,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if int(top_n) <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_top_n",
+                message="top_n must be a positive integer",
+            )
+        top_n = min(int(top_n), 200)
+        return self._market_intelligence_review_board_payload_cached(
+            top_n=top_n,
+            trade_date=trade_date,
+        )
+
+    def _build_market_intelligence_review_board_payload(
+        self,
+        *,
+        top_n: int,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        stock_summary_cache: dict[str, dict[str, Any]] = {}
+        candidate_classified_snapshot = self._market_intelligence_candidates_payload(
+            top_n=max(min(top_n * 5, 200), min(top_n * 9, 200)),
+            stock_summary_cache=stock_summary_cache,
+        )
+        themes_payload = self._market_intelligence_theme_board_payload(
+            top_n=top_n,
+            trade_date=trade_date,
+            stock_summary_cache=stock_summary_cache,
+            candidate_classified_snapshot=candidate_classified_snapshot,
+        )
+        recommendations_payload = self._market_intelligence_recommendations_payload(
+            top_n=top_n,
+            stock_summary_cache=stock_summary_cache,
+            candidate_classified_snapshot=candidate_classified_snapshot,
+        )
+
+        themes = list(themes_payload.get("themes") or [])
+        recommendations = list(recommendations_payload.get("items") or [])
+
+        focus_theme = min(themes, key=self._market_theme_sort_key) if themes else None
+
+        theme_lookup: dict[str, dict[str, Any]] = {}
+        for theme in themes:
+            if not isinstance(theme, dict):
+                continue
+            concept_code = str(theme.get("concept_code") or "").strip()
+            concept_name = str(theme.get("concept_name") or "").strip()
+            if concept_code:
+                theme_lookup[concept_code] = {
+                    "concept_code": concept_code,
+                    "concept_name": concept_name or concept_code,
+                    "board_score": int(theme.get("board_score") or 0),
+                    "base_score": int(theme.get("base_score") or 0),
+                    "resonance_score": int(theme.get("resonance_score") or 0),
+                    "total_score": int(theme.get("total_score") or 0),
+                }
+
+        links: list[dict[str, Any]] = []
+        focus_theme_name = (
+            str(focus_theme.get("concept_name") or "").strip()
+            if isinstance(focus_theme, dict)
+            else ""
+        )
+        for item in recommendations:
+            if not isinstance(item, dict):
+                continue
+            thematic_tags = (
+                item.get("thematic_tags")
+                if isinstance(item.get("thematic_tags"), dict)
+                else {}
+            )
+            penetration_stage = (
+                thematic_tags.get("penetration_stage")
+                if isinstance(thematic_tags.get("penetration_stage"), dict)
+                else {}
+            )
+            candidate_payload = (
+                item.get("candidate")
+                if isinstance(item.get("candidate"), dict)
+                else {}
+            )
+            confirmed_theme_names = set(
+                self._market_confirmed_theme_names_for_candidate(
+                    candidate=candidate_payload
+                )
+            )
+            matched_themes: list[dict[str, Any]] = []
+            for theme in themes:
+                if not isinstance(theme, dict):
+                    continue
+                concept_name = str(theme.get("concept_name") or "").strip()
+                if not concept_name or concept_name not in confirmed_theme_names:
+                    continue
+                matched_themes.append(
+                    {
+                        "concept_code": str(theme.get("concept_code") or "").strip(),
+                        "concept_name": concept_name,
+                        "board_score": int(theme.get("board_score") or 0),
+                    }
+                )
+            uniq_links: dict[str, dict[str, Any]] = {}
+            for match in matched_themes:
+                concept_code = str(match.get("concept_code") or "").strip()
+                if concept_code and concept_code not in uniq_links:
+                    uniq_links[concept_code] = match
+            links.append(
+                {
+                    "stock_code": item.get("stock_code"),
+                    "stock_name": item.get("stock_name"),
+                    "recommendation_status": item.get("recommendation_status"),
+                    "candidate_types": list(
+                        (
+                            item.get("leader_summary")
+                            if isinstance(item.get("leader_summary"), dict)
+                            else {}
+                        ).get("candidate_types")
+                        or []
+                    ),
+                    "penetration_values": list(penetration_stage.get("values") or []),
+                    "special_markers": list(item.get("special_markers") or []),
+                    "special_marker_notes": list(item.get("special_marker_notes") or []),
+                    "matched_themes": list(uniq_links.values()),
+                }
+            )
+
+        focus_candidate = None
+        if recommendations:
+            if focus_theme_name:
+                for item, link in zip(recommendations, links):
+                    if not isinstance(item, dict) or not isinstance(link, dict):
+                        continue
+                    matched_theme_names = {
+                        str(match.get("concept_name") or "").strip()
+                        for match in (link.get("matched_themes") or [])
+                        if isinstance(match, dict)
+                    }
+                    if focus_theme_name in matched_theme_names:
+                        focus_candidate = item
+                        break
+            if not isinstance(focus_candidate, dict):
+                focus_candidate = recommendations[0]
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "top_n": top_n,
+            "trade_date": themes_payload.get("trade_date"),
+            "theme_summary": {
+                "items": themes,
+                "focus_theme": focus_theme,
+                "count": len(themes),
+            },
+            "candidate_summary": {
+                "items": recommendations,
+                "focus_candidate": focus_candidate,
+                "coverage": recommendations_payload.get("coverage") or {},
+            },
+            "links": links[:top_n],
+            "review_focus": {
+                "theme": None
+                if not isinstance(focus_theme, dict)
+                else {
+                    "concept_code": focus_theme.get("concept_code"),
+                    "concept_name": focus_theme.get("concept_name"),
+                    "board_score": focus_theme.get("board_score"),
+                    "base_score": focus_theme.get("base_score"),
+                    "resonance_score": focus_theme.get("resonance_score"),
+                    "total_score": focus_theme.get("total_score"),
+                },
+                "candidate": None
+                if not isinstance(focus_candidate, dict)
+                else {
+                    "stock_code": focus_candidate.get("stock_code"),
+                    "stock_name": focus_candidate.get("stock_name"),
+                    "recommendation_status": focus_candidate.get("recommendation_status"),
+                },
+            },
+        }
+
+    def _market_intelligence_review_board_cache_key(
+        self,
+        *,
+        top_n: int,
+        trade_date: Optional[str],
+    ) -> tuple[str, ...]:
+        return (
+            "market_intelligence_review_board",
+            str(int(top_n)),
+            str(trade_date or "").strip(),
+        )
+
+    def _market_intelligence_review_board_payload_cached(
+        self,
+        *,
+        top_n: int,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        cache_key = self._market_intelligence_review_board_cache_key(
+            top_n=top_n,
+            trade_date=trade_date,
+        )
+        with self._cache_lock:
+            cached_payload = self._cache_get(cache_key)
+            if cached_payload is not None:
+                return cached_payload
+            inflight = self._market_intelligence_inflight.get(cache_key)
+            should_build = inflight is None
+            if inflight is None:
+                inflight = threading.Event()
+                self._market_intelligence_inflight[cache_key] = inflight
+        if should_build:
+            try:
+                payload = self._build_market_intelligence_review_board_payload(
+                    top_n=top_n,
+                    trade_date=trade_date,
+                )
+                with self._cache_lock:
+                    self._cache_set(
+                        cache_key,
+                        payload,
+                        self._cache_ttl_seconds["market_intelligence_review_board"],
+                    )
+                return payload
+            finally:
+                with self._cache_lock:
+                    current = self._market_intelligence_inflight.pop(cache_key, None)
+                    if current is not None:
+                        current.set()
+        assert inflight is not None
+        inflight.wait()
+        with self._cache_lock:
+            cached_payload = self._cache_get(cache_key)
+            if cached_payload is not None:
+                return cached_payload
+        return self._build_market_intelligence_review_board_payload(
+            top_n=top_n,
+            trade_date=trade_date,
+        )
+
+    def market_intelligence_decision_summary_view(
+        self,
+        *,
+        top_n: int = 20,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if int(top_n) <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_top_n",
+                message="top_n must be a positive integer",
+            )
+        top_n = min(int(top_n), 200)
+        review_board = self._market_intelligence_review_board_payload_cached(
+            top_n=top_n,
+            trade_date=trade_date,
+        )
+
+        themes = list(
+            (
+                review_board.get("theme_summary")
+                if isinstance(review_board.get("theme_summary"), dict)
+                else {}
+            ).get("items")
+            or []
+        )
+        recommendations = list(
+            (
+                review_board.get("candidate_summary")
+                if isinstance(review_board.get("candidate_summary"), dict)
+                else {}
+            ).get("items")
+            or []
+        )
+
+        recommended = [
+            item
+            for item in recommendations
+            if isinstance(item, dict) and item.get("recommendation_status") == "推荐"
+        ]
+        watchlist = [
+            item
+            for item in recommendations
+            if isinstance(item, dict) and item.get("recommendation_status") == "观察"
+        ]
+        avoid = [
+            item
+            for item in recommendations
+            if isinstance(item, dict) and item.get("recommendation_status") == "回避"
+        ]
+
+        top_theme_scores = [
+            int(item.get("board_score") or 0)
+            for item in themes[:3]
+            if isinstance(item, dict)
+        ]
+        mainline_concentration = (
+            "focused"
+            if len(top_theme_scores) >= 2
+            and top_theme_scores[0] > 0
+            and (top_theme_scores[0] - top_theme_scores[1]) >= 2
+            else "mixed"
+            if top_theme_scores
+            else "weak"
+        )
+
+        def is_ai_related(item: dict[str, Any]) -> bool:
+            thematic_tags = (
+                item.get("thematic_tags")
+                if isinstance(item.get("thematic_tags"), dict)
+                else {}
+            )
+            ai_related = (
+                thematic_tags.get("ai_related")
+                if isinstance(thematic_tags.get("ai_related"), dict)
+                else {}
+            )
+            return bool(ai_related.get("result"))
+
+        def kshape_value(item: dict[str, Any]) -> str:
+            thematic_tags = (
+                item.get("thematic_tags")
+                if isinstance(item.get("thematic_tags"), dict)
+                else {}
+            )
+            kshape = (
+                thematic_tags.get("kshape_direction")
+                if isinstance(thematic_tags.get("kshape_direction"), dict)
+                else {}
+            )
+            return str(kshape.get("value") or "unknown")
+
+        recommended_ai_count = sum(1 for item in recommended if is_ai_related(item))
+        recommended_kshape_down_count = sum(
+            1 for item in recommended if kshape_value(item) == "down"
+        )
+        watch_kshape_down_count = sum(
+            1 for item in watchlist if kshape_value(item) == "down"
+        )
+        ai_focus = (
+            "focused"
+            if recommended and recommended_ai_count / len(recommended) >= 0.7
+            else "mixed"
+            if recommended_ai_count > 0
+            else "weak"
+        )
+        interference_ratio_denominator = max(len(recommended) + len(watchlist), 1)
+        interference_ratio = (
+            recommended_kshape_down_count + watch_kshape_down_count
+        ) / interference_ratio_denominator
+        kshape_interference = (
+            "high"
+            if interference_ratio >= 0.5
+            else "medium"
+            if interference_ratio >= 0.2
+            else "low"
+        )
+        recommendation_concentration = (
+            "focused"
+            if len(recommended) <= 3 and len(recommended) > 0
+            else "mixed"
+            if recommended
+            else "weak"
+        )
+
+        focus_theme = (
+            review_board.get("review_focus")
+            if isinstance(review_board.get("review_focus"), dict)
+            else {}
+        ).get("theme")
+        focus_candidate = (
+            review_board.get("review_focus")
+            if isinstance(review_board.get("review_focus"), dict)
+            else {}
+        ).get("candidate")
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "top_n": top_n,
+            "trade_date": review_board.get("trade_date"),
+            "summary": {
+                "mainline_concentration": mainline_concentration,
+                "ai_focus": ai_focus,
+                "kshape_interference": kshape_interference,
+                "recommendation_concentration": recommendation_concentration,
+            },
+            "counts": {
+                "recommended": len(recommended),
+                "watchlist": len(watchlist),
+                "avoid": len(avoid),
+                "recommended_ai": recommended_ai_count,
+                "recommended_kshape_down": recommended_kshape_down_count,
+                "watch_kshape_down": watch_kshape_down_count,
+            },
+            "signals": {
+                "focus_theme": focus_theme,
+                "focus_candidate": focus_candidate,
+            },
+            "conclusions": {
+                "mainline_is_concentrated": mainline_concentration == "focused",
+                "recommendations_are_ai_focused": ai_focus == "focused",
+                "kshape_down_is_interfering": kshape_interference in {"medium", "high"},
+                "recommendations_are_concentrated": recommendation_concentration == "focused",
+            },
+        }
+
+    def _market_intelligence_theme_board_payload(
+        self,
+        *,
+        top_n: int,
+        trade_date: Optional[str] = None,
+        stock_summary_cache: Optional[dict[str, dict[str, Any]]] = None,
+        candidate_classified_snapshot: Optional[dict[str, Any]] = None,
+        candidate_seed_snapshot: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        d = str(trade_date or "").strip()
+        if not d:
+            d = self._lowfreq_latest_trade_date()
+
+        candidates_payload = self._market_intelligence_candidates_payload(
+            top_n=min(top_n * 5, 200),
+            stock_summary_cache=stock_summary_cache,
+            candidate_classified_snapshot=candidate_classified_snapshot,
+            candidate_seed_snapshot=candidate_seed_snapshot,
+        )
+        config_candidates = candidates_payload.get("config_leader_candidates") or []
+        attention_candidates = candidates_payload.get("institutional_attention_candidates") or []
+        trading_candidates = candidates_payload.get("trading_leader_candidates") or []
+
+        config_by_code = {
+            self._normalize_stock_code(item.get("stock_code")): item
+            for item in config_candidates
+            if self._normalize_stock_code(item.get("stock_code"))
+        }
+        attention_by_code = {
+            self._normalize_stock_code(item.get("stock_code")): item
+            for item in attention_candidates
+            if self._normalize_stock_code(item.get("stock_code"))
+        }
+        trading_by_code = {
+            self._normalize_stock_code(item.get("stock_code")): item
+            for item in trading_candidates
+            if self._normalize_stock_code(item.get("stock_code"))
+        }
+        candidate_codes = set(config_by_code) | set(attention_by_code) | set(trading_by_code)
+
+        concept_name_by_code, concept_members = self._load_ths_concept_caches()
+        if not concept_members:
+            return {
+                "_meta": {"status": "ok"},
+                "status": "skipped",
+                "reason": "concept_members_cache_empty",
+                "trade_date": d,
+                "themes": [],
+            }
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+
+            def table_exists(table: str) -> bool:
+                row = cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (table,),
+                ).fetchone()
+                return row is not None
+
+            ths_map: dict[str, sqlite3.Row] = {}
+            if table_exists("ths_concept_daily"):
+                self._ensure_ths_concept_daily_tables(conn=conn)
+                for row in cur.execute(
+                    """
+                    SELECT concept_code, concept_name, mainline_score, mainline_rank, mainline_streak,
+                           heat_score, heat_rank, risk_level, trend_state, member_count, valid_count
+                    FROM ths_concept_daily
+                    WHERE trade_date = ? AND provider = 'ths'
+                    """,
+                    (d,),
+                ).fetchall():
+                    ths_map[str(row["concept_code"])] = row
+
+        themes: list[dict[str, Any]] = []
+        for concept_code, members in concept_members.items():
+            member_codes = {
+                self._normalize_stock_code(code)
+                for code in members
+                if self._normalize_stock_code(code)
+            }
+            matched_codes = member_codes & candidate_codes
+            if not matched_codes:
+                continue
+
+            config_hits = [
+                config_by_code[code] for code in matched_codes if code in config_by_code
+            ]
+            attention_hits = [
+                attention_by_code[code] for code in matched_codes if code in attention_by_code
+            ]
+            trading_hits = [
+                trading_by_code[code] for code in matched_codes if code in trading_by_code
+            ]
+            ths_row = ths_map.get(concept_code)
+            concept_name = (
+                str(ths_row["concept_name"])
+                if ths_row is not None and ths_row["concept_name"] is not None
+                else concept_name_by_code.get(concept_code) or concept_code
+            )
+            if self._is_market_generic_packaging_concept(concept_name=concept_name):
+                continue
+            thematic_tags = self._derive_market_thematic_tags_for_theme(
+                concept_code=concept_code,
+                concept_name=concept_name,
+            )
+
+            config_hits.sort(
+                key=lambda item: (
+                    -int(item.get("suggestion_bias") or 0),
+                    -int(item.get("score") or 0),
+                    -int(item.get("holder_etf_count") or 0),
+                    -(float(item.get("total_mkv") or 0.0)),
+                    item.get("stock_code") or "",
+                )
+            )
+            attention_hits.sort(
+                key=lambda item: (
+                    -int(item.get("suggestion_bias") or 0),
+                    -int(item.get("score") or 0),
+                    -int(item.get("consensus_orgs") or 0),
+                    -int(item.get("research_inst_90d") or 0),
+                    -int(item.get("survey_orgs_180d") or 0),
+                    item.get("stock_code") or "",
+                )
+            )
+            trading_hits.sort(
+                key=lambda item: (
+                    -int(item.get("suggestion_bias") or 0),
+                    -int(item.get("score") or 0),
+                    -(float(item.get("latest_amount") or 0.0)),
+                    -(float(item.get("avg_turnover_5d") or 0.0)),
+                    item.get("stock_code") or "",
+                )
+            )
+
+            theme_risk_level = (
+                str(ths_row["risk_level"] or "").strip().lower()
+                if ths_row is not None
+                else "unknown"
+            )
+            base_score = self._market_theme_base_score(
+                concept_name=concept_name,
+                ths_row=ths_row,
+            )
+            resonance_score = self._market_theme_resonance_score(
+                config_hits=config_hits,
+                attention_hits=attention_hits,
+                trading_hits=trading_hits,
+            )
+            total_score = base_score + resonance_score
+
+            themes.append(
+                {
+                    "concept_code": concept_code,
+                    "concept_name": concept_name,
+                    "board_score": int(total_score),
+                    "base_score": int(base_score),
+                    "resonance_score": int(resonance_score),
+                    "total_score": int(total_score),
+                    "_risk_sort_key": self._market_theme_risk_sort_key(theme_risk_level),
+                    "suggestion_bias": int(thematic_tags.get("suggestion_bias") or 0),
+                    "config_candidate_count": len(config_hits),
+                    "institutional_candidate_count": len(attention_hits),
+                    "trading_candidate_count": len(trading_hits),
+                    "config_top_stocks": config_hits[:5],
+                    "institutional_top_stocks": attention_hits[:5],
+                    "trading_top_stocks": trading_hits[:5],
+                    "thematic_tags": thematic_tags,
+                    "ths_mainline": None
+                    if ths_row is None
+                    else {
+                        "trade_date": d,
+                        "mainline_score": ths_row["mainline_score"],
+                        "mainline_rank": ths_row["mainline_rank"],
+                        "mainline_streak": ths_row["mainline_streak"],
+                        "heat_score": ths_row["heat_score"],
+                        "heat_rank": ths_row["heat_rank"],
+                        "risk_level": ths_row["risk_level"],
+                        "trend_state": ths_row["trend_state"],
+                        "member_count": ths_row["member_count"],
+                        "valid_count": ths_row["valid_count"],
+                    },
+                }
+            )
+
+        themes.sort(key=self._market_theme_sort_key)
+        for item in themes:
+            item.pop("_risk_sort_key", None)
+
+        return {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "trade_date": d,
+            "top_n": top_n,
+            "themes": themes[:top_n],
+            "coverage": {
+                "candidate_codes": len(candidate_codes),
+                "concepts_with_candidates": len(themes),
+            },
+        }
+
+    def market_intelligence_theme_board_view(
+        self,
+        *,
+        top_n: int = 20,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        top_n = min(max(int(top_n), 1), 200)
+        return self._market_intelligence_theme_board_payload(
+            top_n=top_n,
+            trade_date=trade_date,
+        )
+
     def _validate_units_in_stock_db(
         self, *, db_path: Path, sample_limit: int
     ) -> dict[str, Any]:
@@ -6117,6 +9716,649 @@ class BootstrapApiService:
             except Exception:
                 pass
 
+    def ths_concept_mainline_backfill_view(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        requested_by: str = "api",
+        top_n: int = 10,
+        leader_k: int = 5,
+        limit_days: int = 0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        start_date = str(start_date or "").strip()
+        end_date = str(end_date or "").strip()
+        if not start_date or not end_date:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_date_range",
+                message="start_date and end_date are required",
+                details={"start_date": start_date, "end_date": end_date},
+            )
+        try:
+            date.fromisoformat(start_date)
+            date.fromisoformat(end_date)
+        except ValueError:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_date_range",
+                message="start_date/end_date must be YYYY-MM-DD",
+                details={"start_date": start_date, "end_date": end_date},
+            )
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT DISTINCT trade_date
+                FROM daily_prices
+                WHERE trade_date >= ? AND trade_date <= ?
+                ORDER BY trade_date ASC
+                """,
+                (start_date, end_date),
+            )
+            dates = [str(r[0]) for r in cursor.fetchall() if r and r[0]]
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        if limit_days > 0:
+            dates = dates[: int(limit_days)]
+
+        total = len(dates)
+        upserted_total = 0
+        results: list[dict[str, Any]] = []
+        for d in dates:
+            if dry_run:
+                results.append({"trade_date": d, "status": "dry_run"})
+                continue
+            out = self.ths_concept_mainline_compute_view(
+                trade_date=d,
+                requested_by=requested_by.strip(),
+                top_n=int(top_n),
+                leader_k=int(leader_k),
+            )
+            try:
+                upserted_total += int(out.get("rows_upserted") or 0)
+            except Exception:
+                pass
+            results.append(
+                {
+                    "trade_date": d,
+                    "status": str(out.get("status") or ""),
+                    "rows_upserted": int(out.get("rows_upserted") or 0),
+                    "reason": out.get("reason"),
+                }
+            )
+
+        return {
+            "_meta": {"status": "ok", "requested_by": requested_by.strip()},
+            "dry_run": bool(dry_run),
+            "start_date": start_date,
+            "end_date": end_date,
+            "days": total,
+            "rows_upserted_total": int(upserted_total),
+            "notes": [
+                "回补依赖 daily_prices 的历史覆盖；概念成员来自当前缓存（tushare ths_index/ths_member），历史成分变动无法在现有数据下复原。",
+                "为保证 MA 计算一致性，建议按时间正序回补（本接口已按日期升序）。",
+            ],
+            "results_sample": results[:20],
+        }
+
+    def update_daily_prices_authoritative_view(
+        self,
+        *,
+        target_date: str,
+        requested_by: str,
+        min_close_coverage: float = 0.99,
+        min_amount_coverage: float = 0.99,
+        min_turnover_coverage: float = 0.0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        strategy = dict(self._source_strategy_by_resource.get("daily_prices") or {})
+        primary_provider = str(strategy.get("primary_provider") or "tushare")
+        fallback_provider = strategy.get("fallback_provider")
+        first_attempt_started_at = self._now_cn()
+        retry_deadline_dt = first_attempt_started_at.replace(hour=16, minute=0, second=0, microsecond=0)
+        retry_deadline = retry_deadline_dt.isoformat(timespec="seconds")
+        retry_attempts = 0
+        retry_window_used = False
+
+        def _extract_tushare_state(result: dict[str, Any]) -> dict[str, Any]:
+            tushare_update = dict(result.get("tushare_update") or {})
+            tushare_backfill = dict(result.get("backfill") or {})
+            format_gate = dict(tushare_update.get("format_gate") or {})
+            quality_gate = dict(tushare_update.get("quality_gate") or {})
+            primary_reason = str(
+                tushare_backfill.get("reason")
+                or next(iter(quality_gate.get("gate_reasons") or []), "tushare_daily_failed")
+            )
+            primary_error = str(tushare_backfill.get("error") or "")
+            return {
+                "tushare_update": tushare_update,
+                "tushare_backfill": tushare_backfill,
+                "format_gate": format_gate,
+                "quality_gate": quality_gate,
+                "tushare_ok": bool(quality_gate.get("passed")) and bool(format_gate.get("passed")),
+                "primary_reason": primary_reason,
+                "primary_error": primary_error,
+            }
+
+        def _authoritative_meta(final_reason: Optional[str]) -> dict[str, Any]:
+            return {
+                "retry_window_used": retry_window_used,
+                "retry_attempts": retry_attempts,
+                "retry_deadline": retry_deadline if retry_window_used else None,
+                "primary_final_reason": final_reason,
+            }
+
+        tushare_result = self.update_daily_prices_tushare_view(
+            target_date=target_date,
+            requested_by=requested_by,
+            min_close_coverage=min_close_coverage,
+            min_amount_coverage=min_amount_coverage,
+            min_turnover_coverage=min_turnover_coverage,
+            dry_run=dry_run,
+        )
+        tushare_state = _extract_tushare_state(tushare_result)
+        tushare_backfill = tushare_state["tushare_backfill"]
+        format_gate = tushare_state["format_gate"]
+        tushare_ok = bool(tushare_state["tushare_ok"])
+        if dry_run:
+            return {
+                "_meta": {"status": "ok"},
+                "status": "dry_run",
+                "resource": "daily_prices",
+                "provider": primary_provider,
+                "authoritative_update": tushare_result,
+                "fallback_used": False,
+                "fallback_provider": fallback_provider,
+                **_authoritative_meta(None),
+            }
+        if tushare_ok:
+            self._note_tushare_resource_ok(
+                resource="daily_prices",
+                provider=primary_provider,
+                api_name="daily",
+                quality_gate_passed=True,
+                format_gate_passed=True,
+                fallback_used=False,
+            )
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "resource": "daily_prices",
+                "provider": primary_provider,
+                "authoritative_update": tushare_result,
+                "fallback_used": False,
+                "fallback_provider": fallback_provider,
+                **_authoritative_meta(None),
+            }
+        primary_reason = str(tushare_state["primary_reason"])
+        primary_error = str(tushare_state["primary_error"])
+        target_is_today_cn = str(target_date) == str(first_attempt_started_at.date().isoformat())
+        should_retry_no_rows = (
+            primary_provider == "tushare"
+            and str(fallback_provider or "") == "tencent"
+            and target_is_today_cn
+            and primary_reason == "tushare_has_no_rows_for_target_date"
+            and first_attempt_started_at <= retry_deadline_dt
+        )
+        if should_retry_no_rows:
+            retry_window_used = True
+            next_retry_at = first_attempt_started_at + timedelta(minutes=3)
+            while primary_reason == "tushare_has_no_rows_for_target_date" and next_retry_at <= retry_deadline_dt:
+                sleep_seconds = max(0.0, (next_retry_at - self._now_cn()).total_seconds())
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+                retry_attempts += 1
+                tushare_result = self.update_daily_prices_tushare_view(
+                    target_date=target_date,
+                    requested_by=requested_by,
+                    min_close_coverage=min_close_coverage,
+                    min_amount_coverage=min_amount_coverage,
+                    min_turnover_coverage=min_turnover_coverage,
+                    dry_run=False,
+                )
+                tushare_state = _extract_tushare_state(tushare_result)
+                tushare_backfill = tushare_state["tushare_backfill"]
+                format_gate = tushare_state["format_gate"]
+                tushare_ok = bool(tushare_state["tushare_ok"])
+                primary_reason = str(tushare_state["primary_reason"])
+                primary_error = str(tushare_state["primary_error"])
+                if tushare_ok:
+                    self._note_tushare_resource_ok(
+                        resource="daily_prices",
+                        provider=primary_provider,
+                        api_name="daily",
+                        quality_gate_passed=True,
+                        format_gate_passed=True,
+                        fallback_used=False,
+                    )
+                    return {
+                        "_meta": {"status": "ok"},
+                        "status": "ok",
+                        "resource": "daily_prices",
+                        "provider": primary_provider,
+                        "authoritative_update": tushare_result,
+                        "fallback_used": False,
+                        "fallback_provider": fallback_provider,
+                        **_authoritative_meta(None),
+                    }
+                next_retry_at = next_retry_at + timedelta(minutes=3)
+        self._note_tushare_resource_failure(
+            resource="daily_prices",
+            reason=primary_reason,
+            provider=primary_provider,
+            api_name="daily",
+            error_code=tushare_backfill.get("status"),
+            error_message=primary_error or None,
+            requested_by=requested_by,
+            fallback_attempted=bool(fallback_provider),
+            fallback_provider=str(fallback_provider) if fallback_provider else None,
+        )
+        if str(fallback_provider or "") != "tencent":
+            self._raise_authoritative_source_unavailable(
+                resource="daily_prices",
+                requested_by=requested_by,
+                reason=primary_reason,
+                provider=primary_provider,
+                api_name="daily",
+                error_code=tushare_backfill.get("status"),
+                error_message=primary_error or None,
+                fallback_attempted=False,
+                fallback_provider=None,
+            )
+        tencent_result = self.update_daily_prices_tencent_view(
+            target_date=target_date,
+            requested_by=requested_by,
+            min_close_coverage=min_close_coverage,
+            min_amount_coverage=min_amount_coverage,
+            min_turnover_coverage=min_turnover_coverage,
+            dry_run=False,
+            max_attempts=3,
+        )
+        tencent_update = dict(tencent_result.get("tencent_update") or {})
+        fallback_ok = bool((tencent_update.get("quality_gate") or {}).get("passed"))
+        if fallback_ok:
+            self._note_tushare_resource_ok(
+                resource="daily_prices",
+                provider=primary_provider,
+                api_name="daily",
+                quality_gate_passed=False,
+                format_gate_passed=bool(format_gate.get("passed")),
+                fallback_used=True,
+            )
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "resource": "daily_prices",
+                "provider": primary_provider,
+                "authoritative_update": tushare_result,
+                "fallback_used": True,
+                "fallback_provider": fallback_provider,
+                "fallback_update": tencent_result,
+                **_authoritative_meta(primary_reason),
+            }
+        self._raise_authoritative_source_unavailable(
+            resource="daily_prices",
+            requested_by=requested_by,
+            reason=primary_reason,
+            provider=primary_provider,
+            api_name="daily",
+            error_code=tushare_backfill.get("status"),
+            error_message=primary_error or None,
+            fallback_attempted=True,
+            fallback_provider=str(fallback_provider),
+        )
+
+    def update_daily_prices_tushare_view(
+        self,
+        *,
+        target_date: str,
+        requested_by: str,
+        min_close_coverage: float = 0.99,
+        min_amount_coverage: float = 0.99,
+        min_turnover_coverage: float = 0.0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+        try:
+            date.fromisoformat(target_date)
+        except ValueError:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_date",
+                message=f"invalid date: {target_date}",
+                details={"date": target_date},
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="dest_db_missing",
+                message="destination stock db is missing; seed it first",
+                details={"dest_db_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            try:
+                conn.execute("PRAGMA busy_timeout = 30000")
+            except Exception:
+                pass
+            self._ensure_daily_price_capture_tables(conn)
+            self._ensure_daily_price_publish_batch_table(conn)
+            if not dry_run:
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+
+            if not dry_run:
+                if not self._is_market_closed_cn(target_trade_date=target_date):
+                    return {
+                        "_meta": {"status": "ok"},
+                        "tushare_update": {
+                            "dry_run": False,
+                            "requested_by": requested_by.strip(),
+                            "target_date": target_date,
+                            "quality_gate": {
+                                "passed": False,
+                                "gate_reasons": ["market_not_closed"],
+                                "min_close_coverage": float(min_close_coverage),
+                                "min_amount_coverage": float(min_amount_coverage),
+                                "min_turnover_coverage": float(min_turnover_coverage),
+                            },
+                        },
+                    }
+
+            calendar_source, calendar_is_trading_day = self._calendar_membership(conn, target_date)
+            tushare_backfill = (
+                self._backfill_daily_prices_from_tushare_daily(
+                    conn=conn,
+                    v3_db_path=db_path,
+                    target_date=target_date,
+                    requested_by=requested_by.strip(),
+                    reason="tushare_authoritative",
+                    tencent_trade_date=None,
+                )
+                if not dry_run
+                else {"status": "skipped", "reason": "dry_run"}
+            )
+
+            coverage = (
+                tushare_backfill.get("coverage")
+                if isinstance(tushare_backfill, dict)
+                else None
+            ) or {"close": 0.0, "open": 0.0, "amount": 0.0, "turnover": 0.0}
+            format_gate = (
+                tushare_backfill.get("format_gate")
+                if isinstance(tushare_backfill, dict)
+                else None
+            ) or {"passed": False, "gate_reasons": ["missing_format_gate"]}
+            gate_reasons: list[str] = []
+            if float(coverage.get("close") or 0.0) < float(min_close_coverage):
+                gate_reasons.append(
+                    f"close coverage {float(coverage.get('close') or 0.0):.4f} < {float(min_close_coverage):.4f}"
+                )
+            if float(coverage.get("amount") or 0.0) < float(min_amount_coverage):
+                gate_reasons.append(
+                    f"amount coverage {float(coverage.get('amount') or 0.0):.4f} < {float(min_amount_coverage):.4f}"
+                )
+            if float(coverage.get("turnover") or 0.0) < float(min_turnover_coverage):
+                gate_reasons.append(
+                    f"turnover coverage {float(coverage.get('turnover') or 0.0):.4f} < {float(min_turnover_coverage):.4f}"
+                )
+            if not bool(format_gate.get("passed")):
+                gate_reasons.extend([str(x) for x in (format_gate.get("gate_reasons") or []) if str(x)])
+
+            ok = bool(isinstance(tushare_backfill, dict) and tushare_backfill.get("status") == "ok") and (len(gate_reasons) == 0)
+            return {
+                "_meta": {"status": "ok"},
+                "tushare_update": {
+                    "dry_run": bool(dry_run),
+                    "requested_by": requested_by.strip(),
+                    "target_date": target_date,
+                    "trade_date": target_date,
+                    "calendar_source": calendar_source,
+                    "calendar_is_trading_day": calendar_is_trading_day,
+                    "coverage": coverage,
+                    "format_gate": format_gate,
+                    "quality_gate": {
+                        "passed": bool(ok),
+                        "gate_reasons": gate_reasons if not ok else [],
+                        "min_close_coverage": float(min_close_coverage),
+                        "min_amount_coverage": float(min_amount_coverage),
+                        "min_turnover_coverage": float(min_turnover_coverage),
+                    },
+                    "db_upserted": int(tushare_backfill.get("db_upserted") or 0) if isinstance(tushare_backfill, dict) else 0,
+                    "db_rows_before": tushare_backfill.get("before_rows") if isinstance(tushare_backfill, dict) else None,
+                    "db_rows_after": tushare_backfill.get("after_rows") if isinstance(tushare_backfill, dict) else None,
+                    "volume_normalized_rows": tushare_backfill.get("volume_normalized_rows") if isinstance(tushare_backfill, dict) else None,
+                },
+                "backfill": tushare_backfill,
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def backfill_daily_prices_tushare_range_view(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        requested_by: str,
+        min_close_coverage: float = 0.99,
+        min_amount_coverage: float = 0.99,
+        min_turnover_coverage: float = 0.0,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        start_date = str(start_date or "").strip()
+        end_date = str(end_date or "").strip()
+        if not start_date or not end_date:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_date_range",
+                message="start_date and end_date are required",
+                details={"start_date": start_date, "end_date": end_date},
+            )
+        try:
+            start_dt = date.fromisoformat(start_date)
+            end_dt = date.fromisoformat(end_date)
+        except ValueError:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_date_range",
+                message="start_date/end_date must be YYYY-MM-DD",
+                details={"start_date": start_date, "end_date": end_date},
+            )
+        if start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
+            start_date, end_date = start_dt.isoformat(), end_dt.isoformat()
+
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="dest_db_missing",
+                message="destination stock db is missing; seed it first",
+                details={"dest_db_path": _safe_ref_path(str(db_path))},
+            )
+
+        self._load_env_file()
+        raw_token = str(os.environ.get("TUSHARE_TOKEN") or "").strip()
+        if not raw_token and not dry_run:
+            return {
+                "_meta": {"status": "ok"},
+                "status": "skipped",
+                "reason": "tushare_token_not_configured",
+                "env_var": "TUSHARE_TOKEN",
+            }
+
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            try:
+                conn.execute("PRAGMA busy_timeout = 30000")
+            except Exception:
+                pass
+            self._ensure_daily_price_capture_tables(conn)
+            self._ensure_daily_price_publish_batch_table(conn)
+            if not dry_run:
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+
+            calendar_table: Optional[str] = None
+            for table_name in ("trading_calendar_cache", "trading_calendar"):
+                try:
+                    row = conn.execute(f"SELECT 1 FROM {table_name} LIMIT 1").fetchone()
+                except sqlite3.Error:
+                    continue
+                calendar_table = table_name
+                _ = row
+                break
+            if calendar_table is None:
+                raise ApiError(
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    code="trading_calendar_missing",
+                    message="trading calendar table is missing; build it first",
+                )
+
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT trade_date FROM {calendar_table}
+                WHERE trade_date >= ? AND trade_date <= ?
+                ORDER BY trade_date ASC
+                """,
+                (start_date, end_date),
+            )
+            trading_days = [str(r[0]) for r in cursor.fetchall() if r and r[0]]
+
+            results_sample: list[dict[str, Any]] = []
+            ok_days = 0
+            failed_days = 0
+            skipped_days = 0
+            rows_total = 0
+            for td in trading_days:
+                if dry_run:
+                    skipped_days += 1
+                    if len(results_sample) < 20:
+                        results_sample.append({"trade_date": td, "status": "dry_run"})
+                    continue
+                out = self._backfill_daily_prices_from_tushare_daily(
+                    conn=conn,
+                    v3_db_path=db_path,
+                    target_date=td,
+                    requested_by=requested_by.strip(),
+                    reason="tushare_range_backfill",
+                    tencent_trade_date=None,
+                )
+                status = str(out.get("status") or "") if isinstance(out, dict) else "skipped"
+                coverage = out.get("coverage") if isinstance(out, dict) else None
+                gate_reasons: list[str] = []
+                if isinstance(coverage, dict):
+                    if float(coverage.get("close") or 0.0) < float(min_close_coverage):
+                        gate_reasons.append(
+                            f"close coverage {float(coverage.get('close') or 0.0):.4f} < {float(min_close_coverage):.4f}"
+                        )
+                    if float(coverage.get("amount") or 0.0) < float(min_amount_coverage):
+                        gate_reasons.append(
+                            f"amount coverage {float(coverage.get('amount') or 0.0):.4f} < {float(min_amount_coverage):.4f}"
+                        )
+                    if float(coverage.get("turnover") or 0.0) < float(min_turnover_coverage):
+                        gate_reasons.append(
+                            f"turnover coverage {float(coverage.get('turnover') or 0.0):.4f} < {float(min_turnover_coverage):.4f}"
+                        )
+                if status == "ok" and not gate_reasons:
+                    ok_days += 1
+                    rows_total += int(out.get("db_upserted") or 0) if isinstance(out, dict) else 0
+                elif status == "ok" and gate_reasons:
+                    failed_days += 1
+                else:
+                    skipped_days += 1
+
+                if len(results_sample) < 20:
+                    results_sample.append(
+                        {
+                            "trade_date": td,
+                            "status": status,
+                            "db_upserted": int(out.get("db_upserted") or 0) if isinstance(out, dict) else 0,
+                            "gate_reasons": gate_reasons,
+                            "reason": out.get("reason") if isinstance(out, dict) else None,
+                        }
+                    )
+
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "requested_by": requested_by.strip(),
+                "start_date": start_date,
+                "end_date": end_date,
+                "calendar_table": calendar_table,
+                "trading_days": int(len(trading_days)),
+                "ok_days": int(ok_days),
+                "failed_days": int(failed_days),
+                "skipped_days": int(skipped_days),
+                "rows_upserted_total": int(rows_total),
+                "quality_gate": {
+                    "min_close_coverage": float(min_close_coverage),
+                    "min_amount_coverage": float(min_amount_coverage),
+                    "min_turnover_coverage": float(min_turnover_coverage),
+                },
+                "results_sample": results_sample,
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
         by_code: dict[str, dict[str, Any]] = {}
         for code, name, is_delisted in rows:
             c = str(code or "").strip()
@@ -6203,6 +10445,2695 @@ class BootstrapApiService:
                 "priced_stock_count": priced_stock_count,
             },
         }
+
+    def data_sources_assessment_view(
+        self,
+        *,
+        target_date: Optional[str],
+        lookback_days: int = 30,
+    ) -> dict[str, Any]:
+        raw_target = str(target_date).strip() if isinstance(target_date, str) else ""
+        if lookback_days <= 0:
+            lookback_days = 30
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+
+            def table_exists(name: str) -> bool:
+                row = cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                    (name,),
+                ).fetchone()
+                return bool(row)
+
+            daily_min, daily_max, daily_rows, daily_codes = cur.execute(
+                "SELECT MIN(trade_date), MAX(trade_date), COUNT(1), COUNT(DISTINCT code) FROM daily_prices"
+            ).fetchone()
+            daily_min = str(daily_min) if daily_min is not None else None
+            daily_max = str(daily_max) if daily_max is not None else None
+
+            used_date = raw_target or daily_max or date.today().isoformat()
+            try:
+                date.fromisoformat(used_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {used_date}",
+                    details={"date": used_date},
+                )
+
+            active_stock_row = cur.execute(
+                "SELECT COUNT(1) FROM stocks WHERE COALESCE(asset_type,'stock')='stock' AND COALESCE(is_delisted,0)=0"
+            ).fetchone()
+            active_stock_count = int(active_stock_row[0] or 0)
+            priced_stock_row = cur.execute(
+                """
+                SELECT COUNT(DISTINCT dp.code)
+                FROM daily_prices dp
+                JOIN stocks s ON s.code = dp.code
+                WHERE dp.trade_date = ?
+                AND COALESCE(s.asset_type,'stock')='stock'
+                AND COALESCE(s.is_delisted,0)=0
+                """,
+                (used_date,),
+            ).fetchone()
+            priced_stock_count = int(priced_stock_row[0] or 0)
+            daily_bar_row = cur.execute(
+                """
+                SELECT
+                  COUNT(1) AS rows,
+                  SUM(CASE WHEN close IS NOT NULL THEN 1 ELSE 0 END) AS close_ok,
+                  SUM(CASE WHEN amount IS NOT NULL THEN 1 ELSE 0 END) AS amount_ok,
+                  MIN(updated_at) AS min_updated_at,
+                  MAX(updated_at) AS max_updated_at
+                FROM daily_prices WHERE trade_date = ?
+                """,
+                (used_date,),
+            ).fetchone()
+            daily_bar = dict(daily_bar_row) if isinstance(daily_bar_row, sqlite3.Row) else {}
+
+            stock_field_row = cur.execute(
+                """
+                SELECT
+                  COUNT(1) AS total,
+                  SUM(CASE WHEN total_market_cap IS NOT NULL THEN 1 ELSE 0 END) AS mv_ok,
+                  SUM(CASE WHEN pe_ratio IS NOT NULL THEN 1 ELSE 0 END) AS pe_ok,
+                  SUM(CASE WHEN pb_ratio IS NOT NULL THEN 1 ELSE 0 END) AS pb_ok,
+                  SUM(CASE WHEN profit_growth IS NOT NULL THEN 1 ELSE 0 END) AS pg_ok,
+                  SUM(CASE WHEN revenue_growth IS NOT NULL THEN 1 ELSE 0 END) AS rg_ok,
+                  SUM(CASE WHEN roe IS NOT NULL THEN 1 ELSE 0 END) AS roe_ok,
+                  SUM(CASE WHEN last_trade_date IS NOT NULL THEN 1 ELSE 0 END) AS last_td_ok
+                FROM stocks
+                WHERE COALESCE(asset_type,'stock')='stock' AND COALESCE(is_delisted,0)=0
+                """
+            ).fetchone()
+            stock_field_coverage = dict(stock_field_row) if isinstance(stock_field_row, sqlite3.Row) else {}
+
+            calendar_exists = table_exists("trading_calendar_cache") or table_exists("trading_calendar")
+            calendar_table = "trading_calendar_cache" if table_exists("trading_calendar_cache") else ("trading_calendar" if table_exists("trading_calendar") else None)
+            cal_min = None
+            cal_max = None
+            is_calendar_day = None
+            if calendar_table:
+                cal_min, cal_max = cur.execute(
+                    f"SELECT MIN(trade_date), MAX(trade_date) FROM {calendar_table}"
+                ).fetchone()
+                cal_min = str(cal_min) if cal_min is not None else None
+                cal_max = str(cal_max) if cal_max is not None else None
+                hit = cur.execute(
+                    f"SELECT 1 FROM {calendar_table} WHERE trade_date=? LIMIT 1",
+                    (used_date,),
+                ).fetchone()
+                is_calendar_day = bool(hit)
+
+            ths_exists = table_exists("ths_concept_daily")
+            ths_range = None
+            ths_today = None
+            if ths_exists:
+                ths_min, ths_max, ths_rows, ths_concepts = cur.execute(
+                    "SELECT MIN(trade_date), MAX(trade_date), COUNT(1), COUNT(DISTINCT concept_code) FROM ths_concept_daily"
+                ).fetchone()
+                ths_range = {
+                    "min_trade_date": str(ths_min) if ths_min is not None else None,
+                    "max_trade_date": str(ths_max) if ths_max is not None else None,
+                    "rows": int(ths_rows or 0),
+                    "distinct_concepts": int(ths_concepts or 0),
+                }
+                ths_today_row = cur.execute(
+                    "SELECT COUNT(1) AS rows FROM ths_concept_daily WHERE trade_date=?",
+                    (used_date,),
+                ).fetchone()
+                ths_today = int(ths_today_row[0] or 0)
+
+            fundamentals_exists = table_exists("stock_fundamentals")
+            fundamentals_range = None
+            if fundamentals_exists:
+                f_rows, f_codes, f_min, f_max = cur.execute(
+                    "SELECT COUNT(1), COUNT(DISTINCT code), MIN(updated_at), MAX(updated_at) FROM stock_fundamentals"
+                ).fetchone()
+                fundamentals_range = {
+                    "rows": int(f_rows or 0),
+                    "distinct_codes": int(f_codes or 0),
+                    "min_updated_at": str(f_min) if f_min is not None else None,
+                    "max_updated_at": str(f_max) if f_max is not None else None,
+                }
+
+            announcements_exists = table_exists("announcements")
+            announcements_range = None
+            if announcements_exists:
+                a_min, a_max, a_rows, a_codes = cur.execute(
+                    "SELECT MIN(publish_date), MAX(publish_date), COUNT(1), COUNT(DISTINCT code) FROM announcements"
+                ).fetchone()
+                announcements_range = {
+                    "min_publish_date": str(a_min) if a_min is not None else None,
+                    "max_publish_date": str(a_max) if a_max is not None else None,
+                    "rows": int(a_rows or 0),
+                    "distinct_codes": int(a_codes or 0),
+                }
+
+            def summarize_table(
+                *,
+                table: str,
+                date_col: str,
+                code_col: Optional[str] = None,
+            ) -> Optional[dict[str, Any]]:
+                if not table_exists(table):
+                    return None
+                select_distinct = f", COUNT(DISTINCT {code_col})" if code_col else ""
+                row = cur.execute(
+                    f"SELECT MIN({date_col}), MAX({date_col}), COUNT(1){select_distinct} FROM {table}"
+                ).fetchone()
+                if row is None:
+                    return None
+                result = {
+                    f"min_{date_col}": str(row[0]) if row[0] is not None else None,
+                    f"max_{date_col}": str(row[1]) if row[1] is not None else None,
+                    "rows": int(row[2] or 0),
+                }
+                if code_col:
+                    result["distinct_codes"] = int(row[3] or 0)
+                return result
+
+            policy_documents_range = summarize_table(table="policy_documents", date_col="pubtime")
+            research_reports_range = summarize_table(
+                table="research_reports",
+                date_col="trade_date",
+                code_col="ts_code",
+            )
+            report_consensus_range = summarize_table(
+                table="report_consensus",
+                date_col="report_date",
+                code_col="ts_code",
+            )
+            institutional_surveys_range = summarize_table(
+                table="institutional_surveys",
+                date_col="surv_date",
+                code_col="ts_code",
+            )
+            etf_basic_info_range = summarize_table(
+                table="etf_basic_info",
+                date_col="list_date",
+                code_col="ts_code",
+            )
+            etf_daily_prices_range = summarize_table(
+                table="etf_daily_prices",
+                date_col="trade_date",
+                code_col="ts_code",
+            )
+            etf_share_size_range = summarize_table(
+                table="etf_share_size",
+                date_col="trade_date",
+                code_col="ts_code",
+            )
+            etf_index_basic_range = summarize_table(
+                table="etf_index_basic",
+                date_col="pub_date",
+                code_col="ts_code",
+            )
+            index_weights_range = summarize_table(
+                table="index_weights",
+                date_col="trade_date",
+                code_col="con_code",
+            )
+            fund_basic_info_range = summarize_table(
+                table="fund_basic_info",
+                date_col="list_date",
+                code_col="ts_code",
+            )
+            fund_portfolios_range = summarize_table(
+                table="fund_portfolios",
+                date_col="ann_date",
+                code_col="symbol",
+            )
+            financial_reports_range = None
+            if table_exists("financial_reports"):
+                fr_cols = {
+                    str(r[1])
+                    for r in cur.execute("PRAGMA table_info(financial_reports)").fetchall()
+                    if r and len(r) > 1 and r[1] is not None
+                }
+                fr_select = "MIN(report_date), MAX(report_date), COUNT(1), COUNT(DISTINCT code)"
+                if "ann_date" in fr_cols:
+                    fr_select += ", MIN(ann_date), MAX(ann_date)"
+                row = cur.execute(f"SELECT {fr_select} FROM financial_reports").fetchone()
+                if row is not None:
+                    financial_reports_range = {
+                        "min_report_date": str(row[0]) if row[0] is not None else None,
+                        "max_report_date": str(row[1]) if row[1] is not None else None,
+                        "rows": int(row[2] or 0),
+                        "distinct_codes": int(row[3] or 0),
+                    }
+                    if "ann_date" in fr_cols:
+                        financial_reports_range["min_ann_date"] = str(row[4]) if row[4] is not None else None
+                        financial_reports_range["max_ann_date"] = str(row[5]) if row[5] is not None else None
+            index_announcements_range = summarize_table(
+                table="index_announcements",
+                date_col="ann_date",
+            )
+
+            tushare_token = str(os.environ.get("TUSHARE_TOKEN") or "").strip()
+            ths_token = str(os.environ.get("THS_TOKEN") or "").strip()
+
+            return {
+                "_meta": {"status": "ok"},
+                "target_date": used_date,
+                "lookback_days": int(lookback_days),
+                "db_path": _safe_ref_path(str(db_path)),
+                "sources": {
+                    "daily_prices": {
+                        "table": "daily_prices",
+                        "min_trade_date": daily_min,
+                        "max_trade_date": daily_max,
+                        "rows": int(daily_rows or 0),
+                        "distinct_codes": int(daily_codes or 0),
+                        "coverage_on_target_date": {
+                            "active_stock_count": int(active_stock_count),
+                            "priced_stock_count": int(priced_stock_count),
+                            "code_coverage_pct": round(
+                                (float(priced_stock_count) / float(active_stock_count) * 100.0)
+                                if active_stock_count > 0
+                                else 0.0,
+                                4,
+                            ),
+                            "close_coverage_pct": round(
+                                (float(daily_bar.get("close_ok") or 0) / float(daily_bar.get("rows") or 1) * 100.0),
+                                4,
+                            )
+                            if int(daily_bar.get("rows") or 0) > 0
+                            else 0.0,
+                            "amount_coverage_pct": round(
+                                (float(daily_bar.get("amount_ok") or 0) / float(daily_bar.get("rows") or 1) * 100.0),
+                                4,
+                            )
+                            if int(daily_bar.get("rows") or 0) > 0
+                            else 0.0,
+                            "updated_at_min": daily_bar.get("min_updated_at"),
+                            "updated_at_max": daily_bar.get("max_updated_at"),
+                        },
+                    },
+                    "stocks_snapshot": {
+                        "table": "stocks",
+                        "active_stock_count": int(active_stock_count),
+                        "field_coverage": stock_field_coverage,
+                    },
+                    "trading_calendar": {
+                        "exists": bool(calendar_exists),
+                        "table": calendar_table,
+                        "min_trade_date": cal_min,
+                        "max_trade_date": cal_max,
+                        "has_target_date": is_calendar_day,
+                    },
+                    "ths_concept_daily": {
+                        "exists": bool(ths_exists),
+                        "range": ths_range,
+                        "rows_on_target_date": ths_today,
+                    },
+                    "stock_fundamentals": {
+                        "exists": bool(fundamentals_exists),
+                        "range": fundamentals_range,
+                    },
+                    "announcements": {
+                        "exists": bool(announcements_exists),
+                        "range": announcements_range,
+                    },
+                    "policy_documents": {
+                        "exists": policy_documents_range is not None,
+                        "range": policy_documents_range,
+                    },
+                    "research_reports": {
+                        "exists": research_reports_range is not None,
+                        "range": research_reports_range,
+                    },
+                    "report_consensus": {
+                        "exists": report_consensus_range is not None,
+                        "range": report_consensus_range,
+                    },
+                    "institutional_surveys": {
+                        "exists": institutional_surveys_range is not None,
+                        "range": institutional_surveys_range,
+                    },
+                    "etf_basic_info": {
+                        "exists": etf_basic_info_range is not None,
+                        "range": etf_basic_info_range,
+                    },
+                    "etf_daily_prices": {
+                        "exists": etf_daily_prices_range is not None,
+                        "range": etf_daily_prices_range,
+                    },
+                    "etf_share_size": {
+                        "exists": etf_share_size_range is not None,
+                        "range": etf_share_size_range,
+                    },
+                    "etf_index_basic": {
+                        "exists": etf_index_basic_range is not None,
+                        "range": etf_index_basic_range,
+                    },
+                    "index_weights": {
+                        "exists": index_weights_range is not None,
+                        "range": index_weights_range,
+                    },
+                    "fund_basic_info": {
+                        "exists": fund_basic_info_range is not None,
+                        "range": fund_basic_info_range,
+                    },
+                    "fund_portfolios": {
+                        "exists": fund_portfolios_range is not None,
+                        "range": fund_portfolios_range,
+                    },
+                    "financial_reports": {
+                        "exists": financial_reports_range is not None,
+                        "range": financial_reports_range,
+                    },
+                    "index_announcements": {
+                        "exists": index_announcements_range is not None,
+                        "range": index_announcements_range,
+                    },
+                },
+                "integration_readiness": {
+                    "tushare_token_configured": bool(tushare_token),
+                    "ths_token_configured": bool(ths_token),
+                    "financial_reports_table_present": bool(table_exists("financial_reports")),
+                },
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def stock_fundamentals_update_tushare_view(
+        self,
+        *,
+        trade_date: str,
+        requested_by: str,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        trade_date = str(trade_date or "").strip()
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+        try:
+            trade_dt = date.fromisoformat(trade_date)
+        except ValueError:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_trade_date",
+                message=f"invalid trade_date: {trade_date}",
+                details={"trade_date": trade_date},
+            )
+
+        self._load_env_file()
+        raw_token = str(os.environ.get("TUSHARE_TOKEN") or "").strip()
+        if not raw_token:
+            self._raise_authoritative_source_unavailable(
+                resource="stock_fundamentals_daily_basic",
+                requested_by=requested_by.strip(),
+                reason="tushare_token_not_configured",
+                provider="tushare",
+                api_name="daily_basic",
+            )
+        try:
+            import tushare as ts
+        except Exception:
+            self._raise_authoritative_source_unavailable(
+                resource="stock_fundamentals_daily_basic",
+                requested_by=requested_by.strip(),
+                reason="tushare_not_installed",
+                provider="tushare",
+                api_name="daily_basic",
+            )
+
+        td_ymd = trade_dt.strftime("%Y%m%d")
+        try:
+            self._ensure_no_proxy(hosts=["api.waditu.com", "api.tushare.pro"])
+            pro = ts.pro_api(raw_token)
+            df = pro.daily_basic(
+                trade_date=td_ymd,
+                fields="ts_code,trade_date,pe_ttm,pb,ps_ttm,pcf_ttm,roe,peg",
+            )
+        except Exception as exc:
+            self._raise_authoritative_source_unavailable(
+                resource="stock_fundamentals_daily_basic",
+                requested_by=requested_by.strip(),
+                reason="tushare_daily_basic_failed",
+                provider="tushare",
+                api_name="daily_basic",
+                error_message=str(exc),
+            )
+
+        try:
+            records = df.to_dict("records") if hasattr(df, "to_dict") else []
+        except Exception:
+            records = []
+        if not isinstance(records, list) or not records:
+            self._raise_authoritative_source_unavailable(
+                resource="stock_fundamentals_daily_basic",
+                requested_by=requested_by.strip(),
+                reason="tushare_daily_basic_empty",
+                provider="tushare",
+                api_name="daily_basic",
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        try:
+            cursor = conn.cursor()
+            active_codes = {
+                str(r[0])
+                for r in cursor.execute(
+                    "SELECT code FROM stocks WHERE COALESCE(asset_type,'stock')='stock' AND COALESCE(is_delisted,0)=0"
+                ).fetchall()
+                if r and r[0]
+            }
+            updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            payload: list[tuple[object, ...]] = []
+            for r in records:
+                if not isinstance(r, dict):
+                    continue
+                ts_code = str(r.get("ts_code") or "").strip()
+                code = ts_code.split(".", 1)[0].strip() if ts_code else ""
+                if not code or (active_codes and code not in active_codes):
+                    continue
+                payload.append(
+                    (
+                        code,
+                        float(r.get("pe_ttm")) if isinstance(r.get("pe_ttm"), (int, float)) else None,
+                        float(r.get("pb")) if isinstance(r.get("pb"), (int, float)) else None,
+                        float(r.get("ps_ttm")) if isinstance(r.get("ps_ttm"), (int, float)) else None,
+                        float(r.get("pcf_ttm")) if isinstance(r.get("pcf_ttm"), (int, float)) else None,
+                        float(r.get("roe")) if isinstance(r.get("roe"), (int, float)) else None,
+                        None,
+                        None,
+                        float(r.get("peg")) if isinstance(r.get("peg"), (int, float)) else None,
+                        updated_at,
+                    )
+                )
+
+            if dry_run:
+                return {
+                    "_meta": {"status": "ok"},
+                    "status": "dry_run",
+                    "trade_date": trade_date,
+                    "rows_prepared": int(len(payload)),
+                }
+
+            if payload:
+                cursor.executemany(
+                    """
+                    INSERT INTO stock_fundamentals (
+                        code, pe_ttm, pb, ps_ttm, pcf_ttm, roe, net_profit_cagr, revenue_cagr, peg, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(code) DO UPDATE SET
+                        pe_ttm=excluded.pe_ttm,
+                        pb=excluded.pb,
+                        ps_ttm=excluded.ps_ttm,
+                        pcf_ttm=excluded.pcf_ttm,
+                        roe=excluded.roe,
+                        net_profit_cagr=excluded.net_profit_cagr,
+                        revenue_cagr=excluded.revenue_cagr,
+                        peg=excluded.peg,
+                        updated_at=excluded.updated_at
+                    """,
+                    payload,
+                )
+            conn.commit()
+
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "trade_date": trade_date,
+                "rows_upserted": int(len(payload)),
+                "source": "tushare.daily_basic",
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def financial_reports_update_tushare_view(
+        self,
+        *,
+        start_period: str,
+        end_period: str,
+        requested_by: str,
+        max_codes: Optional[int] = 0,
+        sleep_seconds: float = 0.12,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        start_period = str(start_period or "").strip()
+        end_period = str(end_period or "").strip()
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+        if len(start_period) != 8 or not start_period.isdigit() or len(end_period) != 8 or not end_period.isdigit():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_period",
+                message="start_period/end_period must be YYYYMMDD",
+                details={"start_period": start_period, "end_period": end_period},
+            )
+
+        self._load_env_file()
+        raw_token = str(os.environ.get("TUSHARE_TOKEN") or "").strip()
+        if not raw_token:
+            self._raise_authoritative_source_unavailable(
+                resource="financial_reports",
+                requested_by=requested_by.strip(),
+                reason="tushare_token_not_configured",
+                provider="tushare",
+                api_name="fina_indicator",
+            )
+        try:
+            import tushare as ts
+        except Exception:
+            self._raise_authoritative_source_unavailable(
+                resource="financial_reports",
+                requested_by=requested_by.strip(),
+                reason="tushare_not_installed",
+                provider="tushare",
+                api_name="fina_indicator",
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            self._ensure_financial_reports_tables(conn=conn)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT code FROM stocks
+                WHERE COALESCE(asset_type,'stock')='stock'
+                  AND COALESCE(is_delisted,0)=0
+                  AND total_market_cap IS NOT NULL
+                  AND total_market_cap >= ?
+                  AND total_market_cap <= ?
+                  AND sector_lv1 IS NOT NULL
+                ORDER BY code ASC
+                """
+                ,
+                (float(20_000_000_000.0), float(50_000_000_000.0)),
+            )
+            codes = [str(r[0]) for r in cursor.fetchall() if r and r[0]]
+            if isinstance(max_codes, int) and max_codes > 0:
+                codes = codes[: int(max_codes)]
+
+            ts_codes: list[tuple[str, str]] = []
+            for c in codes:
+                ts_code = self._ts_code_from_stock_code(c)
+                if ts_code:
+                    ts_codes.append((c, ts_code))
+
+            if not ts_codes:
+                return {
+                    "_meta": {"status": "ok"},
+                    "status": "skipped",
+                    "reason": "no_valid_ts_codes",
+                }
+
+            y = int(start_period[0:4])
+            m = int(start_period[4:6])
+            d = int(start_period[6:8])
+            start_dt = date(y, m, d)
+            y2 = int(end_period[0:4])
+            m2 = int(end_period[4:6])
+            d2 = int(end_period[6:8])
+            end_dt = date(y2, m2, d2)
+            if start_dt > end_dt:
+                start_dt, end_dt = end_dt, start_dt
+
+            def quarter_ends_between(a: date, b: date) -> list[str]:
+                out: list[str] = []
+                cursor_dt = date(a.year, 1, 1)
+                while cursor_dt <= b:
+                    for mm, dd in ((3, 31), (6, 30), (9, 30), (12, 31)):
+                        qd = date(cursor_dt.year, mm, dd)
+                        if a <= qd <= b:
+                            out.append(qd.strftime("%Y%m%d"))
+                    cursor_dt = date(cursor_dt.year + 1, 1, 1)
+                out.sort()
+                return out
+
+            periods = quarter_ends_between(start_dt, end_dt)
+            if not periods:
+                return {"_meta": {"status": "ok"}, "status": "skipped", "reason": "no_periods_in_range"}
+
+            self._ensure_no_proxy(hosts=["api.waditu.com", "api.tushare.pro"])
+            pro = ts.pro_api(raw_token)
+            updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            rows_upserted = 0
+            missing_fina = 0
+            missing_pe = 0
+
+            existing_complete: set[tuple[str, str]] = set()
+            try:
+                fr_cols = {
+                    str(r[1])
+                    for r in cursor.execute("PRAGMA table_info(financial_reports)").fetchall()
+                    if r and len(r) > 1 and r[1] is not None
+                }
+                ann_expr = "ann_date" if "ann_date" in fr_cols else "NULL"
+                rows = cursor.execute(
+                    """
+                    SELECT code, report_date, {}
+                    FROM financial_reports
+                    WHERE report_date IN ({})
+                    """.format(
+                        ann_expr,
+                        ",".join(["?"] * len(periods))
+                    ),
+                    [self._quarter_end_iso_for_period(p) for p in periods],
+                ).fetchall()
+                for r in rows:
+                    if not r or r[0] is None or r[1] is None:
+                        continue
+                    ann_date_existing = str(r[2]) if len(r) > 2 and r[2] is not None else ""
+                    if ann_date_existing.strip():
+                        existing_complete.add((str(r[0]), str(r[1])))
+            except Exception:
+                existing_complete = set()
+
+            for period in periods:
+                report_date_iso = self._quarter_end_iso_for_period(period)
+                pe_trade_date = None
+                try:
+                    row = cursor.execute(
+                        "SELECT MAX(trade_date) FROM trading_calendar_cache WHERE trade_date <= ?",
+                        (report_date_iso,),
+                    ).fetchone()
+                    pe_trade_date = str(row[0]) if row and row[0] else None
+                except Exception:
+                    pe_trade_date = None
+
+                pe_map: dict[str, float] = {}
+                if pe_trade_date and not dry_run:
+                    try:
+                        df_pe = pro.daily_basic(
+                            trade_date=pe_trade_date.replace("-", ""),
+                            fields="ts_code,pe_ttm",
+                        )
+                        pe_records = df_pe.to_dict("records") if hasattr(df_pe, "to_dict") else []
+                    except Exception:
+                        pe_records = []
+                    for r in pe_records:
+                        if not isinstance(r, dict):
+                            continue
+                        ts_code = str(r.get("ts_code") or "").strip()
+                        code = ts_code.split(".", 1)[0].strip() if ts_code else ""
+                        v = r.get("pe_ttm")
+                        if not code:
+                            continue
+                        if isinstance(v, (int, float)):
+                            pe_map[code] = float(v)
+                for code, ts_code in ts_codes:
+                    if (code, report_date_iso) in existing_complete:
+                        continue
+                    if dry_run:
+                        continue
+                    try:
+                        df = pro.fina_indicator(
+                            ts_code=ts_code,
+                            period=period,
+                            fields="ts_code,end_date,ann_date,roe,netprofit_yoy,or_yoy",
+                        )
+                        recs = df.to_dict("records") if hasattr(df, "to_dict") else []
+                    except Exception:
+                        recs = []
+                    rec = recs[0] if recs else None
+                    if not isinstance(rec, dict):
+                        missing_fina += 1
+                        continue
+
+                    roe = rec.get("roe")
+                    netprofit_yoy = rec.get("netprofit_yoy")
+                    or_yoy = rec.get("or_yoy")
+
+                    pe_ttm = pe_map.get(code)
+                    if pe_ttm is None:
+                        missing_pe += 1
+
+                    ann_date_iso = self._ts_ymd_to_iso(rec.get("ann_date"))
+                    effective_ann_date = ann_date_iso or report_date_iso
+
+                    cursor.execute(
+                        """
+                        INSERT INTO financial_reports (
+                            code, report_date, ann_date, pe_ttm, profit_growth_yoy, revenue_growth_yoy, roe, source, metadata_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(code, report_date) DO UPDATE SET
+                            ann_date=excluded.ann_date,
+                            pe_ttm=excluded.pe_ttm,
+                            profit_growth_yoy=excluded.profit_growth_yoy,
+                            revenue_growth_yoy=excluded.revenue_growth_yoy,
+                            roe=excluded.roe,
+                            source=excluded.source,
+                            metadata_json=excluded.metadata_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        (
+                            code,
+                            report_date_iso,
+                            effective_ann_date,
+                            float(pe_ttm) if isinstance(pe_ttm, (int, float)) else None,
+                            float(netprofit_yoy) if isinstance(netprofit_yoy, (int, float)) else None,
+                            float(or_yoy) if isinstance(or_yoy, (int, float)) else None,
+                            float(roe) if isinstance(roe, (int, float)) else None,
+                            "tushare.fina_indicator+daily_basic",
+                            json.dumps(
+                                {
+                                    "period": period,
+                                    "pe_trade_date": pe_trade_date,
+                                    "ts_code": ts_code,
+                                    "ann_date_raw": rec.get("ann_date"),
+                                    "ann_date_effective": effective_ann_date,
+                                    "ann_date_fallback": ann_date_iso is None,
+                                },
+                                ensure_ascii=False,
+                            ),
+                            updated_at,
+                        ),
+                    )
+                    rows_upserted += 1
+                    if sleep_seconds and float(sleep_seconds) > 0:
+                        time.sleep(float(sleep_seconds))
+
+                if not dry_run:
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
+
+            return {
+                "_meta": {"status": "ok"},
+                "status": "dry_run" if dry_run else "ok",
+                "requested_by": requested_by.strip(),
+                "periods": periods,
+                "codes": int(len(ts_codes)),
+                "rows_upserted": int(rows_upserted),
+                "missing_fina_indicator_count": int(missing_fina),
+                "missing_pe_ttm_count": int(missing_pe),
+                "notes": [
+                    "financial_reports 为季度口径：report_date=财报期末日；ann_date=公告可见日（缺失时退化为 report_date，并在 metadata_json 标记）。roe/营收同比/净利同比来自 fina_indicator(period)。",
+                    "pe_ttm 来自 daily_basic，并以 report_date 当日之前最近交易日作为取值日（记录在 metadata_json.pe_trade_date）。",
+                ],
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def sync_tushare_market_data_view(
+        self,
+        *,
+        resource: str,
+        requested_by: str,
+        filters: Optional[dict[str, Any]] = None,
+        fields: Optional[list[str]] = None,
+        dry_run: bool = False,
+        timeout_seconds: int = 20,
+    ) -> dict[str, Any]:
+        resource = str(resource or "").strip()
+        if not resource:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_resource",
+                message="resource must be a non-empty string",
+            )
+        if not requested_by.strip():
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_requested_by",
+                message="requested_by must be a non-empty string",
+            )
+        filters = dict(filters or {})
+        if fields is not None and not isinstance(fields, list):
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_fields",
+                message="fields must be a list when provided",
+            )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        adapter = self._tushare_market_adapter(timeout_seconds=int(timeout_seconds))
+        if not adapter.configured:
+            self._raise_authoritative_source_unavailable(
+                resource=resource,
+                requested_by=requested_by.strip(),
+                reason="tushare_token_not_configured",
+                provider="tushare",
+            )
+
+        rows: list[dict[str, Any]]
+        if resource == "company_announcements":
+            rows = adapter.fetch_company_announcements(fields=fields, **filters)
+        elif resource == "policy_documents":
+            rows = adapter.fetch_policy_documents(fields=fields, **filters)
+        elif resource == "research_reports":
+            rows = adapter.fetch_research_reports(fields=fields, **filters)
+        elif resource == "report_consensus":
+            rows = adapter.fetch_report_consensus(fields=fields, **filters)
+        elif resource == "institutional_surveys":
+            rows = adapter.fetch_institutional_surveys(fields=fields, **filters)
+        elif resource == "etf_basic":
+            rows = adapter.fetch_etf_basic(fields=fields, **filters)
+        elif resource == "fund_daily":
+            rows = adapter.fetch_fund_daily(fields=fields, **filters)
+        elif resource == "etf_share_size":
+            rows = adapter.fetch_etf_share_size(fields=fields, **filters)
+        elif resource == "etf_index":
+            rows = adapter.fetch_etf_index(fields=fields, **filters)
+        elif resource == "fund_basic":
+            rows = adapter.fetch_fund_basic(fields=fields, **filters)
+        elif resource == "fund_portfolio":
+            rows = adapter.fetch_fund_portfolio(fields=fields, **filters)
+        elif resource == "index_announcements":
+            rows = adapter.fetch_index_announcements(fields=fields, **filters)
+        elif resource == "index_weight":
+            index_code = str(filters.get("index_code") or "").strip()
+            if not index_code:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_index_code",
+                    message="index_weight resource requires filters.index_code",
+                )
+            rows = adapter.fetch_index_weight(fields=fields, **filters)
+        else:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="unsupported_resource",
+                message=f"unsupported resource: {resource}",
+                details={"resource": resource},
+            )
+
+        if dry_run:
+            return {
+                "_meta": {"status": "ok"},
+                "status": "dry_run",
+                "resource": resource,
+                "requested_by": requested_by.strip(),
+                "rows_prepared": int(len(rows)),
+                "sample": rows[:3],
+                "adapter_last_code": adapter.last_code,
+                "adapter_last_msg": adapter.last_msg,
+            }
+
+        if not rows:
+            self._raise_authoritative_source_unavailable(
+                resource=resource,
+                requested_by=requested_by.strip(),
+                reason="tushare_market_resource_empty",
+                provider="tushare",
+                api_name=adapter.last_api_name,
+                error_code=adapter.last_code,
+                error_message=adapter.last_msg,
+            )
+
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        try:
+            self._ensure_tushare_market_tables(conn=conn)
+            cursor = conn.cursor()
+            updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            payload: list[tuple[object, ...]] = []
+
+            if resource == "company_announcements":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    code = ts_code.split(".", 1)[0].strip() if ts_code else ""
+                    publish_date = self._ts_ymd_to_iso(row.get("ann_date"))
+                    title = str(row.get("title") or "").strip()
+                    if not ts_code or not publish_date or not title:
+                        continue
+                    payload.append(
+                        (
+                            code,
+                            ts_code,
+                            str(row.get("name") or "").strip() or None,
+                            title,
+                            None,
+                            publish_date,
+                            str(row.get("url") or "").strip() or None,
+                            "tushare.anns_d",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO announcements (
+                            code, ts_code, stock_name, title, type, publish_date, url, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code, publish_date, title) DO UPDATE SET
+                            code=excluded.code,
+                            stock_name=excluded.stock_name,
+                            type=excluded.type,
+                            url=excluded.url,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "policy_documents":
+                for row in rows:
+                    pubtime = str(row.get("pubtime") or "").strip()
+                    title = str(row.get("title") or "").strip()
+                    if not pubtime or not title:
+                        continue
+                    payload.append(
+                        (
+                            pubtime,
+                            title,
+                            str(row.get("url") or "").strip() or None,
+                            str(row.get("pcode") or "").strip() or None,
+                            str(row.get("puborg") or "").strip() or None,
+                            str(row.get("ptype") or "").strip() or None,
+                            str(row.get("content_html") or "").strip() or None,
+                            "tushare.npr",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO policy_documents (
+                            pubtime, title, url, pcode, puborg, ptype, content_html, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(pubtime, title, pcode) DO UPDATE SET
+                            url=excluded.url,
+                            puborg=excluded.puborg,
+                            ptype=excluded.ptype,
+                            content_html=excluded.content_html,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "research_reports":
+                for row in rows:
+                    trade_date = self._ts_ymd_to_iso(row.get("trade_date"))
+                    title = str(row.get("title") or "").strip()
+                    inst_csname = str(row.get("inst_csname") or "").strip()
+                    ts_code = str(row.get("ts_code") or "").strip() or None
+                    if not trade_date or not title:
+                        continue
+                    payload.append(
+                        (
+                            trade_date,
+                            ts_code,
+                            str(row.get("name") or "").strip() or None,
+                            title,
+                            str(row.get("report_type") or "").strip() or None,
+                            str(row.get("author") or "").strip() or None,
+                            inst_csname or None,
+                            str(row.get("ind_name") or "").strip() or None,
+                            str(row.get("url") or "").strip() or None,
+                            str(row.get("abstr") or "").strip() or None,
+                            "tushare.research_report",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO research_reports (
+                            trade_date, ts_code, name, title, report_type, author, inst_csname, ind_name, url, abstr, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(trade_date, ts_code, title, inst_csname) DO UPDATE SET
+                            name=excluded.name,
+                            report_type=excluded.report_type,
+                            author=excluded.author,
+                            ind_name=excluded.ind_name,
+                            url=excluded.url,
+                            abstr=excluded.abstr,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "report_consensus":
+                for row in rows:
+                    report_date = self._ts_ymd_to_iso(row.get("report_date"))
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    quarter = str(row.get("quarter") or "").strip()
+                    report_title = str(row.get("report_title") or "").strip()
+                    if not report_date or not ts_code or not quarter or not report_title:
+                        continue
+                    payload.append(
+                        (
+                            report_date,
+                            ts_code,
+                            str(row.get("name") or "").strip() or None,
+                            report_title,
+                            str(row.get("report_type") or "").strip() or None,
+                            str(row.get("classify") or "").strip() or None,
+                            str(row.get("org_name") or "").strip() or None,
+                            str(row.get("author_name") or "").strip() or None,
+                            quarter,
+                            float(row.get("op_rt")) if isinstance(row.get("op_rt"), (int, float)) else None,
+                            float(row.get("np")) if isinstance(row.get("np"), (int, float)) else None,
+                            float(row.get("eps")) if isinstance(row.get("eps"), (int, float)) else None,
+                            float(row.get("pe")) if isinstance(row.get("pe"), (int, float)) else None,
+                            float(row.get("roe")) if isinstance(row.get("roe"), (int, float)) else None,
+                            str(row.get("rating") or "").strip() or None,
+                            str(row.get("imp_dg") or "").strip() or None,
+                            "tushare.report_rc",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO report_consensus (
+                            report_date, ts_code, name, report_title, report_type, classify, org_name, author_name, quarter,
+                            op_rt, np, eps, pe, roe, rating, imp_dg, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(report_date, ts_code, quarter, org_name, report_title) DO UPDATE SET
+                            name=excluded.name,
+                            report_type=excluded.report_type,
+                            classify=excluded.classify,
+                            author_name=excluded.author_name,
+                            op_rt=excluded.op_rt,
+                            np=excluded.np,
+                            eps=excluded.eps,
+                            pe=excluded.pe,
+                            roe=excluded.roe,
+                            rating=excluded.rating,
+                            imp_dg=excluded.imp_dg,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "institutional_surveys":
+                for row in rows:
+                    surv_date = self._ts_ymd_to_iso(row.get("surv_date"))
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    rece_org = str(row.get("rece_org") or "").strip()
+                    fund_visitors = str(row.get("fund_visitors") or "").strip()
+                    if not surv_date or not ts_code:
+                        continue
+                    payload.append(
+                        (
+                            surv_date,
+                            ts_code,
+                            str(row.get("name") or "").strip() or None,
+                            fund_visitors or None,
+                            str(row.get("rece_place") or "").strip() or None,
+                            str(row.get("rece_mode") or "").strip() or None,
+                            rece_org or None,
+                            str(row.get("org_type") or "").strip() or None,
+                            str(row.get("comp_rece") or "").strip() or None,
+                            str(row.get("content") or "").strip() or None,
+                            "tushare.stk_surv",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO institutional_surveys (
+                            surv_date, ts_code, name, fund_visitors, rece_place, rece_mode, rece_org, org_type, comp_rece, content, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(surv_date, ts_code, rece_org, fund_visitors) DO UPDATE SET
+                            name=excluded.name,
+                            rece_place=excluded.rece_place,
+                            rece_mode=excluded.rece_mode,
+                            org_type=excluded.org_type,
+                            comp_rece=excluded.comp_rece,
+                            content=excluded.content,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "etf_basic":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    if not ts_code:
+                        continue
+                    payload.append(
+                        (
+                            ts_code,
+                            str(row.get("csname") or "").strip() or None,
+                            str(row.get("extname") or "").strip() or None,
+                            str(row.get("index_code") or "").strip() or None,
+                            str(row.get("index_name") or "").strip() or None,
+                            self._ts_ymd_to_iso(row.get("list_date")),
+                            str(row.get("list_status") or "").strip() or None,
+                            str(row.get("exchange") or "").strip() or None,
+                            str(row.get("mgr_name") or "").strip() or None,
+                            str(row.get("etf_type") or "").strip() or None,
+                            "tushare.etf_basic",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO etf_basic_info (
+                            ts_code, csname, extname, index_code, index_name, list_date, list_status, exchange, mgr_name, etf_type, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code) DO UPDATE SET
+                            csname=excluded.csname,
+                            extname=excluded.extname,
+                            index_code=excluded.index_code,
+                            index_name=excluded.index_name,
+                            list_date=excluded.list_date,
+                            list_status=excluded.list_status,
+                            exchange=excluded.exchange,
+                            mgr_name=excluded.mgr_name,
+                            etf_type=excluded.etf_type,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "fund_daily":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    trade_date = self._ts_ymd_to_iso(row.get("trade_date"))
+                    if not ts_code or not trade_date:
+                        continue
+                    payload.append(
+                        (
+                            ts_code,
+                            trade_date,
+                            float(row.get("open")) if isinstance(row.get("open"), (int, float)) else None,
+                            float(row.get("high")) if isinstance(row.get("high"), (int, float)) else None,
+                            float(row.get("low")) if isinstance(row.get("low"), (int, float)) else None,
+                            float(row.get("close")) if isinstance(row.get("close"), (int, float)) else None,
+                            float(row.get("pre_close")) if isinstance(row.get("pre_close"), (int, float)) else None,
+                            float(row.get("change")) if isinstance(row.get("change"), (int, float)) else None,
+                            float(row.get("pct_chg")) if isinstance(row.get("pct_chg"), (int, float)) else None,
+                            float(row.get("vol")) if isinstance(row.get("vol"), (int, float)) else None,
+                            float(row.get("amount")) if isinstance(row.get("amount"), (int, float)) else None,
+                            "tushare.fund_daily",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO etf_daily_prices (
+                            ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code, trade_date) DO UPDATE SET
+                            open=excluded.open,
+                            high=excluded.high,
+                            low=excluded.low,
+                            close=excluded.close,
+                            pre_close=excluded.pre_close,
+                            change=excluded.change,
+                            pct_chg=excluded.pct_chg,
+                            vol=excluded.vol,
+                            amount=excluded.amount,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "etf_share_size":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    trade_date = self._ts_ymd_to_iso(row.get("trade_date"))
+                    if not ts_code or not trade_date:
+                        continue
+                    payload.append(
+                        (
+                            trade_date,
+                            ts_code,
+                            str(row.get("etf_name") or "").strip() or None,
+                            float(row.get("total_share")) if isinstance(row.get("total_share"), (int, float)) else None,
+                            float(row.get("total_size")) if isinstance(row.get("total_size"), (int, float)) else None,
+                            float(row.get("nav")) if isinstance(row.get("nav"), (int, float)) else None,
+                            float(row.get("close")) if isinstance(row.get("close"), (int, float)) else None,
+                            str(row.get("exchange") or "").strip() or None,
+                            "tushare.etf_share_size",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO etf_share_size (
+                            trade_date, ts_code, etf_name, total_share, total_size, nav, close, exchange, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code, trade_date) DO UPDATE SET
+                            etf_name=excluded.etf_name,
+                            total_share=excluded.total_share,
+                            total_size=excluded.total_size,
+                            nav=excluded.nav,
+                            close=excluded.close,
+                            exchange=excluded.exchange,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "etf_index":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    if not ts_code:
+                        continue
+                    payload.append(
+                        (
+                            ts_code,
+                            str(row.get("indx_name") or "").strip() or None,
+                            str(row.get("indx_csname") or "").strip() or None,
+                            str(row.get("pub_party_name") or "").strip() or None,
+                            self._ts_ymd_to_iso(row.get("pub_date")),
+                            self._ts_ymd_to_iso(row.get("base_date")),
+                            float(row.get("bp")) if isinstance(row.get("bp"), (int, float)) else None,
+                            str(row.get("adj_circle") or "").strip() or None,
+                            "tushare.etf_index",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO etf_index_basic (
+                            ts_code, indx_name, indx_csname, pub_party_name, pub_date, base_date, bp, adj_circle, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code) DO UPDATE SET
+                            indx_name=excluded.indx_name,
+                            indx_csname=excluded.indx_csname,
+                            pub_party_name=excluded.pub_party_name,
+                            pub_date=excluded.pub_date,
+                            base_date=excluded.base_date,
+                            bp=excluded.bp,
+                            adj_circle=excluded.adj_circle,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "fund_basic":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    if not ts_code:
+                        continue
+                    payload.append(
+                        (
+                            ts_code,
+                            str(row.get("name") or "").strip() or None,
+                            str(row.get("management") or "").strip() or None,
+                            str(row.get("fund_type") or "").strip() or None,
+                            self._ts_ymd_to_iso(row.get("found_date")),
+                            self._ts_ymd_to_iso(row.get("list_date")),
+                            str(row.get("benchmark") or "").strip() or None,
+                            str(row.get("status") or "").strip() or None,
+                            str(row.get("market") or "").strip() or None,
+                            "tushare.fund_basic",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO fund_basic_info (
+                            ts_code, name, management, fund_type, found_date, list_date, benchmark, status, market, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code) DO UPDATE SET
+                            name=excluded.name,
+                            management=excluded.management,
+                            fund_type=excluded.fund_type,
+                            found_date=excluded.found_date,
+                            list_date=excluded.list_date,
+                            benchmark=excluded.benchmark,
+                            status=excluded.status,
+                            market=excluded.market,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "fund_portfolio":
+                for row in rows:
+                    ts_code = str(row.get("ts_code") or "").strip()
+                    ann_date = self._ts_ymd_to_iso(row.get("ann_date"))
+                    symbol = str(row.get("symbol") or "").strip()
+                    if not ts_code or not ann_date or not symbol:
+                        continue
+                    payload.append(
+                        (
+                            ts_code,
+                            ann_date,
+                            self._ts_ymd_to_iso(row.get("end_date")),
+                            symbol,
+                            float(row.get("mkv")) if isinstance(row.get("mkv"), (int, float)) else None,
+                            float(row.get("amount")) if isinstance(row.get("amount"), (int, float)) else None,
+                            float(row.get("stk_mkv_ratio")) if isinstance(row.get("stk_mkv_ratio"), (int, float)) else None,
+                            float(row.get("stk_float_ratio")) if isinstance(row.get("stk_float_ratio"), (int, float)) else None,
+                            "tushare.fund_portfolio",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO fund_portfolios (
+                            ts_code, ann_date, end_date, symbol, mkv, amount, stk_mkv_ratio, stk_float_ratio, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ts_code, ann_date, end_date, symbol) DO UPDATE SET
+                            mkv=excluded.mkv,
+                            amount=excluded.amount,
+                            stk_mkv_ratio=excluded.stk_mkv_ratio,
+                            stk_float_ratio=excluded.stk_float_ratio,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "index_announcements":
+                for row in rows:
+                    ann_date = self._ts_ymd_to_iso(row.get("ann_date"))
+                    title = str(row.get("title") or "").strip()
+                    source_name = str(row.get("source") or "").strip()
+                    if not ann_date or not title:
+                        continue
+                    payload.append(
+                        (
+                            ann_date,
+                            title,
+                            str(row.get("url") or "").strip() or None,
+                            source_name or None,
+                            str(row.get("type") or "").strip() or None,
+                            "tushare.idx_anns",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO index_announcements (
+                            ann_date, title, url, source_name, type, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ann_date, title, source_name) DO UPDATE SET
+                            url=excluded.url,
+                            type=excluded.type,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+            elif resource == "index_weight":
+                for row in rows:
+                    index_code = str(row.get("index_code") or "").strip()
+                    con_code = str(row.get("con_code") or "").strip()
+                    trade_date = self._ts_ymd_to_iso(row.get("trade_date"))
+                    if not index_code or not con_code or not trade_date:
+                        continue
+                    payload.append(
+                        (
+                            index_code,
+                            con_code,
+                            trade_date,
+                            float(row.get("weight")) if isinstance(row.get("weight"), (int, float)) else None,
+                            "tushare.index_weight",
+                            json.dumps(row, ensure_ascii=False),
+                            updated_at,
+                        )
+                    )
+                if payload:
+                    cursor.executemany(
+                        """
+                        INSERT INTO index_weights (
+                            index_code, con_code, trade_date, weight, source, raw_json, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(index_code, con_code, trade_date) DO UPDATE SET
+                            weight=excluded.weight,
+                            source=excluded.source,
+                            raw_json=excluded.raw_json,
+                            updated_at=excluded.updated_at
+                        """,
+                        payload,
+                    )
+
+            conn.commit()
+            return {
+                "_meta": {"status": "ok"},
+                "status": "ok",
+                "resource": resource,
+                "requested_by": requested_by.strip(),
+                "rows_fetched": int(len(rows)),
+                "rows_upserted": int(len(payload)),
+                "adapter_last_code": adapter.last_code,
+                "adapter_last_msg": adapter.last_msg,
+                "token_fingerprint": adapter.token_fingerprint,
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def historical_data_gaps_view(
+        self,
+        *,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        required_history_days: Optional[int],
+    ) -> dict[str, Any]:
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16
+
+        engine = LowFreqTradingEngineV16(db_path=db_path)
+        min_required_days = int(required_history_days) if isinstance(required_history_days, int) and required_history_days > 0 else int(getattr(engine, "WEEKLY_DUCK_HEAD_LOOKBACK_DAYS", 520) or 520)
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+            daily_min, daily_max = cur.execute(
+                "SELECT MIN(trade_date), MAX(trade_date) FROM daily_prices"
+            ).fetchone()
+            daily_min = str(daily_min) if daily_min is not None else None
+            daily_max = str(daily_max) if daily_max is not None else None
+            used_end = (str(end_date).strip() if isinstance(end_date, str) and str(end_date).strip() else daily_max) or date.today().isoformat()
+            try:
+                used_end_dt = date.fromisoformat(used_end)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_end_date",
+                    message=f"invalid end_date: {used_end}",
+                    details={"end_date": used_end},
+                )
+            used_start = str(start_date).strip() if isinstance(start_date, str) and str(start_date).strip() else None
+            if used_start:
+                try:
+                    used_start_dt = date.fromisoformat(used_start)
+                except ValueError:
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_start_date",
+                        message=f"invalid start_date: {used_start}",
+                        details={"start_date": used_start},
+                    )
+            else:
+                used_start_dt = used_end_dt - timedelta(days=int(min_required_days))
+                used_start = used_start_dt.isoformat()
+
+            calendar_table: Optional[str] = None
+            for table_name in ("trading_calendar_cache", "trading_calendar"):
+                try:
+                    row = cur.execute(
+                        f"SELECT 1 FROM {table_name} LIMIT 1"
+                    ).fetchone()
+                except sqlite3.Error:
+                    continue
+                calendar_table = table_name
+                break
+
+            missing_trading_days = None
+            if calendar_table:
+                existing_days = cur.execute(
+                    """
+                    SELECT trade_date FROM daily_prices
+                    WHERE trade_date >= ? AND trade_date <= ?
+                    GROUP BY trade_date
+                    """,
+                    (used_start, used_end),
+                ).fetchall()
+                existing_set = {str(r[0]) for r in existing_days if r and r[0]}
+                cal_days = cur.execute(
+                    f"""
+                    SELECT trade_date FROM {calendar_table}
+                    WHERE trade_date >= ? AND trade_date <= ?
+                    ORDER BY trade_date
+                    """,
+                    (used_start, used_end),
+                ).fetchall()
+                cal_set = [str(r[0]) for r in cal_days if r and r[0]]
+                missing = [d for d in cal_set if d not in existing_set]
+                missing_trading_days = {
+                    "calendar_table": calendar_table,
+                    "expected_trading_days": len(cal_set),
+                    "present_trading_days": len(existing_set),
+                    "missing_trading_days_count": len(missing),
+                    "missing_trading_days_sample": missing[:20],
+                }
+
+            ths_min, ths_max, ths_rows = None, None, 0
+            try:
+                ths_min, ths_max, ths_rows = cur.execute(
+                    "SELECT MIN(trade_date), MAX(trade_date), COUNT(1) FROM ths_concept_daily"
+                ).fetchone()
+            except sqlite3.Error:
+                ths_min, ths_max, ths_rows = None, None, 0
+
+            ann_rows = 0
+            try:
+                ann_rows = int(cur.execute("SELECT COUNT(1) FROM announcements").fetchone()[0] or 0)
+            except sqlite3.Error:
+                ann_rows = 0
+
+            fund_rows = 0
+            try:
+                fund_rows = int(cur.execute("SELECT COUNT(1) FROM stock_fundamentals").fetchone()[0] or 0)
+            except sqlite3.Error:
+                fund_rows = 0
+
+            finrep_rows = 0
+            finrep_min = None
+            finrep_max = None
+            try:
+                finrep_min, finrep_max, finrep_rows = cur.execute(
+                    "SELECT MIN(report_date), MAX(report_date), COUNT(1) FROM financial_reports"
+                ).fetchone()
+            except sqlite3.Error:
+                finrep_rows = 0
+                finrep_min = None
+                finrep_max = None
+
+            return {
+                "_meta": {"status": "ok"},
+                "db_path": _safe_ref_path(str(db_path)),
+                "required_history_days": int(min_required_days),
+                "window": {"start_date": used_start, "end_date": used_end},
+                "tables": {
+                    "daily_prices": {
+                        "min_trade_date": daily_min,
+                        "max_trade_date": daily_max,
+                        "meets_min_required_days": bool(daily_min is not None and (used_end_dt - date.fromisoformat(daily_min)).days >= min_required_days),
+                    },
+                    "trading_calendar": {"table": missing_trading_days.get("calendar_table") if isinstance(missing_trading_days, dict) else None},
+                    "ths_concept_daily": {
+                        "min_trade_date": str(ths_min) if ths_min is not None else None,
+                        "max_trade_date": str(ths_max) if ths_max is not None else None,
+                        "rows": int(ths_rows or 0),
+                        "covers_window": bool(ths_min is not None and ths_max is not None and str(ths_min) <= used_start and str(ths_max) >= used_end),
+                    },
+                    "announcements": {"rows": int(ann_rows)},
+                    "stock_fundamentals": {"rows": int(fund_rows)},
+                    "financial_reports": {
+                        "exists": bool(finrep_rows > 0 or finrep_min is not None or finrep_max is not None),
+                        "rows": int(finrep_rows or 0),
+                        "min_report_date": str(finrep_min) if finrep_min is not None else None,
+                        "max_report_date": str(finrep_max) if finrep_max is not None else None,
+                    },
+                },
+                "missing_trading_days": missing_trading_days,
+                "fill_plan": {
+                    "daily_prices": {
+                        "channel": "tushare.daily (authoritative) + tencent (safety-net)",
+                        "entrypoint": "POST /api/data/update",
+                        "quality_gate": {"min_close_coverage": 0.99, "min_amount_coverage": 0.99},
+                    },
+                    "ths_concept_daily": {
+                        "channel": "tushare.ths_index + tushare.ths_member + daily_prices",
+                        "entrypoint": "POST /api/data-control/backfill/ths-concept-daily",
+                        "note": "回补使用当前概念成分缓存计算历史热度；历史成分变动无法在现有数据下复原（会带来回补误差）。",
+                    },
+                    "stock_fundamentals": {
+                        "channel": "tushare.daily_basic (authoritative)",
+                        "entrypoint": "POST /api/data-control/update-stock-fundamentals/tushare",
+                    },
+                    "financial_reports": {
+                        "channel": "tushare.fina_indicator + tushare.daily_basic (authoritative)",
+                        "entrypoint": "POST /api/data-control/update-financial-reports/tushare",
+                    },
+                    "announcements": {
+                        "channel": "cninfo_or_tushare_disclosure",
+                        "note": "当前表为空；需接入公告抓取/同步以支持事件风控与确定性增强模块。",
+                    },
+                },
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def model_validation_quickstart_view(
+        self,
+        *,
+        end_date: Optional[str],
+        window_trading_days: int = 60,
+    ) -> dict[str, Any]:
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        if window_trading_days <= 0:
+            window_trading_days = 60
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+            last_trade_date = cur.execute("SELECT MAX(trade_date) FROM daily_prices").fetchone()[0]
+            used_end = (str(end_date).strip() if isinstance(end_date, str) and str(end_date).strip() else str(last_trade_date or "").strip()) or date.today().isoformat()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        td = self.trading_day_view(target_date=used_end)
+        used_end_effective = td.get("target_date") or used_end
+
+        try:
+            end_dt = date.fromisoformat(str(used_end_effective))
+        except ValueError:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_end_date",
+                message=f"invalid end_date: {used_end_effective}",
+                details={"end_date": used_end_effective},
+            )
+
+        coverage = self.stocks_coverage_view(target_date=end_dt)
+        cov = coverage.get("coverage") if isinstance(coverage, dict) else {}
+        active = int(cov.get("active_stock_count") or 0) if isinstance(cov, dict) else 0
+        priced = int(cov.get("priced_stock_count") or 0) if isinstance(cov, dict) else 0
+        coverage_ratio = (float(priced) / float(active)) if active > 0 else 0.0
+
+        window_summary = self.lowfreq_backtest_window_summary_view(
+            end_date=str(used_end_effective),
+            window_trading_days=int(window_trading_days),
+        )
+        summary_ok = bool(isinstance(window_summary, dict) and (window_summary.get("_meta") or {}).get("status") == "ok")
+
+        fundamentals_rows = 0
+        finrep_rows = 0
+        ths_rows_today = 0
+        try:
+            db_path = Path(
+                os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+            ).expanduser()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.cursor()
+                try:
+                    fundamentals_rows = int(cursor.execute("SELECT COUNT(1) FROM stock_fundamentals").fetchone()[0] or 0)
+                except sqlite3.Error:
+                    fundamentals_rows = 0
+                try:
+                    finrep_rows = int(cursor.execute("SELECT COUNT(1) FROM financial_reports").fetchone()[0] or 0)
+                except sqlite3.Error:
+                    finrep_rows = 0
+                try:
+                    ths_rows_today = int(
+                        cursor.execute(
+                            "SELECT COUNT(1) FROM ths_concept_daily WHERE trade_date = ? AND provider = 'ths'",
+                            (str(used_end_effective),),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                except sqlite3.Error:
+                    ths_rows_today = 0
+            finally:
+                conn.close()
+        except Exception:
+            fundamentals_rows = 0
+            finrep_rows = 0
+            ths_rows_today = 0
+
+        readiness = {
+            "daily_prices_coverage_ratio": round(float(coverage_ratio), 6),
+            "daily_prices_coverage_gate": {"min_ratio": 0.99, "passed": bool(coverage_ratio >= 0.99)},
+            "backtest_window_summary_ok": bool(summary_ok),
+            "stock_fundamentals_rows": int(fundamentals_rows),
+            "financial_reports_rows": int(finrep_rows),
+            "ths_concept_daily_rows_on_end_date": int(ths_rows_today),
+        }
+        passed = bool(readiness["daily_prices_coverage_gate"]["passed"]) and bool(summary_ok)
+
+        return {
+            "_meta": {"status": "ok"},
+            "target_end_date": str(used_end_effective),
+            "window_trading_days": int(window_trading_days),
+            "checks": readiness,
+            "passed": bool(passed),
+            "artifacts": {
+                "stocks_coverage": coverage,
+                "lowfreq_window_summary": window_summary,
+            },
+            "next_actions": [
+                "若需要纳入公告/事件风控，请先完成 announcements 的落库（当前可能为空）。",
+                "若 financial_reports_rows=0，先通过 /api/data-control/update-financial-reports/tushare 生成基础财报指标表。",
+                "若 stock_fundamentals_rows=0，先通过 /api/data-control/update-stock-fundamentals/tushare 落库日频估值指标。",
+                "若 passed=false，优先通过 data-control 同步/回填补齐目标交易日行情覆盖。",
+            ],
+        }
+
+    def ashare_midcap_audit_view(self, *, target_date: Optional[str]) -> dict[str, Any]:
+        raw_target = str(target_date).strip() if isinstance(target_date, str) else ""
+        if not raw_target:
+            raw_target = date.today().isoformat()
+
+        td = self.trading_day_view(target_date=raw_target)
+        used_date = td.get("target_date") or raw_target
+        if td.get("is_trading_day") is False and isinstance(td.get("nearest_trading_day"), str):
+            used_date = td.get("nearest_trading_day") or used_date
+
+        start_6m = (date.fromisoformat(used_date) - timedelta(days=183)).isoformat()
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="NeoTrade3 行情库未初始化（stock_data.db 不存在）",
+                details={"expected_path": _safe_ref_path(str(db_path))},
+            )
+
+        min_cap = 20_000_000_000.0
+        max_cap = 50_000_000_000.0
+        liquidity_amount_floor = 50_000_000.0
+        suspension_trading_days_threshold = 30
+
+        def normalize_name(name_value: object) -> str:
+            return str(name_value or "").strip()
+
+        def is_st_name(stock_name: str) -> bool:
+            upper = stock_name.upper()
+            if "ST" not in upper:
+                return False
+            if "*ST" in upper:
+                return True
+            if upper.startswith("ST"):
+                return True
+            if " ST" in upper:
+                return True
+            return False
+
+        def is_delisting_name(stock_name: str) -> bool:
+            s = stock_name.strip()
+            if not s:
+                return False
+            if s.startswith("退"):
+                return True
+            if "退市" in s:
+                return True
+            return False
+
+        def risk_level_rank(level: str) -> int:
+            if level == "high":
+                return 3
+            if level == "medium":
+                return 2
+            if level == "low":
+                return 1
+            return 0
+
+        def pick_overall_risk(issues: list[dict[str, Any]]) -> str:
+            best = 0
+            best_level = "none"
+            for it in issues:
+                level = str(it.get("risk_level") or "none")
+                r = risk_level_rank(level)
+                if r > best:
+                    best = r
+                    best_level = level
+            return best_level
+
+        def percentile_rank(value: float, sorted_values: list[float]) -> Optional[float]:
+            if not sorted_values:
+                return None
+            import bisect
+
+            idx = bisect.bisect_right(sorted_values, value)
+            return max(0.0, min(1.0, idx / float(len(sorted_values))))
+
+        def parse_float(raw: object) -> Optional[float]:
+            if raw is None:
+                return None
+            if isinstance(raw, (int, float)):
+                return float(raw)
+            try:
+                return float(str(raw))
+            except Exception:
+                return None
+
+        def parse_date(raw: object) -> Optional[str]:
+            if raw is None:
+                return None
+            s = str(raw).strip()
+            if not s:
+                return None
+            try:
+                return date.fromisoformat(s).isoformat()
+            except Exception:
+                return None
+
+        def scan_titles_for_risk(titles: list[str]) -> list[dict[str, Any]]:
+            issues: list[dict[str, Any]] = []
+            for title in titles:
+                t = str(title or "").strip()
+                if not t:
+                    continue
+                matched: list[tuple[str, str]] = []
+                if any(k in t for k in ("证监会", "立案调查", "行政处罚", "财务造假", "信披违规", "信息披露违规", "重大违法", "监管处罚")):
+                    matched.append(("major_violation", "high"))
+                if any(k in t for k in ("诉讼", "仲裁", "重大诉讼", "重大仲裁", "判决", "强制执行", "立案")):
+                    matched.append(("litigation_or_arbitration", "medium"))
+                if any(k in t for k in ("质押", "补充质押", "平仓", "爆仓")):
+                    matched.append(("equity_pledge_risk", "medium"))
+                if any(k in t for k in ("停产", "停工", "停业", "生产线停产", "事故", "火灾", "爆炸")):
+                    matched.append(("production_halt_or_accident", "high"))
+                if any(k in t for k in ("实控人", "控制权", "控股股东", "变更", "易主")):
+                    matched.append(("controller_change_risk", "medium"))
+                for issue_type, level in matched:
+                    issues.append(
+                        {
+                            "issue_type": issue_type,
+                            "risk_level": level,
+                            "evidence": t,
+                            "source": "announcements",
+                        }
+                    )
+            return issues
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT trade_date FROM trading_calendar_cache WHERE trade_date <= ? ORDER BY trade_date ASC",
+                (used_date,),
+            )
+            trading_days = [str(r[0]) for r in (cursor.fetchall() or []) if r and r[0]]
+            if not trading_days:
+                raise ApiError(
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    code="trading_calendar_not_ready",
+                    message="trading_calendar_cache is empty",
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                  s.code,
+                  s.name,
+                  s.industry,
+                  s.sector_lv1,
+                  s.sector_lv2,
+                  s.total_market_cap,
+                  s.circulating_market_cap,
+                  s.is_delisted,
+                  s.last_trade_date,
+                  s.roe,
+                  s.debt_ratio,
+                  s.revenue,
+                  s.profit,
+                  s.revenue_growth,
+                  s.profit_growth,
+                  s.updated_at,
+                  s.pe_ratio,
+                  s.pb_ratio,
+                  sf.pe_ttm,
+                  sf.pb,
+                  sf.ps_ttm,
+                  sf.pcf_ttm,
+                  sf.roe,
+                  sf.net_profit_cagr,
+                  sf.revenue_cagr,
+                  sf.peg,
+                  sf.updated_at
+                FROM stocks s
+                LEFT JOIN stock_fundamentals sf ON sf.code = s.code
+                WHERE COALESCE(s.asset_type, 'stock') = 'stock'
+                AND COALESCE(s.is_delisted, 0) = 0
+                AND s.total_market_cap IS NOT NULL
+                AND s.total_market_cap >= ?
+                AND s.total_market_cap <= ?
+                """,
+                (min_cap, max_cap),
+            )
+            raw_rows = cursor.fetchall() or []
+
+            candidates: list[dict[str, Any]] = []
+            excluded: list[dict[str, Any]] = []
+
+            import bisect
+
+            missing_last_codes: list[str] = []
+            for row in raw_rows:
+                c = str(row[0] or "").strip()
+                if not c:
+                    continue
+                raw_last = row[8]
+                if parse_date(raw_last) is None:
+                    missing_last_codes.append(c)
+
+            dp_last_trade_by_code: dict[str, str] = {}
+            if missing_last_codes:
+                placeholders = ",".join("?" for _ in missing_last_codes)
+                cursor.execute(
+                    f"SELECT code, MAX(trade_date) FROM daily_prices WHERE code IN ({placeholders}) GROUP BY code",
+                    tuple(missing_last_codes),
+                )
+                for code, last_trade in cursor.fetchall() or []:
+                    cc = str(code or "").strip()
+                    dt = parse_date(last_trade)
+                    if cc and dt:
+                        dp_last_trade_by_code[cc] = dt
+
+            def trading_day_gap(last_trade: Optional[str]) -> Optional[int]:
+                if not last_trade:
+                    return None
+                try:
+                    idx_last = bisect.bisect_right(trading_days, last_trade) - 1
+                    idx_used = bisect.bisect_right(trading_days, used_date) - 1
+                except Exception:
+                    return None
+                if idx_last < 0 or idx_used < 0:
+                    return None
+                return max(0, idx_used - idx_last)
+
+            for row in raw_rows:
+                (
+                    code,
+                    name,
+                    industry,
+                    sector_lv1,
+                    sector_lv2,
+                    total_market_cap,
+                    circulating_market_cap,
+                    is_delisted,
+                    last_trade_date,
+                    roe,
+                    debt_ratio,
+                    revenue,
+                    profit,
+                    revenue_growth,
+                    profit_growth,
+                    updated_at,
+                    s_pe_ratio,
+                    s_pb_ratio,
+                    pe_ttm,
+                    pb,
+                    ps_ttm,
+                    pcf_ttm,
+                    sf_roe,
+                    net_profit_cagr,
+                    revenue_cagr,
+                    peg,
+                    fundamentals_updated_at,
+                ) = row
+
+                stock_code = str(code or "").strip()
+                stock_name = normalize_name(name)
+                issues: list[dict[str, Any]] = []
+
+                if not stock_code:
+                    continue
+                if is_st_name(stock_name):
+                    issues.append(
+                        {
+                            "issue_type": "st_or_special_treatment",
+                            "risk_level": "high",
+                            "evidence": stock_name,
+                            "source": "stocks.name",
+                        }
+                    )
+                if is_delisting_name(stock_name):
+                    issues.append(
+                        {
+                            "issue_type": "delisting_consolidation",
+                            "risk_level": "high",
+                            "evidence": stock_name,
+                            "source": "stocks.name",
+                        }
+                    )
+                if int(is_delisted or 0) == 1:
+                    issues.append(
+                        {
+                            "issue_type": "delisted",
+                            "risk_level": "high",
+                            "evidence": "is_delisted=1",
+                            "source": "stocks.is_delisted",
+                        }
+                    )
+
+                last_td = parse_date(last_trade_date)
+                if last_td is None and stock_code in dp_last_trade_by_code:
+                    last_td = dp_last_trade_by_code.get(stock_code)
+                    issues.append(
+                        {
+                            "issue_type": "last_trade_date_filled_from_daily_prices",
+                            "risk_level": "low",
+                            "evidence": str(last_td),
+                            "source": "daily_prices.max(trade_date)",
+                        }
+                    )
+                gap = trading_day_gap(last_td)
+                if gap is None:
+                    issues.append(
+                        {
+                            "issue_type": "missing_last_trade_date",
+                            "risk_level": "medium",
+                            "evidence": str(last_trade_date),
+                            "source": "stocks.last_trade_date",
+                        }
+                    )
+                else:
+                    if gap > suspension_trading_days_threshold:
+                        issues.append(
+                            {
+                                "issue_type": "suspended_over_30_trading_days",
+                                "risk_level": "high",
+                                "evidence": f"gap_trading_days={gap}",
+                                "source": "trading_calendar_cache+stocks.last_trade_date",
+                            }
+                        )
+
+                if any(it.get("risk_level") == "high" for it in issues):
+                    excluded.append(
+                        {
+                            "stock_code": stock_code,
+                            "stock_name": stock_name or stock_code,
+                            "stage": "prefilter",
+                            "issues": issues,
+                            "overall_risk": pick_overall_risk(issues),
+                            "industry": str(industry or "").strip() or None,
+                            "sector_lv1": str(sector_lv1 or "").strip() or None,
+                            "sector_lv2": str(sector_lv2 or "").strip() or None,
+                            "total_market_cap": parse_float(total_market_cap),
+                            "circulating_market_cap": parse_float(circulating_market_cap),
+                            "last_trade_date": last_td,
+                            "updated_at": str(updated_at) if updated_at is not None else None,
+                        }
+                    )
+                    continue
+
+                candidates.append(
+                    {
+                        "stock_code": stock_code,
+                        "stock_name": stock_name or stock_code,
+                        "industry": str(industry or "").strip() or None,
+                        "sector_lv1": str(sector_lv1 or "").strip() or None,
+                        "sector_lv2": str(sector_lv2 or "").strip() or None,
+                        "total_market_cap": parse_float(total_market_cap),
+                        "circulating_market_cap": parse_float(circulating_market_cap),
+                        "last_trade_date": last_td,
+                        "gap_trading_days": gap,
+                        "roe": parse_float(sf_roe) if parse_float(sf_roe) is not None else parse_float(roe),
+                        "debt_ratio": parse_float(debt_ratio),
+                        "revenue": parse_float(revenue),
+                        "profit": parse_float(profit),
+                        "revenue_growth": parse_float(revenue_growth),
+                        "profit_growth": parse_float(profit_growth),
+                        "pe_ttm": (
+                            parse_float(pe_ttm)
+                            if parse_float(pe_ttm) is not None
+                            else parse_float(s_pe_ratio)
+                        ),
+                        "pb_lf": (
+                            parse_float(pb)
+                            if parse_float(pb) is not None
+                            else parse_float(s_pb_ratio)
+                        ),
+                        "ps_ttm": parse_float(ps_ttm),
+                        "pcf_ttm": parse_float(pcf_ttm),
+                        "net_profit_cagr": parse_float(net_profit_cagr),
+                        "revenue_cagr": parse_float(revenue_cagr),
+                        "peg": parse_float(peg),
+                        "fundamentals_updated_at": str(fundamentals_updated_at) if fundamentals_updated_at is not None else None,
+                        "updated_at": str(updated_at) if updated_at is not None else None,
+                        "issues": issues,
+                    }
+                )
+
+            if not candidates:
+                return {
+                    "_meta": {
+                        "status": "ok",
+                        "target_date": used_date,
+                        "note": "no candidates found after prefilter",
+                    },
+                    "qualified": [],
+                    "excluded": excluded,
+                }
+
+            cursor.execute(
+                "SELECT trade_date FROM trading_calendar_cache WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT 20",
+                (used_date,),
+            )
+            last_20_days = [str(r[0]) for r in (cursor.fetchall() or []) if r and r[0]]
+            last_20_days = list(reversed(last_20_days))
+
+            avg_amount_by_code: dict[str, float] = {}
+            if last_20_days:
+                date_placeholders = ",".join("?" for _ in last_20_days)
+                code_placeholders = ",".join("?" for _ in candidates)
+                code_values = [c["stock_code"] for c in candidates]
+                cursor.execute(
+                    f"""
+                    SELECT code, AVG(amount) AS avg_amount
+                    FROM daily_prices
+                    WHERE trade_date IN ({date_placeholders})
+                    AND code IN ({code_placeholders})
+                    GROUP BY code
+                    """,
+                    tuple(last_20_days + code_values),
+                )
+                for code, avg_amount in cursor.fetchall() or []:
+                    c = str(code or "").strip()
+                    if not c:
+                        continue
+                    if avg_amount is None:
+                        continue
+                    avg_amount_by_code[c] = float(avg_amount)
+
+            code_list = [c["stock_code"] for c in candidates]
+            ann_titles_by_code: dict[str, list[str]] = {}
+            if code_list and self._table_exists(db_path=db_path, table="announcements"):
+                placeholders = ",".join("?" for _ in code_list)
+                cursor.execute(
+                    f"""
+                    SELECT code, title
+                    FROM announcements
+                    WHERE DATE(publish_date) >= ?
+                    AND code IN ({placeholders})
+                    """,
+                    tuple([start_6m] + code_list),
+                )
+                for code, title in cursor.fetchall() or []:
+                    c = str(code or "").strip()
+                    if not c:
+                        continue
+                    ann_titles_by_code.setdefault(c, []).append(str(title or "").strip())
+
+            by_industry_pe: dict[str, list[float]] = {}
+            by_industry_pb: dict[str, list[float]] = {}
+            by_industry_rg: dict[str, list[float]] = {}
+            by_industry_pg: dict[str, list[float]] = {}
+            by_industry_roe: dict[str, list[float]] = {}
+            by_industry_pcf: dict[str, list[float]] = {}
+            by_industry_npcagr: dict[str, list[float]] = {}
+            by_industry_rcagr: dict[str, list[float]] = {}
+
+            for item in candidates:
+                ind = item.get("industry") or "unknown"
+                pe = item.get("pe_ttm")
+                pbv = item.get("pb_lf")
+                rg = item.get("revenue_growth")
+                pg = item.get("profit_growth")
+                roe = item.get("roe")
+                pcf = item.get("pcf_ttm")
+                npcagr = item.get("net_profit_cagr")
+                rcagr = item.get("revenue_cagr")
+                if isinstance(pe, float) and pe > 0:
+                    by_industry_pe.setdefault(ind, []).append(pe)
+                if isinstance(pbv, float) and pbv > 0:
+                    by_industry_pb.setdefault(ind, []).append(pbv)
+                if isinstance(rg, float):
+                    by_industry_rg.setdefault(ind, []).append(rg)
+                if isinstance(pg, float):
+                    by_industry_pg.setdefault(ind, []).append(pg)
+                if isinstance(roe, float):
+                    by_industry_roe.setdefault(ind, []).append(roe)
+                if isinstance(pcf, float) and pcf != 0:
+                    by_industry_pcf.setdefault(ind, []).append(pcf)
+                if isinstance(npcagr, float):
+                    by_industry_npcagr.setdefault(ind, []).append(npcagr)
+                if isinstance(rcagr, float):
+                    by_industry_rcagr.setdefault(ind, []).append(rcagr)
+
+            for d in (by_industry_pe, by_industry_pb, by_industry_pcf):
+                for ind, arr in list(d.items()):
+                    d[ind] = sorted(arr)
+
+            medians: dict[str, dict[str, Optional[float]]] = {}
+            industries = set()
+            industries.update(by_industry_rg.keys())
+            industries.update(by_industry_pg.keys())
+            industries.update(by_industry_roe.keys())
+            industries.update(by_industry_pcf.keys())
+            industries.update(by_industry_npcagr.keys())
+            industries.update(by_industry_rcagr.keys())
+            for ind in industries:
+                medians[ind] = {
+                    "revenue_growth_median": statistics.median(by_industry_rg.get(ind, []))
+                    if by_industry_rg.get(ind)
+                    else None,
+                    "profit_growth_median": statistics.median(by_industry_pg.get(ind, []))
+                    if by_industry_pg.get(ind)
+                    else None,
+                    "roe_median": statistics.median(by_industry_roe.get(ind, []))
+                    if by_industry_roe.get(ind)
+                    else None,
+                    "pcf_ttm_median": statistics.median(by_industry_pcf.get(ind, []))
+                    if by_industry_pcf.get(ind)
+                    else None,
+                    "net_profit_cagr_median": statistics.median(
+                        by_industry_npcagr.get(ind, [])
+                    )
+                    if by_industry_npcagr.get(ind)
+                    else None,
+                    "revenue_cagr_median": statistics.median(by_industry_rcagr.get(ind, []))
+                    if by_industry_rcagr.get(ind)
+                    else None,
+                }
+
+            qualified_clean: list[dict[str, Any]] = []
+            qualified_flagged: list[dict[str, Any]] = []
+            for item in candidates:
+                stock_code = item["stock_code"]
+                industry = item.get("industry") or "unknown"
+                issues = list(item.get("issues") or [])
+
+                avg_amount = avg_amount_by_code.get(stock_code)
+                item["avg_amount_20d"] = avg_amount
+                if avg_amount is None:
+                    issues.append(
+                        {
+                            "issue_type": "missing_liquidity_data",
+                            "risk_level": "medium",
+                            "evidence": "daily_prices missing for last 20 trading days",
+                            "source": "daily_prices",
+                        }
+                    )
+                else:
+                    if avg_amount < liquidity_amount_floor:
+                        issues.append(
+                            {
+                                "issue_type": "low_liquidity_avg_amount_lt_50m",
+                                "risk_level": "high",
+                                "evidence": f"avg_amount_20d={avg_amount:.0f}",
+                                "source": "daily_prices.amount",
+                            }
+                        )
+
+                profit = item.get("profit")
+                if profit is None:
+                    pe = item.get("pe_ttm")
+                    total_mv = item.get("total_market_cap")
+                    if isinstance(pe, float) and pe != 0 and isinstance(total_mv, float):
+                        est_profit = float(total_mv) / float(pe)
+                        item["profit_estimated_ttm"] = est_profit
+                        if pe < 0:
+                            issues.append(
+                                {
+                                    "issue_type": "loss_proxy_pe_ttm_lt_0",
+                                    "risk_level": "high",
+                                    "evidence": f"pe_ttm={pe:.2f}",
+                                    "source": "stock_fundamentals.pe_ttm",
+                                }
+                            )
+                        else:
+                            issues.append(
+                                {
+                                    "issue_type": "profit_estimated_from_pe_ttm",
+                                    "risk_level": "low",
+                                    "evidence": f"profit_estimated_ttm={est_profit:.0f}, pe_ttm={pe:.2f}",
+                                    "source": "stocks.total_market_cap+stock_fundamentals.pe_ttm",
+                                }
+                            )
+                    else:
+                        issues.append(
+                            {
+                                "issue_type": "missing_profit_latest",
+                                "risk_level": "medium",
+                                "evidence": "stocks.profit is null and cannot estimate from pe_ttm",
+                                "source": "stocks.profit",
+                            }
+                        )
+                else:
+                    item["profit_estimated_ttm"] = None
+                    if isinstance(profit, float) and profit < 0:
+                        issues.append(
+                            {
+                                "issue_type": "loss_latest_period",
+                                "risk_level": "high",
+                                "evidence": f"profit={profit:.0f}",
+                                "source": "stocks.profit",
+                            }
+                        )
+
+                pe = item.get("pe_ttm")
+                pbv = item.get("pb_lf")
+                pcf = item.get("pcf_ttm")
+                total_mv = item.get("total_market_cap")
+                item["net_assets_estimated"] = (
+                    (float(total_mv) / float(pbv))
+                    if isinstance(total_mv, float) and isinstance(pbv, float) and pbv != 0
+                    else None
+                )
+                if isinstance(pbv, float) and pbv < 0:
+                    issues.append(
+                        {
+                            "issue_type": "negative_net_assets_proxy_pb_lt_0",
+                            "risk_level": "high",
+                            "evidence": f"pb_lf={pbv:.2f}",
+                            "source": "stock_fundamentals.pb",
+                        }
+                    )
+                if isinstance(pcf, float) and pcf < 0:
+                    issues.append(
+                        {
+                            "issue_type": "negative_operating_cashflow_proxy_pcf_lt_0",
+                            "risk_level": "medium",
+                            "evidence": f"pcf_ttm={pcf:.2f}",
+                            "source": "stock_fundamentals.pcf_ttm",
+                        }
+                    )
+                pe_pct = None
+                pb_pct = None
+                if isinstance(pe, float) and pe > 0:
+                    pe_pct = percentile_rank(pe, by_industry_pe.get(industry, []))
+                if isinstance(pbv, float) and pbv > 0:
+                    pb_pct = percentile_rank(pbv, by_industry_pb.get(industry, []))
+                item["pe_ttm_percentile_in_industry"] = pe_pct
+                item["pb_lf_percentile_in_industry"] = pb_pct
+
+                rg_median = medians.get(industry, {}).get("revenue_growth_median")
+                pg_median = medians.get(industry, {}).get("profit_growth_median")
+                item["industry_medians"] = medians.get(industry)
+
+                rg = item.get("revenue_growth")
+                if (
+                    isinstance(rg, float)
+                    and isinstance(rg_median, float)
+                    and (rg < (rg_median - 20.0) or rg < -20.0)
+                ):
+                    issues.append(
+                        {
+                            "issue_type": "revenue_growth_below_industry_standard",
+                            "risk_level": "medium",
+                            "evidence": f"revenue_growth={rg:.2f}, median={rg_median:.2f}",
+                            "source": "stocks.revenue_growth",
+                        }
+                    )
+                pg = item.get("profit_growth")
+                if (
+                    isinstance(pg, float)
+                    and isinstance(pg_median, float)
+                    and (pg < (pg_median - 30.0) or pg < -30.0)
+                ):
+                    issues.append(
+                        {
+                            "issue_type": "profit_growth_below_industry_standard",
+                            "risk_level": "medium",
+                            "evidence": f"profit_growth={pg:.2f}, median={pg_median:.2f}",
+                            "source": "stocks.profit_growth",
+                        }
+                    )
+                roe_median = medians.get(industry, {}).get("roe_median")
+                roe = item.get("roe")
+                if (
+                    isinstance(roe, float)
+                    and isinstance(roe_median, float)
+                    and (roe < (roe_median - 5.0) or roe < 0.0)
+                ):
+                    issues.append(
+                        {
+                            "issue_type": "roe_below_industry_standard",
+                            "risk_level": "medium",
+                            "evidence": f"roe={roe:.2f}, median={roe_median:.2f}",
+                            "source": "stock_fundamentals.roe+stocks.roe",
+                        }
+                    )
+
+                if pe_pct is not None and pe_pct >= 0.8:
+                    stretched = False
+                    if isinstance(rg, float) and isinstance(rg_median, float) and rg < rg_median:
+                        stretched = True
+                    if isinstance(pg, float) and isinstance(pg_median, float) and pg < pg_median:
+                        stretched = True
+                    issues.append(
+                        {
+                            "issue_type": "pe_ttm_high_percentile",
+                            "risk_level": "medium" if not stretched else "high",
+                            "evidence": f"pe_ttm={pe:.2f}, pct={pe_pct:.2f}",
+                            "source": "stock_fundamentals.pe_ttm",
+                        }
+                    )
+
+                if pb_pct is not None and pb_pct >= 0.8:
+                    issues.append(
+                        {
+                            "issue_type": "pb_lf_high_percentile",
+                            "risk_level": "medium",
+                            "evidence": f"pb_lf={pbv:.2f}, pct={pb_pct:.2f}",
+                            "source": "stock_fundamentals.pb",
+                        }
+                    )
+
+                titles = ann_titles_by_code.get(stock_code, [])
+                if titles:
+                    issues.extend(scan_titles_for_risk(titles[:50]))
+
+                item["issues"] = issues
+                overall = pick_overall_risk(issues)
+
+                if overall == "high":
+                    excluded.append(
+                        {
+                            "stock_code": stock_code,
+                            "stock_name": item.get("stock_name"),
+                            "stage": "audit",
+                            "issues": issues,
+                            "overall_risk": overall,
+                            "industry": item.get("industry"),
+                            "sector_lv1": item.get("sector_lv1"),
+                            "sector_lv2": item.get("sector_lv2"),
+                            "total_market_cap": item.get("total_market_cap"),
+                            "circulating_market_cap": item.get("circulating_market_cap"),
+                            "avg_amount_20d": avg_amount,
+                        }
+                    )
+                elif overall == "medium":
+                    qualified_flagged.append(
+                        {
+                            "stock_code": stock_code,
+                            "stock_name": item.get("stock_name"),
+                            "industry": item.get("industry"),
+                            "sector_lv1": item.get("sector_lv1"),
+                            "sector_lv2": item.get("sector_lv2"),
+                            "total_market_cap": item.get("total_market_cap"),
+                            "circulating_market_cap": item.get("circulating_market_cap"),
+                            "avg_amount_20d": avg_amount,
+                            "pe_ttm": pe,
+                            "pb_lf": pbv,
+                            "ps_ttm": item.get("ps_ttm"),
+                            "pcf_ttm": item.get("pcf_ttm"),
+                            "net_profit_cagr": item.get("net_profit_cagr"),
+                            "revenue_cagr": item.get("revenue_cagr"),
+                            "peg": item.get("peg"),
+                            "net_assets_estimated": item.get("net_assets_estimated"),
+                            "pe_ttm_percentile_in_industry": pe_pct,
+                            "pb_lf_percentile_in_industry": pb_pct,
+                            "revenue_growth": item.get("revenue_growth"),
+                            "profit_growth": item.get("profit_growth"),
+                            "roe": item.get("roe"),
+                            "debt_ratio": item.get("debt_ratio"),
+                            "profit": item.get("profit"),
+                            "industry_medians": item.get("industry_medians"),
+                            "issues": issues,
+                            "overall_risk": overall,
+                            "core_business": None,
+                        }
+                    )
+                else:
+                    qualified_clean.append(
+                        {
+                            "stock_code": stock_code,
+                            "stock_name": item.get("stock_name"),
+                            "industry": item.get("industry"),
+                            "sector_lv1": item.get("sector_lv1"),
+                            "sector_lv2": item.get("sector_lv2"),
+                            "total_market_cap": item.get("total_market_cap"),
+                            "circulating_market_cap": item.get("circulating_market_cap"),
+                            "avg_amount_20d": avg_amount,
+                            "pe_ttm": pe,
+                            "pb_lf": pbv,
+                            "ps_ttm": item.get("ps_ttm"),
+                            "pcf_ttm": item.get("pcf_ttm"),
+                            "net_profit_cagr": item.get("net_profit_cagr"),
+                            "revenue_cagr": item.get("revenue_cagr"),
+                            "peg": item.get("peg"),
+                            "net_assets_estimated": item.get("net_assets_estimated"),
+                            "pe_ttm_percentile_in_industry": pe_pct,
+                            "pb_lf_percentile_in_industry": pb_pct,
+                            "revenue_growth": item.get("revenue_growth"),
+                            "profit_growth": item.get("profit_growth"),
+                            "roe": item.get("roe"),
+                            "debt_ratio": item.get("debt_ratio"),
+                            "profit": item.get("profit"),
+                            "industry_medians": item.get("industry_medians"),
+                            "issues": issues,
+                            "overall_risk": overall,
+                            "core_business": None,
+                        }
+                    )
+
+            qualified_clean.sort(key=lambda x: float(x.get("total_market_cap") or 0.0), reverse=True)
+            qualified_flagged.sort(key=lambda x: float(x.get("total_market_cap") or 0.0), reverse=True)
+            excluded.sort(key=lambda x: (x.get("stage") != "prefilter", float(x.get("total_market_cap") or 0.0)), reverse=True)
+
+            issue_type_counts: dict[str, int] = {}
+            risk_level_counts: dict[str, int] = {}
+            for bucket in (excluded, qualified_flagged, qualified_clean):
+                for row in bucket:
+                    for issue in row.get("issues", []) or []:
+                        it = str(issue.get("issue_type") or "").strip() or "unknown"
+                        issue_type_counts[it] = issue_type_counts.get(it, 0) + 1
+                        rl = str(issue.get("risk_level") or "").strip() or "unknown"
+                        risk_level_counts[rl] = risk_level_counts.get(rl, 0) + 1
+
+            qualified_all = list(qualified_clean) + list(qualified_flagged)
+            qualified_all.sort(key=lambda x: float(x.get("total_market_cap") or 0.0), reverse=True)
+
+            return {
+                "_meta": {
+                    "status": "ok",
+                    "target_date": used_date,
+                    "market_cap_range": {"min": min_cap, "max": max_cap, "unit": "CNY"},
+                    "filters": {
+                        "exclude_st_and_special_treatment": True,
+                        "exclude_delisting_consolidation": True,
+                        "exclude_suspended_over_trading_days": suspension_trading_days_threshold,
+                        "liquidity_avg_amount_20d_floor": liquidity_amount_floor,
+                        "announcements_lookback_days": 183,
+                    },
+                    "data_sources": {
+                        "market_cap": "stocks.total_market_cap",
+                        "valuation": "stock_fundamentals(pe_ttm,pb) + stocks fallback",
+                        "liquidity": "daily_prices.amount (last 20 trading days)",
+                        "trading_calendar": "trading_calendar_cache",
+                        "risk_events": "announcements.title keyword scan",
+                    },
+                    "coverage_gaps": {
+                        "gross_margin": "not available (no grossprofit_margin in stock_data.db)",
+                        "cashflow_level": "proxied by pcf_ttm sign and industry median (no direct OCF statement)",
+                        "net_assets": "proxied by pb sign and market_cap/pb estimation",
+                        "two_year_consecutive_loss": "not directly available; only latest profit is checked",
+                    },
+                    "counts": {
+                        "prefilter_candidates": len(candidates),
+                        "qualified": len(qualified_all),
+                        "qualified_clean": len(qualified_clean),
+                        "qualified_flagged": len(qualified_flagged),
+                        "excluded": len(excluded),
+                    },
+                    "report": {
+                        "issue_type_counts": issue_type_counts,
+                        "risk_level_counts": risk_level_counts,
+                    },
+                },
+                "qualified": qualified_all,
+                "qualified_clean": qualified_clean,
+                "qualified_flagged": qualified_flagged,
+                "excluded": excluded,
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _apply_universe_filters_to_screener_result(
         self,
@@ -8068,6 +14999,14 @@ class BootstrapApiService:
 
             signal_items = payload.get("signals")
             if isinstance(signal_items, list) and signal_items:
+                for item in signal_items:
+                    if not isinstance(item, dict):
+                        continue
+                    direction = str(item.get("direction") or "").strip().lower()
+                    item["buy_signal"] = direction == "buy"
+                    item["sell_signal"] = direction == "sell"
+                    item["hold_signal"] = direction == "hold"
+            if isinstance(signal_items, list) and signal_items:
                 import sqlite3
 
                 codes_in_payload: list[str] = []
@@ -8243,13 +15182,32 @@ class BootstrapApiService:
 
     def load_stored_snapshot(self, target_date: date) -> dict[str, Any]:
         stored_paths = self._stored_snapshot_paths(target_date)
+        summary_payload = self._read_json(stored_paths["summary"])
+        summary_block: dict[str, Any]
+        target_date_value = target_date.isoformat()
+        publish_succeeded = False
+        requested_publish_succeeded = False
+        if isinstance(summary_payload.get("summary"), dict):
+            summary_block = summary_payload["summary"]
+            target_date_value = str(summary_payload.get("target_date", target_date_value))
+            publish_succeeded = bool(summary_payload.get("publish_succeeded", False))
+            requested_publish_succeeded = bool(
+                summary_payload.get(
+                    "requested_publish_succeeded",
+                    publish_succeeded,
+                )
+            )
+        else:
+            summary_block = summary_payload
         return {
-            "target_date": target_date.isoformat(),
+            "target_date": target_date_value,
+            "publish_succeeded": publish_succeeded,
+            "requested_publish_succeeded": requested_publish_succeeded,
             "data_control": self._read_json(stored_paths["data_control"]),
             "orchestration": self._read_json(stored_paths["orchestration"]),
             "issue_center": self._read_json(stored_paths["issue_center"]),
             "learning": self._read_json(stored_paths["learning"]),
-            "summary": self._read_json(stored_paths["summary"]),
+            "summary": summary_block,
         }
 
     def _stored_snapshot_paths(self, target_date: date) -> dict[str, Path]:
@@ -8679,6 +15637,7 @@ class BootstrapApiService:
                 "closed_trades": [],
                 "settings": {"autopilot_enabled": False},
                 "manual": {"intents": []},
+                "signal_memory": {"buy_signals": []},
             }
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
@@ -8695,18 +15654,24 @@ class BootstrapApiService:
         payload.setdefault("closed_trades", [])
         payload.setdefault("settings", {"autopilot_enabled": False})
         payload.setdefault("manual", {"intents": []})
+        payload.setdefault("signal_memory", {"buy_signals": []})
         if not isinstance(payload["positions"], dict):
             payload["positions"] = {}
         if not isinstance(payload["closed_trades"], list):
             payload["closed_trades"] = []
         if not isinstance(payload["manual"], dict):
             payload["manual"] = {"intents": []}
+        if not isinstance(payload["signal_memory"], dict):
+            payload["signal_memory"] = {"buy_signals": []}
         if not isinstance(payload.get("settings"), dict):
             payload["settings"] = {"autopilot_enabled": False}
         payload["settings"].setdefault("autopilot_enabled", False)
         payload["manual"].setdefault("intents", [])
         if not isinstance(payload["manual"]["intents"], list):
             payload["manual"]["intents"] = []
+        payload["signal_memory"].setdefault("buy_signals", [])
+        if not isinstance(payload["signal_memory"]["buy_signals"], list):
+            payload["signal_memory"]["buy_signals"] = []
         return payload
 
     def _lowfreq_next_trading_day(self, after_date: str) -> str:
@@ -8733,6 +15698,53 @@ class BootstrapApiService:
             )
         return next_trading_day
 
+    def _lowfreq_previous_trading_day(self, before_date: str) -> Optional[str]:
+        before_date = str(before_date or "").strip()
+        if not before_date:
+            return None
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(trade_date) FROM trading_calendar_cache WHERE trade_date < ?",
+                (before_date,),
+            )
+            row = cursor.fetchone()
+            prev_trading_day = str(row[0]) if row and row[0] else ""
+        finally:
+            conn.close()
+        return prev_trading_day or None
+
+    def _lowfreq_nth_next_trading_day(self, after_date: str, steps: int) -> str:
+        current = str(after_date or "").strip()
+        count = max(int(steps or 0), 0)
+        for _ in range(count):
+            current = self._lowfreq_next_trading_day(current)
+        return current
+
+    @staticmethod
+    def _tencent_symbol_for_stock_code(code: str) -> str:
+        c = str(code or "").strip()
+        if not c:
+            return ""
+        if c.startswith(("sh", "sz")) and len(c) >= 8:
+            return c
+        prefix = "sh" if c.startswith("6") else "sz"
+        return f"{prefix}{c}"
+
+    @staticmethod
+    def _ts_code_for_stock_code(code: str) -> str:
+        c = str(code or "").strip()
+        if not c:
+            return ""
+        if "." in c and len(c.split(".", 1)[0]) == 6:
+            return c
+        suffix = "SH" if c.startswith("6") else "SZ"
+        return f"{c}.{suffix}"
+
     def _lowfreq_get_open_price(self, *, engine, code: str, trade_date: date) -> Optional[float]:
         code = str(code or "").strip()
         if not code:
@@ -8754,6 +15766,87 @@ class BootstrapApiService:
                     conn.close()
                 except Exception:
                     pass
+
+    def _lowfreq_get_rt_exec_price(
+        self,
+        *,
+        code: str,
+        execute_date: date,
+        timeout_seconds: int = 10,
+    ) -> tuple[Optional[float], dict[str, Any]]:
+        code = str(code or "").strip()
+        if not code:
+            return None, {"status": "error", "reason": "invalid_code"}
+        target = execute_date.isoformat()
+
+        symbol = self._tencent_symbol_for_stock_code(code)
+        if symbol:
+            try:
+                q = self.tencent_quote_meta_view(symbol=symbol, timeout_seconds=int(timeout_seconds))
+            except Exception as exc:
+                q = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
+            if isinstance(q, dict) and str(q.get("status") or "") == "ok":
+                q_date = str(q.get("trade_date") or "").strip()
+                if q_date != target:
+                    return None, {
+                        "status": "error",
+                        "reason": "tencent_trade_date_mismatch",
+                        "target_date": target,
+                        "quote_trade_date": q_date,
+                        "quote": q,
+                    }
+                vol = q.get("volume")
+                try:
+                    vol_f = float(vol) if vol is not None else None
+                except Exception:
+                    vol_f = None
+                if vol_f == 0.0:
+                    return None, {"status": "error", "reason": "untradable_volume0", "source": "tencent", "quote": q}
+                px = q.get("open")
+                try:
+                    px_f = float(px) if px is not None else None
+                except Exception:
+                    px_f = None
+                if not px_f or px_f <= 0:
+                    px2 = q.get("close")
+                    try:
+                        px_f = float(px2) if px2 is not None else None
+                    except Exception:
+                        px_f = None
+                if px_f and px_f > 0:
+                    return float(px_f), {"status": "ok", "source": "tencent", "quote": q}
+
+        try:
+            from neotrade3.data_sources.tushare_concept_adapter import TushareConceptAdapter
+        except Exception:
+            TushareConceptAdapter = None
+        if TushareConceptAdapter is not None:
+            adapter = TushareConceptAdapter(timeout_seconds=int(timeout_seconds))
+            if adapter.configured:
+                try:
+                    bar = adapter.fetch_daily_bar(
+                        ts_code=self._ts_code_for_stock_code(code),
+                        trade_date=target,
+                    )
+                except Exception as exc:
+                    bar = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
+                if isinstance(bar, dict) and bar.get("trade_date") == target:
+                    px = bar.get("open")
+                    try:
+                        px_f = float(px) if px is not None else None
+                    except Exception:
+                        px_f = None
+                    if not px_f or px_f <= 0:
+                        px2 = bar.get("close")
+                        try:
+                            px_f = float(px2) if px2 is not None else None
+                        except Exception:
+                            px_f = None
+                    if px_f and px_f > 0:
+                        return float(px_f), {"status": "ok", "source": "tushare_daily", "bar": bar}
+                return None, {"status": "error", "reason": "tushare_no_bar_for_date", "source": "tushare_daily"}
+
+        return None, {"status": "error", "reason": "no_price_source_available"}
 
     def _lowfreq_execute_pending_intents_for_date(
         self, *, state: dict[str, Any], engine, execute_date: date
@@ -8937,17 +16030,44 @@ class BootstrapApiService:
             sell_date=str(payload.get("sell_date") or ""),
             buy_price=float(payload.get("buy_price") or 0.0),
             sell_price=float(payload.get("sell_price") or 0.0),
+            buy_price_ref=float(payload.get("buy_price_ref") or 0.0),
+            sell_price_ref=float(payload.get("sell_price_ref") or 0.0),
             shares=int(payload.get("shares") or 0),
             shares_sold=int(payload.get("shares_sold") or 0),
             hold_days=int(payload.get("hold_days") or 0),
             return_pct=float(payload.get("return_pct") or 0.0),
+            net_return_pct=float(payload.get("net_return_pct") or 0.0),
+            buy_fee=float(payload.get("buy_fee") or 0.0),
+            sell_fee=float(payload.get("sell_fee") or 0.0),
             buy_score=float(payload.get("buy_score") or 0.0),
             wave_phase=str(payload.get("wave_phase") or ""),
+            buy_progress_label=str(payload.get("buy_progress_label") or ""),
             peak_price=float(payload.get("peak_price") or 0.0),
             partial_taken=bool(payload.get("partial_taken") or False),
             sell_reason=str(payload.get("sell_reason") or ""),
             status=str(payload.get("status") or "open"),
             role=str(payload.get("role") or ""),
+            market_top_watch_start_date=str(payload.get("market_top_watch_start_date") or ""),
+            market_top_watch_expire_date=str(payload.get("market_top_watch_expire_date") or ""),
+            market_top_watch_hits=int(payload.get("market_top_watch_hits") or 0),
+            market_top_watch_last_reason=str(payload.get("market_top_watch_last_reason") or ""),
+            market_top_watch_last_hit_date=str(payload.get("market_top_watch_last_hit_date") or ""),
+            market_exit_state=str(payload.get("market_exit_state") or ""),
+            market_exit_start_date=str(payload.get("market_exit_start_date") or ""),
+            market_exit_expire_date=str(payload.get("market_exit_expire_date") or ""),
+            market_exit_hits=int(payload.get("market_exit_hits") or 0),
+            market_exit_last_reason=str(payload.get("market_exit_last_reason") or ""),
+            market_exit_last_hit_date=str(payload.get("market_exit_last_hit_date") or ""),
+            sector_exit_state=str(payload.get("sector_exit_state") or ""),
+            sector_exit_start_date=str(payload.get("sector_exit_start_date") or ""),
+            sector_exit_expire_date=str(payload.get("sector_exit_expire_date") or ""),
+            sector_exit_hits=int(payload.get("sector_exit_hits") or 0),
+            sector_exit_last_reason=str(payload.get("sector_exit_last_reason") or ""),
+            sector_exit_last_hit_date=str(payload.get("sector_exit_last_hit_date") or ""),
+            system_exit_grace_used=bool(payload.get("system_exit_grace_used") or False),
+            system_exit_grace_date=str(payload.get("system_exit_grace_date") or ""),
+            system_exit_grace_scope=str(payload.get("system_exit_grace_scope") or ""),
+            system_exit_grace_reason=str(payload.get("system_exit_grace_reason") or ""),
         )
 
     def _lowfreq_trade_to_payload(self, trade) -> dict[str, Any]:
@@ -8993,6 +16113,49 @@ class BootstrapApiService:
             return it
         return None
 
+    def _lowfreq_find_blocking_pending_intent(
+        self,
+        *,
+        intents: list[dict[str, Any]],
+        intent_type: str,
+        code: str,
+        execute_date: str,
+    ) -> Optional[dict[str, Any]]:
+        intent_type = str(intent_type or "").strip()
+        code = str(code or "").strip()
+        execute_date = str(execute_date or "").strip()
+        if not intent_type or not code or not execute_date:
+            return None
+        try:
+            candidate_execute = date.fromisoformat(execute_date)
+        except ValueError:
+            return None
+
+        blocking: Optional[dict[str, Any]] = None
+        blocking_execute: Optional[date] = None
+        for it in intents:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("intent_type") or "").strip() != intent_type:
+                continue
+            if str(it.get("status") or "pending") != "pending":
+                continue
+            if str(it.get("code") or "").strip() != code:
+                continue
+            existing_execute_raw = str(it.get("execute_date") or "").strip()
+            if not existing_execute_raw:
+                continue
+            try:
+                existing_execute = date.fromisoformat(existing_execute_raw)
+            except ValueError:
+                continue
+            if existing_execute < candidate_execute:
+                continue
+            if blocking is None or existing_execute < blocking_execute:
+                blocking = it
+                blocking_execute = existing_execute
+        return blocking
+
     def _lowfreq_generate_execution_intents_for_date(
         self,
         *,
@@ -9013,8 +16176,14 @@ class BootstrapApiService:
                     abandon_codes.add(c)
 
         positions: dict[str, dict[str, Any]] = state.get("positions", {})
+        signal_memory = (
+            state.get("signal_memory") if isinstance(state.get("signal_memory"), dict) else {"buy_signals": []}
+        )
+        memory_entries = signal_memory.get("buy_signals") if isinstance(signal_memory.get("buy_signals"), list) else []
+        buy_signal_memory_days = max(int(getattr(engine, "BUY_SIGNAL_MEMORY_DAYS", 5) or 0), 0)
         created_buy = 0
         created_sell = 0
+        skipped_conflicts: list[dict[str, Any]] = []
 
         for code, trade_payload in positions.items():
             if not isinstance(trade_payload, dict):
@@ -9033,6 +16202,25 @@ class BootstrapApiService:
                 code=code_s,
                 requested_date=requested_key,
             ):
+                continue
+            blocking_pending = self._lowfreq_find_blocking_pending_intent(
+                intents=intents,
+                intent_type="sell_intent",
+                code=code_s,
+                execute_date=execute_date,
+            )
+            if blocking_pending:
+                skipped_conflicts.append(
+                    {
+                        "code": code_s,
+                        "intent_type": "sell_intent",
+                        "requested_date": requested_key,
+                        "candidate_execute_date": execute_date,
+                        "blocked_by_intent_id": str(blocking_pending.get("intent_id") or ""),
+                        "blocked_by_execute_date": str(blocking_pending.get("execute_date") or ""),
+                        "reason": "pending_conflict_older_intent_wins",
+                    }
+                )
                 continue
             intents.append(
                 {
@@ -9058,11 +16246,67 @@ class BootstrapApiService:
         except Exception:
             signals = {}
         raw = signals.get("buy_signals", []) if isinstance(signals, dict) else []
-        for sig in raw:
-            if not isinstance(sig, dict):
+        if buy_signal_memory_days > 0:
+            expire_date = self._lowfreq_nth_next_trading_day(requested_key, buy_signal_memory_days)
+            by_code: dict[str, dict[str, Any]] = {}
+            for entry in memory_entries:
+                if not isinstance(entry, dict):
+                    continue
+                code = str(entry.get("code") or "").strip()
+                if not code:
+                    continue
+                by_code[code] = dict(entry)
+            for sig in raw:
+                if not isinstance(sig, dict):
+                    continue
+                code = str(sig.get("code") or "").strip()
+                if not code:
+                    continue
+                existing = by_code.get(code) or {}
+                existing_score = float(existing.get("buy_score") or 0.0)
+                new_score = float(sig.get("buy_score") or 0.0)
+                if existing and existing_score > new_score and str(existing.get("expire_date") or "") >= str(expire_date):
+                    continue
+                by_code[code] = {
+                    "code": code,
+                    "name": str(sig.get("name") or ""),
+                    "sector": str(sig.get("sector") or ""),
+                    "role": str(sig.get("role") or ""),
+                    "buy_score": new_score,
+                    "wave_phase": str(sig.get("wave_phase") or ""),
+                    "source_date": requested_key,
+                    "expire_date": expire_date,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "model_signal_memory",
+                }
+            memory_entries = list(by_code.values())
+        else:
+            memory_entries = [
+                {
+                    "code": str(sig.get("code") or ""),
+                    "name": str(sig.get("name") or ""),
+                    "sector": str(sig.get("sector") or ""),
+                    "role": str(sig.get("role") or ""),
+                    "buy_score": float(sig.get("buy_score") or 0.0),
+                    "wave_phase": str(sig.get("wave_phase") or ""),
+                    "source_date": requested_key,
+                    "expire_date": requested_key,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "model",
+                }
+                for sig in raw
+                if isinstance(sig, dict)
+            ]
+
+        kept_memory: list[dict[str, Any]] = []
+        for entry in memory_entries:
+            if not isinstance(entry, dict):
                 continue
-            code = str(sig.get("code") or "").strip()
+            code = str(entry.get("code") or "").strip()
+            expire_date = str(entry.get("expire_date") or "").strip()
             if not code or code in positions or code in abandon_codes:
+                continue
+            if expire_date and expire_date < requested_key:
                 continue
             if self._lowfreq_find_pending_intent(
                 intents=intents,
@@ -9070,6 +16314,27 @@ class BootstrapApiService:
                 code=code,
                 requested_date=requested_key,
             ):
+                kept_memory.append(dict(entry))
+                continue
+            blocking_pending = self._lowfreq_find_blocking_pending_intent(
+                intents=intents,
+                intent_type="buy_intent",
+                code=code,
+                execute_date=execute_date,
+            )
+            if blocking_pending:
+                skipped_conflicts.append(
+                    {
+                        "code": code,
+                        "intent_type": "buy_intent",
+                        "requested_date": requested_key,
+                        "candidate_execute_date": execute_date,
+                        "blocked_by_intent_id": str(blocking_pending.get("intent_id") or ""),
+                        "blocked_by_execute_date": str(blocking_pending.get("execute_date") or ""),
+                        "reason": "pending_conflict_older_intent_wins",
+                    }
+                )
+                kept_memory.append(dict(entry))
                 continue
             intents.append(
                 {
@@ -9077,31 +16342,35 @@ class BootstrapApiService:
                     "intent_type": "buy_intent",
                     "status": "pending",
                     "code": code,
-                    "name": str(sig.get("name") or ""),
-                    "sector": str(sig.get("sector") or ""),
-                    "role": str(sig.get("role") or ""),
-                    "buy_score": float(sig.get("buy_score") or 0.0),
-                    "wave_phase": str(sig.get("wave_phase") or ""),
+                    "name": str(entry.get("name") or ""),
+                    "sector": str(entry.get("sector") or ""),
+                    "role": str(entry.get("role") or ""),
+                    "buy_score": float(entry.get("buy_score") or 0.0),
+                    "wave_phase": str(entry.get("wave_phase") or ""),
                     "requested_date": requested_key,
                     "execute_date": execute_date,
                     "attempt_count": 0,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "source": "model",
+                    "source": str(entry.get("source") or "model"),
+                    "source_date": str(entry.get("source_date") or requested_key),
+                    "signal_expire_date": str(entry.get("expire_date") or ""),
                 }
             )
             created_buy += 1
 
         state["positions"] = positions
         state["manual"] = {"intents": intents}
+        state["signal_memory"] = {"buy_signals": kept_memory}
         return {
             "requested_date": requested_key,
             "execute_date": execute_date,
             "created_buy": created_buy,
             "created_sell": created_sell,
+            "skipped_conflicts": skipped_conflicts,
         }
 
     def _advance_lowfreq_sim_state(
-        self, *, state: dict[str, Any], engine, target_date: date
+        self, *, state: dict[str, Any], engine, target_date: date, allow_execute: bool = False
     ) -> None:
         settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
         autopilot_enabled = bool(settings.get("autopilot_enabled"))
@@ -9130,11 +16399,12 @@ class BootstrapApiService:
                 state["day_index"] = day_index + 1
                 state["last_date"] = current_date.isoformat()
                 continue
-            self._lowfreq_execute_pending_intents_for_date(
-                state=state,
-                engine=engine,
-                execute_date=current_date,
-            )
+            if bool(allow_execute):
+                self._lowfreq_execute_pending_intents_for_date(
+                    state=state,
+                    engine=engine,
+                    execute_date=current_date,
+                )
             self._lowfreq_generate_execution_intents_for_date(
                 state=state,
                 engine=engine,
@@ -9503,6 +16773,9 @@ class BootstrapApiService:
                 risk_reason = "当日命中但未确认"
             item["risk_level"] = risk_level
             item["risk_reason"] = risk_reason
+            item["buy_signal"] = intent_type == "buy_intent"
+            item["sell_signal"] = intent_type == "sell_intent"
+            item["hold_signal"] = False
 
             raw_score = item.get("buy_score")
             bucket_key = self._confidence_bucket_key(
@@ -9514,6 +16787,8 @@ class BootstrapApiService:
             bucket = calibration_map.get(bucket_key)
             item["confidence_prob"] = float(bucket.get("confidence_prob")) if isinstance(bucket, dict) else None
             item["confidence_samples"] = int(bucket.get("n")) if isinstance(bucket, dict) else 0
+            item["certainty_prob"] = item.get("confidence_prob")
+            item["certainty_samples"] = item.get("confidence_samples")
 
             item["can_execute"] = bool(can_execute)
             item["blocked_reason"] = blocked_reason
@@ -9624,7 +16899,15 @@ class BootstrapApiService:
                 item["regime_snapshot"] = regime_snapshot
 
         return {
-            "_meta": {"status": "ok", "requested_by": requested_by},
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "certainty_state_legend": {
+                    "exit": "卖出信号",
+                    "warn": "风险警示的危险状态",
+                    "ok": "态势正常的稳定状态",
+                },
+            },
             "date": req_key,
             "latest_trade_date": latest_trade_dt.isoformat(),
             "autopilot_enabled": autopilot_enabled,
@@ -9892,6 +17175,20 @@ class BootstrapApiService:
             pnl = (price - trade.buy_price) * trade.shares
             pnl_pct = (price - trade.buy_price) / max(trade.buy_price, 1e-9) * 100
             sell = engine.check_sell_signal_v2(trade, target_date)
+            peak_return_pct = float(engine._peak_return_pct(trade) or 0.0)
+            hold_days = int(trade.hold_days or 0)
+            try:
+                if str(trade.buy_date or "").strip():
+                    hold_days = int(engine._count_trading_days(date.fromisoformat(trade.buy_date), target_date))
+            except Exception:
+                hold_days = int(trade.hold_days or 0)
+            market_exit_state = str(getattr(trade, "market_exit_state", "") or "")
+            sector_exit_state = str(getattr(trade, "sector_exit_state", "") or "")
+            process_stage = "holding"
+            if sell is not None:
+                process_stage = "exit_signal"
+            elif market_exit_state or sector_exit_state:
+                process_stage = "exit_watch"
             trade_payload = self._lowfreq_trade_to_payload(trade)
             positions[code] = trade_payload
             open_positions.append(
@@ -9903,14 +17200,29 @@ class BootstrapApiService:
                     "buy_date": trade.buy_date,
                     "buy_price": trade.buy_price,
                     "shares": trade.shares,
+                    "hold_days": hold_days,
                     "current_price": round(price, 3),
                     "market_value": round(mv, 2),
                     "unrealized_pnl": round(pnl, 2),
                     "unrealized_pnl_pct": round(pnl_pct, 2),
                     "buy_score": trade.buy_score,
+                    "wave_phase": str(trade.wave_phase or ""),
+                    "buy_progress_label": str(getattr(trade, "buy_progress_label", "") or ""),
+                    "peak_return_pct": round(peak_return_pct, 2),
                     "partial_taken": bool(trade.partial_taken),
+                    "process_stage": process_stage,
                     "sell_signal": bool(sell is not None),
                     "sell_reason": (sell.details if sell else None),
+                    "market_exit_state": market_exit_state,
+                    "market_exit_hits": int(getattr(trade, "market_exit_hits", 0) or 0),
+                    "market_exit_last_reason": str(getattr(trade, "market_exit_last_reason", "") or ""),
+                    "sector_exit_state": sector_exit_state,
+                    "sector_exit_hits": int(getattr(trade, "sector_exit_hits", 0) or 0),
+                    "sector_exit_last_reason": str(getattr(trade, "sector_exit_last_reason", "") or ""),
+                    "system_exit_grace_used": bool(getattr(trade, "system_exit_grace_used", False)),
+                    "system_exit_grace_scope": str(getattr(trade, "system_exit_grace_scope", "") or ""),
+                    "system_exit_grace_date": str(getattr(trade, "system_exit_grace_date", "") or ""),
+                    "system_exit_grace_reason": str(getattr(trade, "system_exit_grace_reason", "") or ""),
                 }
             )
 
@@ -9926,6 +17238,7 @@ class BootstrapApiService:
                 buy_amount = float(trade.buy_price) * float(shares)
                 sell_amount = float(trade.sell_price) * float(shares)
                 realized_pnl = (float(trade.sell_price) - float(trade.buy_price)) * float(shares)
+                peak_return_pct = float(engine._peak_return_pct(trade) or 0.0)
                 realized_pnl_total += realized_pnl
                 closed_trades_payload.append(
                     {
@@ -9942,9 +17255,19 @@ class BootstrapApiService:
                         "shares": shares,
                         "hold_days": int(trade.hold_days or 0),
                         "return_pct": float(trade.return_pct),
+                        "wave_phase": str(trade.wave_phase or ""),
+                        "buy_progress_label": str(getattr(trade, "buy_progress_label", "") or ""),
+                        "peak_return_pct": round(peak_return_pct, 2),
                         "realized_pnl": round(realized_pnl, 2),
                         "sell_reason": str(trade.sell_reason or ""),
                         "status": str(trade.status or ""),
+                        "process_stage": "closed",
+                        "market_exit_state": str(getattr(trade, "market_exit_state", "") or ""),
+                        "sector_exit_state": str(getattr(trade, "sector_exit_state", "") or ""),
+                        "system_exit_grace_used": bool(getattr(trade, "system_exit_grace_used", False)),
+                        "system_exit_grace_scope": str(getattr(trade, "system_exit_grace_scope", "") or ""),
+                        "system_exit_grace_date": str(getattr(trade, "system_exit_grace_date", "") or ""),
+                        "system_exit_grace_reason": str(getattr(trade, "system_exit_grace_reason", "") or ""),
                     }
                 )
         closed_trades_payload.sort(key=lambda x: (str(x.get("sell_date") or ""), str(x.get("buy_date") or "")), reverse=True)
@@ -9996,53 +17319,100 @@ class BootstrapApiService:
                 details={"mode": mode, "supported": ["ths_concept", "team_theme", "industry"]},
             )
 
+        cache_key = (
+            "lowfreq_hot_sectors",
+            str(target_dt.isoformat()),
+            str(mode),
+            "1" if include_portfolio else "0",
+            "1" if include_sell_signal else "0",
+        )
+        use_cached_payload = (
+            not debug_perf
+            and mode == "ths_concept"
+            and not include_portfolio
+            and not include_sell_signal
+        )
+        inflight: Optional[threading.Event] = None
+        should_build = True
+        if use_cached_payload:
+            with self._cache_lock:
+                cached_payload = self._cache_get(cache_key)
+                if cached_payload is not None:
+                    return cached_payload
+                inflight = self._lowfreq_hot_sectors_inflight.get(cache_key)
+                should_build = inflight is None
+                if inflight is None:
+                    inflight = threading.Event()
+                    self._lowfreq_hot_sectors_inflight[cache_key] = inflight
+
         engine = self._lowfreq_engine_v16()
         perf: Optional[dict[str, float]] = {} if debug_perf else None
         t0 = time.perf_counter()
-        if mode == "ths_concept":
-            payload = self._build_ths_concepts_hot_snapshot(
-                engine=engine,
-                target_date=target_dt,
-                include_portfolio=include_portfolio,
-                include_sell_signal=include_sell_signal,
-                perf=perf,
-            )
-        elif mode == "team_theme":
-            payload = self._build_team_themes_hot_snapshot(
-                engine=engine,
-                target_date=target_dt,
-                include_portfolio=include_portfolio,
-                include_sell_signal=include_sell_signal,
-                perf=perf,
-            )
-        else:
-            state = self._load_lowfreq_sim_state()
-            payload = self._build_lowfreq_hot_sectors_snapshot(
-                engine=engine,
-                state=state,
-                target_date=target_dt,
-                include_portfolio=include_portfolio,
-                include_sell_signal=include_sell_signal,
-                perf=perf,
-            )
-            if include_portfolio or include_sell_signal:
-                t1 = time.perf_counter()
-                self._save_lowfreq_sim_state(state)
-                if perf is not None:
-                    perf["state_io_ms"] = round((time.perf_counter() - t1) * 1000.0, 3)
+        if use_cached_payload and not should_build:
+            assert inflight is not None
+            inflight.wait()
+            with self._cache_lock:
+                cached_payload = self._cache_get(cache_key)
+                if cached_payload is not None:
+                    return cached_payload
 
-        if perf is not None:
-            perf["total_ms"] = round((time.perf_counter() - t0) * 1000.0, 3)
-            meta = payload.get("_meta") if isinstance(payload, dict) else None
-            if not isinstance(meta, dict):
-                meta = {"status": "ok"}
-            meta = dict(meta)
-            meta["perf_ms"] = perf
-            meta["include_portfolio"] = bool(include_portfolio)
-            meta["include_sell_signal"] = bool(include_sell_signal)
-            meta["mode"] = mode
-            payload["_meta"] = meta
-        return payload
+        try:
+            if mode == "ths_concept":
+                payload = self._build_ths_concepts_hot_snapshot(
+                    engine=engine,
+                    target_date=target_dt,
+                    include_portfolio=include_portfolio,
+                    include_sell_signal=include_sell_signal,
+                    perf=perf,
+                )
+            elif mode == "team_theme":
+                payload = self._build_team_themes_hot_snapshot(
+                    engine=engine,
+                    target_date=target_dt,
+                    include_portfolio=include_portfolio,
+                    include_sell_signal=include_sell_signal,
+                    perf=perf,
+                )
+            else:
+                state = self._load_lowfreq_sim_state()
+                payload = self._build_lowfreq_hot_sectors_snapshot(
+                    engine=engine,
+                    state=state,
+                    target_date=target_dt,
+                    include_portfolio=include_portfolio,
+                    include_sell_signal=include_sell_signal,
+                    perf=perf,
+                )
+                if include_portfolio or include_sell_signal:
+                    t1 = time.perf_counter()
+                    self._save_lowfreq_sim_state(state)
+                    if perf is not None:
+                        perf["state_io_ms"] = round((time.perf_counter() - t1) * 1000.0, 3)
+            if perf is not None:
+                perf["total_ms"] = round((time.perf_counter() - t0) * 1000.0, 3)
+                meta = payload.get("_meta") if isinstance(payload, dict) else None
+                if not isinstance(meta, dict):
+                    meta = {"status": "ok"}
+                meta = dict(meta)
+                meta["perf_ms"] = perf
+                meta["include_portfolio"] = bool(include_portfolio)
+                meta["include_sell_signal"] = bool(include_sell_signal)
+                meta["mode"] = mode
+                payload["_meta"] = meta
+            if use_cached_payload:
+                with self._cache_lock:
+                    self._cache_set(
+                        cache_key,
+                        payload,
+                        self._cache_ttl_seconds["lowfreq_hot_sectors"],
+                    )
+            return payload
+        finally:
+            if use_cached_payload:
+                with self._cache_lock:
+                    current = self._lowfreq_hot_sectors_inflight.pop(cache_key, None)
+                    if current is not None:
+                        current.set()
 
     def _confidence_market_regime(self, *, target_date: date) -> str:
         return "unknown"
@@ -10568,6 +17938,368 @@ class BootstrapApiService:
             "CREATE INDEX IF NOT EXISTS idx_ths_concept_daily_code_date ON ths_concept_daily (concept_code, trade_date)"
         )
 
+    @staticmethod
+    def _ensure_financial_reports_tables(*, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS financial_reports (
+                code TEXT NOT NULL,
+                report_date TEXT NOT NULL,
+                ann_date TEXT,
+                pe_ttm REAL,
+                profit_growth_yoy REAL,
+                revenue_growth_yoy REAL,
+                roe REAL,
+                source TEXT,
+                metadata_json TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (code, report_date)
+            )
+            """
+        )
+        cols = {
+            str(r[1])
+            for r in conn.execute("PRAGMA table_info(financial_reports)").fetchall()
+            if r and len(r) > 1 and r[1] is not None
+        }
+        if "ann_date" not in cols:
+            conn.execute("ALTER TABLE financial_reports ADD COLUMN ann_date TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_financial_reports_date ON financial_reports (report_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_financial_reports_code_date ON financial_reports (code, report_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_financial_reports_ann_date ON financial_reports (ann_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_financial_reports_code_ann_date ON financial_reports (code, ann_date)"
+        )
+
+    @staticmethod
+    def _ensure_tushare_market_tables(*, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS announcements (
+                code TEXT NOT NULL,
+                ts_code TEXT NOT NULL,
+                stock_name TEXT,
+                title TEXT NOT NULL,
+                type TEXT,
+                publish_date TEXT NOT NULL,
+                url TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ts_code, publish_date, title)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_announcements_publish_date ON announcements (publish_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_announcements_code_date ON announcements (code, publish_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS policy_documents (
+                pubtime TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT,
+                pcode TEXT,
+                puborg TEXT,
+                ptype TEXT,
+                content_html TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (pubtime, title, pcode)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_policy_documents_pubtime ON policy_documents (pubtime)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_policy_documents_org_type ON policy_documents (puborg, ptype)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_reports (
+                trade_date TEXT NOT NULL,
+                ts_code TEXT,
+                name TEXT,
+                title TEXT NOT NULL,
+                report_type TEXT,
+                author TEXT,
+                inst_csname TEXT,
+                ind_name TEXT,
+                url TEXT,
+                abstr TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (trade_date, ts_code, title, inst_csname)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_reports_trade_date ON research_reports (trade_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_reports_code_date ON research_reports (ts_code, trade_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS report_consensus (
+                report_date TEXT NOT NULL,
+                ts_code TEXT NOT NULL,
+                name TEXT,
+                report_title TEXT NOT NULL,
+                report_type TEXT,
+                classify TEXT,
+                org_name TEXT,
+                author_name TEXT,
+                quarter TEXT NOT NULL,
+                op_rt REAL,
+                np REAL,
+                eps REAL,
+                pe REAL,
+                roe REAL,
+                rating TEXT,
+                imp_dg TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (report_date, ts_code, quarter, org_name, report_title)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_report_consensus_report_date ON report_consensus (report_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_report_consensus_code_date ON report_consensus (ts_code, report_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS institutional_surveys (
+                surv_date TEXT NOT NULL,
+                ts_code TEXT NOT NULL,
+                name TEXT,
+                fund_visitors TEXT,
+                rece_place TEXT,
+                rece_mode TEXT,
+                rece_org TEXT,
+                org_type TEXT,
+                comp_rece TEXT,
+                content TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (surv_date, ts_code, rece_org, fund_visitors)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_institutional_surveys_date ON institutional_surveys (surv_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_institutional_surveys_code_date ON institutional_surveys (ts_code, surv_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS etf_basic_info (
+                ts_code TEXT NOT NULL PRIMARY KEY,
+                csname TEXT,
+                extname TEXT,
+                index_code TEXT,
+                index_name TEXT,
+                list_date TEXT,
+                list_status TEXT,
+                exchange TEXT,
+                mgr_name TEXT,
+                etf_type TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etf_basic_info_index_code ON etf_basic_info (index_code)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS etf_daily_prices (
+                ts_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                pre_close REAL,
+                change REAL,
+                pct_chg REAL,
+                vol REAL,
+                amount REAL,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etf_daily_prices_date ON etf_daily_prices (trade_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS etf_share_size (
+                trade_date TEXT NOT NULL,
+                ts_code TEXT NOT NULL,
+                etf_name TEXT,
+                total_share REAL,
+                total_size REAL,
+                nav REAL,
+                close REAL,
+                exchange TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ts_code, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_etf_share_size_date ON etf_share_size (trade_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS etf_index_basic (
+                ts_code TEXT NOT NULL PRIMARY KEY,
+                indx_name TEXT,
+                indx_csname TEXT,
+                pub_party_name TEXT,
+                pub_date TEXT,
+                base_date TEXT,
+                bp REAL,
+                adj_circle TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS index_weights (
+                index_code TEXT NOT NULL,
+                con_code TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                weight REAL,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (index_code, con_code, trade_date)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_index_weights_trade_date ON index_weights (trade_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_basic_info (
+                ts_code TEXT NOT NULL PRIMARY KEY,
+                name TEXT,
+                management TEXT,
+                fund_type TEXT,
+                found_date TEXT,
+                list_date TEXT,
+                benchmark TEXT,
+                status TEXT,
+                market TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_portfolios (
+                ts_code TEXT NOT NULL,
+                ann_date TEXT NOT NULL,
+                end_date TEXT,
+                symbol TEXT NOT NULL,
+                mkv REAL,
+                amount REAL,
+                stk_mkv_ratio REAL,
+                stk_float_ratio REAL,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ts_code, ann_date, end_date, symbol)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fund_portfolios_symbol_date ON fund_portfolios (symbol, ann_date)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS index_announcements (
+                ann_date TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT,
+                source_name TEXT,
+                type TEXT,
+                source TEXT NOT NULL,
+                raw_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (ann_date, title, source_name)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_index_announcements_date ON index_announcements (ann_date)"
+        )
+
+    @staticmethod
+    def _normalize_stock_code(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        return raw.split(".", 1)[0].strip()
+
+    @staticmethod
+    def _ts_code_from_stock_code(code: str) -> Optional[str]:
+        c = BootstrapApiService._normalize_stock_code(code)
+        if len(c) != 6 or not c.isdigit():
+            return None
+        if c.startswith("6"):
+            return f"{c}.SH"
+        if c.startswith(("0", "3")):
+            return f"{c}.SZ"
+        return None
+
+    @staticmethod
+    def _quarter_end_iso_for_period(period_ymd: str) -> str:
+        raw = str(period_ymd or "").strip()
+        if len(raw) != 8 or not raw.isdigit():
+            raise ValueError("invalid period")
+        return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
+
+    @staticmethod
+    def _ts_ymd_to_iso(value: Any) -> Optional[str]:
+        raw = str(value or "").strip()
+        if len(raw) == 8 and raw.isdigit():
+            return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
+        return raw or None
+
     def _ensure_rsi_tables(self, *, conn: sqlite3.Connection) -> None:
         cursor = conn.cursor()
         cursor.execute(
@@ -10680,6 +18412,31 @@ class BootstrapApiService:
         concepts_cache_path = self._themes_snapshot_dir / "_tushare_concepts_cache.json"
         members_cache_path = self._themes_snapshot_dir / "_tushare_concept_members_cache.json"
 
+        def file_signature(path: Path) -> tuple[str, bool, int, int]:
+            try:
+                stat = path.stat()
+            except OSError:
+                return (str(path), False, 0, 0)
+            return (str(path), True, int(stat.st_mtime_ns), int(stat.st_size))
+
+        signature = (
+            file_signature(concepts_cache_path),
+            file_signature(members_cache_path),
+        )
+        with self._cache_lock:
+            if (
+                self._ths_concept_cache_signature == signature
+                and self._ths_concept_cache_value is not None
+            ):
+                cached_names, cached_members = self._ths_concept_cache_value
+                return (
+                    dict(cached_names),
+                    {
+                        str(concept_code): list(stocks)
+                        for concept_code, stocks in cached_members.items()
+                    },
+                )
+
         concept_name_by_code: dict[str, str] = {}
         concept_members: dict[str, list[str]] = {}
 
@@ -10735,6 +18492,15 @@ class BootstrapApiService:
                 if codes:
                     concept_members[str(concept_code)] = codes
 
+        with self._cache_lock:
+            self._ths_concept_cache_signature = signature
+            self._ths_concept_cache_value = (
+                dict(concept_name_by_code),
+                {
+                    str(concept_code): list(stocks)
+                    for concept_code, stocks in concept_members.items()
+                },
+            )
         return concept_name_by_code, concept_members
 
     def _recent_trading_dates_from_daily_prices(
@@ -11656,258 +19422,21 @@ class BootstrapApiService:
         end_date: date,
         initial_capital: float = 1_000_000.0,
     ) -> tuple[dict[str, Any], list[Any]]:
-        from lowfreq_engine_v16_advanced import TradeRecord
-
-        trading_dates = engine._get_trading_dates(start_date, end_date)
-        capital = float(initial_capital)
-        positions: dict[str, TradeRecord] = {}
-        all_trades: list[TradeRecord] = []
-        daily_values: list[dict[str, Any]] = []
-
-        pending_buy_attempts: dict[str, dict[str, Any]] = {}
-        pending_sell_signals: dict[str, dict[str, Any]] = {}
-
-        conn = None
-        try:
-            conn = engine._conn()
-            cursor = conn.cursor()
-            name_cache: dict[str, str] = {}
-            limit_cache: dict[str, float] = {}
-            pct_cache: dict[tuple[str, str], float] = {}
-
-            def _stock_name(code: str) -> str:
-                code = str(code or "").strip()
-                if code in name_cache:
-                    return name_cache[code]
-                try:
-                    cursor.execute("SELECT name FROM stocks WHERE code = ?", (code,))
-                    row = cursor.fetchone()
-                    name = str(row[0]) if row and row[0] else ""
-                except Exception:
-                    name = ""
-                name_cache[code] = name
-                return name
-
-            def _limit_pct(code: str) -> float:
-                code = str(code or "").strip()
-                if code in limit_cache:
-                    return limit_cache[code]
-                name = _stock_name(code)
-                if "ST" in name.upper():
-                    limit = 4.8
-                elif code.startswith("688") or code.startswith("300"):
-                    limit = 19.8
-                else:
-                    limit = 9.8
-                limit_cache[code] = float(limit)
-                return float(limit)
-
-            def _pct_change(code: str, d: date) -> Optional[float]:
-                key = (str(code or "").strip(), d.isoformat())
-                if key in pct_cache:
-                    return pct_cache[key]
-                try:
-                    cursor.execute(
-                        "SELECT pct_change FROM daily_prices WHERE code = ? AND trade_date = ?",
-                        (key[0], key[1]),
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0] is not None:
-                        val = float(row[0])
-                        pct_cache[key] = val
-                        return val
-                except Exception:
-                    return None
-                return None
-
-            def _is_limit_up(code: str, d: date) -> bool:
-                pct = _pct_change(code, d)
-                if pct is None:
-                    return False
-                return float(pct) >= float(_limit_pct(code))
-
-            def _is_limit_down(code: str, d: date) -> bool:
-                pct = _pct_change(code, d)
-                if pct is None:
-                    return False
-                return float(pct) <= -float(_limit_pct(code))
-
-            def _close_trade(*, code: str, trade: TradeRecord, d: date, sell_reason: str) -> None:
-                nonlocal capital
-                sell_price = engine._get_price(code, d)
-                if not sell_price:
-                    return
-                ret = (float(sell_price) - trade.buy_price) / max(trade.buy_price, 1e-9) * 100.0
-                capital += float(sell_price) * trade.shares
-                trade.sell_date = d.isoformat()
-                trade.sell_price = float(sell_price)
-                trade.return_pct = round(ret, 2)
-                trade.hold_days = engine._count_trading_days(date.fromisoformat(trade.buy_date), d)
-                trade.sell_reason = sell_reason
-                trade.status = "closed"
-                all_trades.append(trade)
-                positions.pop(code, None)
-
-            for i, current_date in enumerate(trading_dates):
-                # 1) 先处理待卖出（跌停卖不出则继续等待）
-                for code, payload in list(pending_sell_signals.items()):
-                    if code not in positions:
-                        pending_sell_signals.pop(code, None)
-                        continue
-                    if _is_limit_down(code, current_date):
-                        continue
-                    trade = positions.get(code)
-                    if trade is None:
-                        pending_sell_signals.pop(code, None)
-                        continue
-                    first_date = str(payload.get("first_date") or "")
-                    details = str(payload.get("details") or "离场信号")
-                    reason = f"{details}（跌停顺延，自{first_date}）" if first_date else f"{details}（跌停顺延）"
-                    _close_trade(code=code, trade=trade, d=current_date, sell_reason=reason)
-                    pending_sell_signals.pop(code, None)
-
-                # 2) 评估当日离场信号（若跌停则挂起到待卖出）
-                for code, trade in list(positions.items()):
-                    if code in pending_sell_signals:
-                        continue
-                    sell = engine.check_sell_signal_v2(trade, current_date)
-                    if not sell:
-                        continue
-                    if _is_limit_down(code, current_date):
-                        pending_sell_signals[code] = {
-                            "first_date": current_date.isoformat(),
-                            "details": str(sell.details or "离场信号"),
-                        }
-                        continue
-                    _close_trade(code=code, trade=trade, d=current_date, sell_reason=str(sell.details))
-
-                # 3) 处理待买入（涨停买不进则继续等待；最多尝试 3 个交易日）
-                for code, payload in list(pending_buy_attempts.items()):
-                    if code in positions:
-                        pending_buy_attempts.pop(code, None)
-                        continue
-                    slots = int(engine.MAX_POSITIONS) - len(positions)
-                    if slots <= 0:
-                        continue
-
-                    remaining = int(payload.get("remaining") or 0)
-                    if remaining <= 0:
-                        pending_buy_attempts.pop(code, None)
-                        continue
-                    if _is_limit_up(code, current_date):
-                        payload["remaining"] = remaining - 1
-                        if int(payload.get("remaining") or 0) <= 0:
-                            pending_buy_attempts.pop(code, None)
-                        continue
-
-                    sig = payload.get("sig") if isinstance(payload.get("sig"), dict) else {}
-                    price = engine._get_price(code, current_date)
-                    if not price or float(price) <= 0:
-                        payload["remaining"] = remaining - 1
-                        if int(payload.get("remaining") or 0) <= 0:
-                            pending_buy_attempts.pop(code, None)
-                        continue
-
-                    per_slot = capital / max(slots, 1)
-                    shares = int(per_slot / float(price) / 100) * 100
-                    if shares >= 100 and shares * float(price) <= capital:
-                        capital -= shares * float(price)
-                        positions[code] = TradeRecord(
-                            code=code,
-                            name=str(sig.get("name") or ""),
-                            sector=str(sig.get("sector") or ""),
-                            buy_date=current_date.isoformat(),
-                            buy_price=float(price),
-                            shares=shares,
-                            buy_score=float(sig.get("buy_score") or 0.0),
-                            wave_phase=str(sig.get("wave_phase") or ""),
-                            peak_price=float(price),
-                            role=str(sig.get("role") or ""),
-                            status="open",
-                        )
-                        pending_buy_attempts.pop(code, None)
-                    else:
-                        payload["remaining"] = remaining - 1
-                        if int(payload.get("remaining") or 0) <= 0:
-                            pending_buy_attempts.pop(code, None)
-
-                # 4) 调仓日生成买入信号（涨停则进入待买入队列）
-                if i % int(engine.REBALANCE_DAYS) == 0 and len(positions) < int(engine.MAX_POSITIONS):
-                    signals = engine.generate_buy_signals(current_date)
-                    for sig in signals.get("buy_signals", []):
-                        if not isinstance(sig, dict):
-                            continue
-                        code = str(sig.get("code") or "").strip()
-                        if not code or code in positions or code in pending_buy_attempts:
-                            continue
-                        slots = int(engine.MAX_POSITIONS) - len(positions)
-                        if slots <= 0:
-                            break
-                        if _is_limit_up(code, current_date):
-                            pending_buy_attempts[code] = {
-                                "sig": sig,
-                                "first_date": current_date.isoformat(),
-                                "remaining": 3,
-                            }
-                            continue
-                        price = engine._get_price(code, current_date)
-                        if not price or float(price) <= 0:
-                            continue
-                        per_slot = capital / max(slots, 1)
-                        shares = int(per_slot / float(price) / 100) * 100
-                        if shares >= 100 and shares * float(price) <= capital:
-                            capital -= shares * float(price)
-                            positions[code] = TradeRecord(
-                                code=code,
-                                name=str(sig.get("name") or ""),
-                                sector=str(sig.get("sector") or ""),
-                                buy_date=current_date.isoformat(),
-                                buy_price=float(price),
-                                shares=shares,
-                                buy_score=float(sig.get("buy_score") or 0.0),
-                                wave_phase=str(sig.get("wave_phase") or ""),
-                                peak_price=float(price),
-                                role=str(sig.get("role") or ""),
-                                status="open",
-                            )
-                pos_value = sum(
-                    (engine._get_price(code, current_date) or pos.buy_price) * pos.shares
-                    for code, pos in positions.items()
-                )
-                total = capital + float(pos_value)
-                daily_values.append(
-                    {
-                        "date": current_date.isoformat(),
-                        "total_value": round(total, 2),
-                        "positions": len(positions),
-                    }
-                )
-        finally:
-            try:
-                if conn is not None:
-                    conn.close()
-            except Exception:
-                pass
-
-        for code, trade in positions.items():
-            sell_price = engine._get_price(code, trading_dates[-1]) if trading_dates else None
-            if sell_price:
-                ret = (
-                    (float(sell_price) - trade.buy_price) / max(trade.buy_price, 1e-9) * 100
-                )
-                capital += float(sell_price) * trade.shares
-                trade.sell_date = (trading_dates[-1].isoformat() if trading_dates else end_date.isoformat())
-                trade.sell_price = float(sell_price)
-                trade.return_pct = round(ret, 2)
-                trade.hold_days = engine._count_trading_days(
-                    date.fromisoformat(trade.buy_date), (trading_dates[-1] if trading_dates else end_date)
-                )
-                trade.sell_reason = "回测结束平仓"
-                trade.status = "closed"
-                all_trades.append(trade)
-
-        metrics = engine._calc_metrics(daily_values, all_trades, float(initial_capital))
-        return metrics, all_trades
+        result = engine.run_backtest(
+            start_date,
+            end_date,
+            initial_capital=float(initial_capital),
+            include_trades=True,
+        )
+        metrics = dict(result) if isinstance(result, dict) else {}
+        trade_payloads = metrics.get("trades")
+        trades: list[Any] = []
+        if isinstance(trade_payloads, list):
+            for payload in trade_payloads:
+                if not isinstance(payload, dict):
+                    continue
+                trades.append(self._lowfreq_trade_from_payload(payload))
+        return metrics, trades
 
     def lowfreq_backtest_run_view(
         self,
@@ -12056,6 +19585,32 @@ class BootstrapApiService:
         if overrides:
             for k, v in overrides.items():
                 setattr(engine, str(k), v)
+            cm = overrides.get("cost_model") if isinstance(overrides, dict) else None
+            if isinstance(cm, dict):
+                if "commission_rate" in cm:
+                    setattr(engine, "COMMISSION_RATE", float(cm.get("commission_rate") or 0.0))
+                if "stamp_tax_rate" in cm:
+                    setattr(engine, "STAMP_TAX_RATE", float(cm.get("stamp_tax_rate") or 0.0))
+                if "slippage_bps" in cm:
+                    setattr(engine, "SLIPPAGE_BPS", float(cm.get("slippage_bps") or 0.0))
+                if "min_commission" in cm:
+                    setattr(engine, "MIN_COMMISSION", float(cm.get("min_commission") or 0.0))
+            ex = overrides.get("execution") if isinstance(overrides, dict) else None
+            if isinstance(ex, dict):
+                if "min_amount_cny" in ex:
+                    setattr(engine, "EXEC_MIN_AMOUNT_CNY", float(ex.get("min_amount_cny") or 0.0))
+                if "max_participation_rate" in ex:
+                    setattr(engine, "EXEC_MAX_PARTICIPATION_RATE", float(ex.get("max_participation_rate") or 1.0))
+                if "block_on_limit_up" in ex:
+                    setattr(engine, "EXEC_BLOCK_ON_LIMIT_UP", bool(ex.get("block_on_limit_up")))
+                if "block_on_limit_down" in ex:
+                    setattr(engine, "EXEC_BLOCK_ON_LIMIT_DOWN", bool(ex.get("block_on_limit_down")))
+                if "limit_up_pct" in ex:
+                    setattr(engine, "EXEC_LIMIT_UP_PCT", float(ex.get("limit_up_pct") or 9.8))
+                if "limit_down_pct" in ex:
+                    setattr(engine, "EXEC_LIMIT_DOWN_PCT", float(ex.get("limit_down_pct") or -9.8))
+                if "lot_size" in ex:
+                    setattr(engine, "EXEC_LOT_SIZE", int(ex.get("lot_size") or 100))
         metrics, trades = self._lowfreq_backtest_with_trades(
             engine=engine, start_date=start_dt, end_date=end_dt, initial_capital=1_000_000.0
         )
@@ -12112,6 +19667,92 @@ class BootstrapApiService:
         except Exception:
             next_candidates = []
 
+        exit_quality_payload: dict[str, Any] = {"lookahead_trading_days": 10, "count": 0}
+        try:
+            db_path = Path(
+                os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+            ).expanduser()
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.cursor()
+                per_trade: list[dict[str, Any]] = []
+                for t in trades:
+                    code = str(getattr(t, "code", "") or "").strip()
+                    sell_date = str(getattr(t, "sell_date", "") or "").strip()
+                    if not code or not sell_date:
+                        continue
+                    sell_ref = getattr(t, "sell_price_ref", None)
+                    if not isinstance(sell_ref, (int, float)) or float(sell_ref) <= 0:
+                        cursor.execute(
+                            "SELECT close FROM daily_prices WHERE code = ? AND trade_date = ?",
+                            (code, sell_date),
+                        )
+                        row = cursor.fetchone()
+                        sell_ref = float(row[0]) if row and row[0] is not None else None
+                    if not isinstance(sell_ref, (int, float)) or float(sell_ref) <= 0:
+                        continue
+                    cursor.execute(
+                        """
+                        SELECT trade_date FROM trading_calendar_cache
+                        WHERE trade_date > ?
+                        ORDER BY trade_date ASC
+                        LIMIT 10
+                        """,
+                        (sell_date,),
+                    )
+                    next_days = [str(r[0]) for r in (cursor.fetchall() or []) if r and r[0]]
+                    if not next_days:
+                        continue
+                    ph = ",".join("?" for _ in next_days)
+                    cursor.execute(
+                        f"SELECT MAX(close) FROM daily_prices WHERE code = ? AND trade_date IN ({ph})",
+                        tuple([code] + next_days),
+                    )
+                    row = cursor.fetchone()
+                    max_close = float(row[0]) if row and row[0] is not None else None
+                    if not isinstance(max_close, float) or max_close <= 0:
+                        continue
+                    runup = (max_close / float(sell_ref) - 1.0) * 100.0
+                    per_trade.append(
+                        {
+                            "code": code,
+                            "sell_date": sell_date,
+                            "sell_price_ref": float(sell_ref),
+                            "max_close_next_window": float(max_close),
+                            "post_exit_runup_pct": round(float(runup), 2),
+                            "sell_reason": str(getattr(t, "sell_reason", "") or ""),
+                        }
+                    )
+
+                runups = [float(x.get("post_exit_runup_pct") or 0.0) for x in per_trade]
+                runups.sort()
+
+                def pctl(p: float) -> float:
+                    if not runups:
+                        return 0.0
+                    idx = int(round((len(runups) - 1) * p))
+                    idx = max(0, min(len(runups) - 1, idx))
+                    return float(runups[idx])
+
+                exit_quality_payload = {
+                    "lookahead_trading_days": 10,
+                    "count": len(per_trade),
+                    "post_exit_runup_pct": {
+                        "p50": round(pctl(0.50), 2),
+                        "p75": round(pctl(0.75), 2),
+                        "p90": round(pctl(0.90), 2),
+                        "max": round(float(runups[-1]), 2) if runups else 0.0,
+                        "gt_10pct_rate": round(
+                            (sum(1 for x in runups if x >= 10.0) / len(runups) * 100.0) if runups else 0.0, 2
+                        ),
+                    },
+                    "per_trade": per_trade,
+                }
+            finally:
+                conn.close()
+        except Exception:
+            exit_quality_payload = {"error": "exit_quality_failed", "lookahead_trading_days": 10}
+
         json_payload = {
             "_meta": {
                 "status": "ok",
@@ -12121,6 +19762,11 @@ class BootstrapApiService:
                 "overrides": overrides or {},
             },
             "summary": metrics,
+            "net_summary": (metrics.get("net_metrics") if isinstance(metrics, dict) else {}),
+            "trade_blocks": (metrics.get("trade_blocks") if isinstance(metrics, dict) else {}),
+            "config_snapshot": (metrics.get("config_snapshot") if isinstance(metrics, dict) else {}),
+            "coverage_gaps": (metrics.get("coverage_gaps") if isinstance(metrics, dict) else {}),
+            "exit_quality": exit_quality_payload,
             "buy_dates": buy_dates_summary,
             "next_session": {
                 "next_trading_day": next_trading_day,
@@ -12181,16 +19827,43 @@ class BootstrapApiService:
             "json_url": f"/api/lowfreq/backtest/reports/{effective_report_id}.json",
         }
 
-    def lowfreq_backtest_status_view(self, *, report_id: str) -> dict[str, Any]:
-        report_id = str(report_id or "").strip()
-        if not report_id:
+    def _resolve_lowfreq_backtest_report_dir(self, *, report_id: str) -> tuple[str, Path]:
+        effective_report_id = str(report_id or "").strip()
+        if not effective_report_id:
             raise ApiError(
                 status_code=HTTPStatus.BAD_REQUEST,
                 code="invalid_report_id",
                 message="report_id is required",
             )
+        if (
+            effective_report_id in {".", ".."}
+            or "/" in effective_report_id
+            or "\\" in effective_report_id
+        ):
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_report_id",
+                message="report_id is invalid",
+                details={"report_id": effective_report_id},
+            )
 
-        report_dir = self._lowfreq_backtest_artifacts_dir / report_id
+        base_dir = self._lowfreq_backtest_artifacts_dir.resolve()
+        report_dir = (self._lowfreq_backtest_artifacts_dir / effective_report_id).resolve()
+        try:
+            report_dir.relative_to(base_dir)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_report_id",
+                message="report_id is invalid",
+                details={"report_id": effective_report_id},
+            ) from exc
+        return effective_report_id, report_dir
+
+    def lowfreq_backtest_status_view(self, *, report_id: str) -> dict[str, Any]:
+        report_id, report_dir = self._resolve_lowfreq_backtest_report_dir(
+            report_id=report_id
+        )
         if not report_dir.exists() or not report_dir.is_dir():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -12251,6 +19924,130 @@ class BootstrapApiService:
             encoding="utf-8",
         )
 
+    def _note_tushare_resource_ok(
+        self,
+        *,
+        resource: str,
+        provider: str = "tushare",
+        api_name: Optional[str] = None,
+        quality_gate_passed: Optional[bool] = None,
+        format_gate_passed: Optional[bool] = None,
+        fallback_used: Optional[bool] = None,
+    ) -> None:
+        status = self._read_tushare_status()
+        status["version"] = 1
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        resources = status.get("resources")
+        if not isinstance(resources, dict):
+            resources = {}
+            status["resources"] = resources
+        resource_key = str(resource or "").strip() or "unknown"
+        resource_status = resources.get(resource_key)
+        if not isinstance(resource_status, dict):
+            resource_status = {}
+            resources[resource_key] = resource_status
+        resource_status["provider"] = str(provider or "tushare")
+        resource_status["last_ok_at"] = now
+        if api_name is not None:
+            resource_status["last_api_name"] = str(api_name)
+        if quality_gate_passed is not None:
+            resource_status["last_quality_gate_passed"] = bool(quality_gate_passed)
+        if format_gate_passed is not None:
+            resource_status["last_format_gate_passed"] = bool(format_gate_passed)
+        if fallback_used is not None:
+            resource_status["last_fallback_used"] = bool(fallback_used)
+        status["last_tushare_ok_at"] = now
+        status["last_tushare_ok_api"] = str(api_name or resource_key)
+        self._write_tushare_status(status)
+
+    def _note_tushare_resource_failure(
+        self,
+        *,
+        resource: str,
+        reason: str,
+        provider: str = "tushare",
+        api_name: Optional[str] = None,
+        error_code: Any = None,
+        error_message: Optional[str] = None,
+        requested_by: Optional[str] = None,
+        fallback_attempted: Optional[bool] = None,
+        fallback_provider: Optional[str] = None,
+    ) -> None:
+        status = self._read_tushare_status()
+        status["version"] = 1
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        resources = status.get("resources")
+        if not isinstance(resources, dict):
+            resources = {}
+            status["resources"] = resources
+        resource_key = str(resource or "").strip() or "unknown"
+        resource_status = resources.get(resource_key)
+        if not isinstance(resource_status, dict):
+            resource_status = {}
+            resources[resource_key] = resource_status
+        resource_status["provider"] = str(provider or "tushare")
+        resource_status["last_failure_at"] = now
+        resource_status["last_failure_reason"] = str(reason or "unknown_error")
+        if api_name is not None:
+            resource_status["last_api_name"] = str(api_name)
+        if error_code is not None:
+            resource_status["last_error_code"] = error_code
+        if error_message:
+            resource_status["last_error_message"] = str(error_message)
+        if requested_by:
+            resource_status["last_requested_by"] = str(requested_by)
+        if fallback_attempted is not None:
+            resource_status["last_fallback_attempted"] = bool(fallback_attempted)
+        if fallback_provider is not None:
+            resource_status["last_fallback_provider"] = str(fallback_provider)
+        if isinstance(error_message, str) and "积分不足" in error_message:
+            status["last_credit_insufficient_at"] = now
+            status["last_credit_insufficient_api"] = str(api_name or resource_key)
+            status["last_credit_insufficient_code"] = error_code
+            status["last_credit_insufficient_msg"] = str(error_message)
+        self._write_tushare_status(status)
+
+    def _raise_authoritative_source_unavailable(
+        self,
+        *,
+        resource: str,
+        requested_by: str,
+        reason: str,
+        provider: str = "tushare",
+        api_name: Optional[str] = None,
+        error_code: Any = None,
+        error_message: Optional[str] = None,
+        fallback_attempted: Optional[bool] = None,
+        fallback_provider: Optional[str] = None,
+    ) -> None:
+        self._note_tushare_resource_failure(
+            resource=resource,
+            reason=reason,
+            provider=provider,
+            api_name=api_name,
+            error_code=error_code,
+            error_message=error_message,
+            requested_by=requested_by,
+            fallback_attempted=fallback_attempted,
+            fallback_provider=fallback_provider,
+        )
+        raise ApiError(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            code="authoritative_source_unavailable",
+            message=f"authoritative source unavailable for resource: {resource}",
+            details={
+                "resource": resource,
+                "provider": provider,
+                "reason": reason,
+                "requested_by": requested_by,
+                "api_name": api_name,
+                "last_error_code": error_code,
+                "last_error_message": error_message,
+                "fallback_attempted": fallback_attempted,
+                "fallback_provider": fallback_provider,
+            },
+        )
+
     def _note_tushare_ok(self, *, api_name: str) -> None:
         status = self._read_tushare_status()
         status["version"] = 1
@@ -12292,12 +20089,14 @@ class BootstrapApiService:
             "last_credit_insufficient_msg": status.get("last_credit_insufficient_msg"),
             "last_tushare_ok_at": status.get("last_tushare_ok_at"),
             "last_tushare_ok_api": status.get("last_tushare_ok_api"),
+            "resources": dict(status.get("resources") or {}),
         }
 
     def tushare_concept_health_view(self, *, requested_by: str = "api") -> dict[str, Any]:
         from neotrade3.data_sources.tushare_concept_adapter import TushareConceptAdapter
 
         self._load_env_file()
+        self._ensure_no_proxy(hosts=["api.tushare.pro", "api.waditu.com"])
         t0 = time.perf_counter()
         ts = TushareConceptAdapter()
         if not ts.configured:
@@ -12310,6 +20109,40 @@ class BootstrapApiService:
                 "checks": {"token_configured": False},
                 "errors": ["tushare_token_not_configured"],
             }
+
+        # #region debug-point A:tushare-concept-health-env
+        try:
+            import urllib.request as _urllib_request
+            import urllib.parse as _urllib_parse
+
+            raw_proxies = _urllib_request.getproxies() or {}
+            proxies: dict[str, str] = {}
+            for k, v in raw_proxies.items():
+                try:
+                    u = _urllib_parse.urlparse(str(v))
+                    host = str(u.hostname or "").strip()
+                    port = str(u.port or "").strip()
+                    if host and port:
+                        proxies[str(k)] = f"{host}:{port}"
+                    elif host:
+                        proxies[str(k)] = host
+                except Exception:
+                    continue
+        except Exception:
+            proxies = {}
+
+        self._dbg_emit(
+            run_id="pre-fix",
+            hypothesis_id="A",
+            location="apps/api/main.py:tushare_concept_health_view",
+            msg="[DEBUG] tushare concept health env",
+            data={
+                "requested_by": str(requested_by),
+                "no_proxy": str(os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""),
+                "system_proxies": proxies,
+            },
+        )
+        # #endregion
 
         concepts = ts.fetch_all_concepts()
         probe_concept_code = str(concepts[0].code).strip() if concepts else ""
@@ -12374,6 +20207,7 @@ class BootstrapApiService:
         )
 
         self._load_env_file()
+        self._ensure_no_proxy(hosts=["api.tushare.pro", "api.waditu.com"])
         self._themes_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
         defs = self._team_theme_defs()
@@ -12616,13 +20450,17 @@ class BootstrapApiService:
             TushareConceptAdapter,
         )
 
+        self._load_env_file()
+        self._ensure_no_proxy(hosts=["api.tushare.pro", "api.waditu.com"])
         ts = TushareConceptAdapter()
         if not ts.configured:
-            return {
-                "_meta": {"status": "ok"},
-                "status": "skipped",
-                "reason": "tushare_token_not_configured",
-            }
+            self._raise_authoritative_source_unavailable(
+                resource="concept_theme_cache",
+                requested_by=requested_by,
+                reason="tushare_token_not_configured",
+                provider="tushare",
+                api_name="ths_index",
+            )
 
         self._themes_snapshot_dir.mkdir(parents=True, exist_ok=True)
         concepts_cache_path = self._themes_snapshot_dir / "_tushare_concepts_cache.json"
@@ -12680,6 +20518,15 @@ class BootstrapApiService:
                 and (time.time() - last_attempt_ts) < cooldown_seconds
                 and cached_token_fingerprint == ts.token_fingerprint
             ):
+                if not concepts:
+                    self._raise_authoritative_source_unavailable(
+                        resource="concept_theme_cache",
+                        requested_by=requested_by,
+                        reason="concept_list_cooldown",
+                        provider="tushare",
+                        api_name=str(ts.last_api_name or "ths_index"),
+                        error_message=last_error,
+                    )
                 return {
                     "_meta": {"status": "ok"},
                     "status": "skipped",
@@ -12803,6 +20650,12 @@ class BootstrapApiService:
         except OSError:
             pass
 
+        self._note_tushare_resource_ok(
+            resource="concept_theme_cache",
+            provider="tushare",
+            api_name=str(ts.last_api_name or "ths_member"),
+            fallback_used=False,
+        )
         return {
             "_meta": {"status": "ok"},
             "status": "ok",
@@ -12969,17 +20822,14 @@ class BootstrapApiService:
                 pass
 
         concept_name_by_code, concept_members = self._load_ths_concept_caches()
-        try:
-            self.ths_concept_mainline_compute_view(
-                trade_date=target_date.isoformat(), requested_by="api", top_n=10
-            )
-        except Exception:
-            pass
+        t_mainline = time.perf_counter()
         mainline = self.ths_concept_mainline_view(
             trade_date=target_date.isoformat(),
             limit=10,
             requested_by="api",
         )
+        if perf is not None:
+            perf["mainline_view_ms"] = (time.perf_counter() - t_mainline) * 1000.0
         concepts_rows = mainline.get("concepts") if isinstance(mainline, dict) else None
         concepts_rows = concepts_rows if isinstance(concepts_rows, list) else []
 
@@ -13004,15 +20854,19 @@ class BootstrapApiService:
                 if code:
                     union_codes.add(code)
 
+        t_metrics = time.perf_counter()
         metrics_map = self._load_stock_metrics_for_codes(
             codes=sorted(union_codes),
             target_date=target_date.isoformat(),
             amount_window_len=20,
             return_offsets=(5, 20),
         )
+        if perf is not None:
+            perf["stock_metrics_ms"] = (time.perf_counter() - t_metrics) * 1000.0
 
         market_phase_payload: Optional[dict[str, Any]] = None
         market_upwave_ok = False
+        t_market_phase = time.perf_counter()
         try:
             from neotrade3.analysis.market_phase import detect_market_phase, MarketPhase
 
@@ -13033,6 +20887,8 @@ class BootstrapApiService:
         except Exception:
             market_phase_payload = None
             market_upwave_ok = False
+        if perf is not None:
+            perf["market_phase_ms"] = (time.perf_counter() - t_market_phase) * 1000.0
 
         def _rank01(values_by_code: dict[str, float]) -> dict[str, float]:
             items = [(k, float(v)) for k, v in values_by_code.items() if k and isinstance(v, (int, float))]
@@ -13055,6 +20911,7 @@ class BootstrapApiService:
                 return float(vals[mid])
             return float((vals[mid - 1] + vals[mid]) / 2.0)
 
+        t_state = time.perf_counter()
         state = self._load_lowfreq_sim_state()
         positions = state.get("positions") if isinstance(state.get("positions"), dict) else {}
         manual_intents = state.get("manual_intents") if isinstance(state.get("manual_intents"), list) else []
@@ -13086,8 +20943,28 @@ class BootstrapApiService:
                 except Exception:
                     pass
 
+        model_buy_codes: set[str] = set()
+        try:
+            model_signals = engine.generate_buy_signals(target_date)
+            raw_model = model_signals.get("buy_signals", []) if isinstance(model_signals, dict) else []
+            for s in raw_model:
+                if not isinstance(s, dict):
+                    continue
+                c = str(s.get("code") or "").strip()
+                if c:
+                    model_buy_codes.add(c)
+        except Exception:
+            model_buy_codes = set()
+        if perf is not None:
+            perf["state_and_model_ms"] = (time.perf_counter() - t_state) * 1000.0
+
+        market_cap_min = float(getattr(engine, "MARKET_CAP_MIN", 20_000_000_000.0) or 20_000_000_000.0)
+        market_cap_max = float(getattr(engine, "MARKET_CAP_MAX", 50_000_000_000.0) or 50_000_000_000.0)
+        sector_exclusion_audit: list[dict[str, Any]] = []
+
         assigned_codes: set[str] = set()
         sectors: list[dict[str, Any]] = []
+        t_assembly = time.perf_counter()
         for row in concepts_rows:
             if not isinstance(row, dict):
                 continue
@@ -13129,8 +21006,73 @@ class BootstrapApiService:
             cap_rank = _rank01(cap_by_code)
 
             positive_ret5 = [code for code, v in ret5_by_code.items() if isinstance(v, (int, float)) and float(v) > 0]
-            diffusion = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
-            cap_median = _median(list(cap_by_code.values()))
+            diffusion_all = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
+            cap_median_all = _median(list(cap_by_code.values()))
+
+            leader_potential_all: list[tuple[str, float]] = []
+            core_potential_all: list[tuple[str, float]] = []
+            for code in ret5_by_code.keys():
+                lp = float(0.45 * money_rank.get(code, 0.0) + 0.35 * ret5_rank.get(code, 0.0) + 0.20 * ret20_rank.get(code, 0.0))
+                cp = float(0.35 * cap_rank.get(code, 0.0) + 0.35 * money_rank.get(code, 0.0) + 0.30 * ret20_rank.get(code, 0.0))
+                leader_potential_all.append((code, lp))
+                core_potential_all.append((code, cp))
+            leader_potential_all.sort(key=lambda x: x[1], reverse=True)
+            core_potential_all.sort(key=lambda x: x[1], reverse=True)
+
+            raw_leader = next((c for c, _ in leader_potential_all if c), None)
+            raw_core = next((c for c, _ in core_potential_all if c and c != raw_leader), None)
+            raw_leader_cap = float(cap_by_code.get(str(raw_leader)) or 0.0) if raw_leader else 0.0
+            raw_core_cap = float(cap_by_code.get(str(raw_core)) or 0.0) if raw_core else 0.0
+            if raw_leader and raw_core and raw_leader_cap > market_cap_max and raw_core_cap > market_cap_max:
+                sector_exclusion_audit.append(
+                    {
+                        "sector": concept_name,
+                        "reason": "leader_and_core_are_big_cap",
+                        "big_cap_threshold_yuan": float(market_cap_max),
+                        "evidence": {
+                            "leader": {"code": raw_leader, "cap_yuan": raw_leader_cap},
+                            "core": {"code": raw_core, "cap_yuan": raw_core_cap},
+                        },
+                    }
+                )
+                continue
+
+            in_scope_codes = {
+                code
+                for code, cap in cap_by_code.items()
+                if code
+                and isinstance(cap, (int, float))
+                and float(cap) >= float(market_cap_min)
+                and float(cap) <= float(market_cap_max)
+            }
+            if len(in_scope_codes) < 3:
+                sector_exclusion_audit.append(
+                    {
+                        "sector": concept_name,
+                        "reason": "insufficient_in_scope_members",
+                        "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
+                        "evidence": {
+                            "member_count": len(member_codes),
+                            "metrics_count": len(member_metrics),
+                            "in_scope_count": len(in_scope_codes),
+                        },
+                    }
+                )
+                continue
+
+            money_ratio_by_code = {k: v for k, v in money_ratio_by_code.items() if k in in_scope_codes}
+            ret5_by_code = {k: v for k, v in ret5_by_code.items() if k in in_scope_codes}
+            ret20_by_code = {k: v for k, v in ret20_by_code.items() if k in in_scope_codes}
+            cap_by_code = {k: v for k, v in cap_by_code.items() if k in in_scope_codes}
+
+            money_rank = _rank01(money_ratio_by_code)
+            ret5_rank = _rank01(ret5_by_code)
+            ret20_rank = _rank01(ret20_by_code)
+            cap_rank = _rank01(cap_by_code)
+
+            positive_ret5 = [code for code, v in ret5_by_code.items() if isinstance(v, (int, float)) and float(v) > 0]
+            diffusion_all = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
+            cap_median_all = _median(list(cap_by_code.values()))
 
             leader_potential: list[tuple[str, float]] = []
             core_potential: list[tuple[str, float]] = []
@@ -13153,7 +21095,7 @@ class BootstrapApiService:
             for c, _ in core_potential:
                 if not c or c in assigned_codes or c in leader_codes:
                     continue
-                if cap_median > 0 and float(cap_by_code.get(c) or 0.0) < cap_median:
+                if cap_median_all > 0 and float(cap_by_code.get(c) or 0.0) < cap_median_all:
                     continue
                 core_codes.append(c)
                 if len(core_codes) >= 5:
@@ -13178,12 +21120,15 @@ class BootstrapApiService:
             top3_ratio = sorted([float(money_ratio_by_code.get(c) or 0.0) for c in leader_codes + core_codes], reverse=True)[:3]
             avg_top3_ret5 = float(sum(top3_ret5) / float(max(1, len(top3_ret5))))
             avg_top3_ratio = float(sum(top3_ratio) / float(max(1, len(top3_ratio))))
-            concept_upwave_ok = bool(diffusion >= 0.6 and avg_top3_ret5 >= 2.0 and avg_top3_ratio >= 1.1)
+            concept_upwave_ok = bool(diffusion_all >= 0.6 and avg_top3_ret5 >= 2.0 and avg_top3_ratio >= 1.1)
             concept_upwave_payload = {
                 "status": ("upwave" if concept_upwave_ok else "not_upwave"),
-                "diffusion": float(round(diffusion, 4)),
+                "diffusion": float(round(diffusion_all, 4)),
+                "diffusion_all": float(round(diffusion_all, 4)),
                 "avg_top3_return_5d": float(round(avg_top3_ret5, 4)),
                 "avg_top3_money_ratio": float(round(avg_top3_ratio, 4)),
+                "in_scope_member_count": int(len(in_scope_codes)),
+                "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
             }
 
             def build_stock_payload(code: str, role_label: str) -> dict[str, Any]:
@@ -13201,6 +21146,12 @@ class BootstrapApiService:
                 if not isinstance(mcap, (int, float)) or float(mcap) <= 0:
                     mcap = m.get("total_market_cap") if isinstance(m, dict) else None
                 mcap_f = float(mcap) if isinstance(mcap, (int, float)) else None
+                in_scope = bool(
+                    (mcap_f is not None)
+                    and float(mcap_f) >= float(market_cap_min)
+                    and float(mcap_f) <= float(market_cap_max)
+                )
+                out_of_scope = not in_scope
 
                 sell_signal = False
                 sell_reason = None
@@ -13211,6 +21162,10 @@ class BootstrapApiService:
                     if sell:
                         sell_signal = True
                         sell_reason = sell.details
+
+                if out_of_scope and code in positions:
+                    sell_signal = True
+                    sell_reason = "超出市值范围（>500亿或<200亿），不在模型考核范围"
 
                 sector_name = concept_name
                 cooldown_info = cooldown_cache.get(sector_name)
@@ -13228,7 +21183,7 @@ class BootstrapApiService:
                         cooldown_hits = int(cooldown_info.get("hits") or 0)
                     except Exception:
                         cooldown_hits = 0
-                risk_level = "exit" if (sell_signal or cooldown_confirmed) else "warn" if cooldown_hits > 0 else "ok"
+                risk_level = "exit" if (sell_signal or cooldown_confirmed or out_of_scope) else "warn" if cooldown_hits > 0 else "ok"
                 risk_reason: Optional[str] = None
                 if sell_signal:
                     risk_reason = str(sell_reason or "个股卖出信号")
@@ -13236,18 +21191,21 @@ class BootstrapApiService:
                     risk_reason = "冷却确认成立"
                 elif cooldown_hits > 0:
                     risk_reason = "当日命中但未确认"
+                elif out_of_scope:
+                    risk_reason = "超出市值范围（>500亿或<200亿），不在模型考核范围"
 
                 stock_upwave_ok = bool(ret20 > 0 and ret5 > 0 and money_ratio >= 1.05)
                 buy_signal = False
-                if isinstance(buy_score, (int, float)):
-                    buy_signal = bool(
-                        float(buy_score) >= float(engine.BUY_THRESHOLD)
-                        and role_label in {"龙头", "中军"}
-                        and float(resonance) >= float(engine.MIN_RESONANCE)
-                        and market_upwave_ok
-                        and concept_upwave_ok
-                        and stock_upwave_ok
-                    )
+                if out_of_scope:
+                    buy_signal = False
+                elif code in pending_buy_by_code:
+                    buy_signal = True
+                elif (
+                    code in model_buy_codes
+                    and code not in positions
+                    and code not in abandoned_codes
+                ):
+                    buy_signal = True
 
                 confidence_prob = None
                 confidence_samples = 0
@@ -13261,6 +21219,9 @@ class BootstrapApiService:
                     bucket = calibration_map.get(bucket_key)
                     confidence_prob = float(bucket.get("confidence_prob")) if isinstance(bucket, dict) else None
                     confidence_samples = int(bucket.get("n")) if isinstance(bucket, dict) else 0
+
+                certainty_prob = confidence_prob
+                certainty_samples = confidence_samples
 
                 return {
                     "code": code,
@@ -13281,6 +21242,8 @@ class BootstrapApiService:
                     "risk_reason": risk_reason,
                     "confidence_prob": confidence_prob,
                     "confidence_samples": confidence_samples,
+                    "certainty_prob": certainty_prob,
+                    "certainty_samples": certainty_samples,
                     "suggested_entry": "今日" if buy_signal else None,
                     "role_scores": {
                         "money_ratio": float(round(money_ratio, 4)),
@@ -13342,6 +21305,7 @@ class BootstrapApiService:
                         "member_count": row.get("member_count"),
                         "valid_count": row.get("valid_count"),
                         "stale_days": None,
+                        "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
                     },
                 }
             )
@@ -13353,6 +21317,12 @@ class BootstrapApiService:
                 "status": "ok",
                 "mode": "ths_concept",
                 "market_phase": market_phase_payload,
+                "certainty_state_legend": {
+                    "exit": "卖出信号",
+                    "warn": "风险警示的危险状态",
+                    "ok": "态势正常的稳定状态",
+                },
+                "sector_exclusion_audit": sector_exclusion_audit[: min(20, len(sector_exclusion_audit))],
                 "concepts_source": concepts_source,
                 "concept_count": len(concepts_rows),
                 "members_warmed": warmed,
@@ -13372,6 +21342,8 @@ class BootstrapApiService:
                 target_date=target_date,
             )
             self._save_lowfreq_sim_state(state2)
+        if perf is not None:
+            perf["theme_assembly_ms"] = (time.perf_counter() - t_assembly) * 1000.0
         return base
 
     def _build_team_themes_hot_snapshot(
@@ -13447,6 +21419,23 @@ class BootstrapApiService:
                 except Exception:
                     pass
 
+        model_buy_codes: set[str] = set()
+        try:
+            model_signals = engine.generate_buy_signals(target_date)
+            raw_model = (
+                model_signals.get("buy_signals", [])
+                if isinstance(model_signals, dict)
+                else []
+            )
+            for s in raw_model:
+                if not isinstance(s, dict):
+                    continue
+                c = str(s.get("code") or "").strip()
+                if c:
+                    model_buy_codes.add(c)
+        except Exception:
+            model_buy_codes = set()
+
         candidate_by_code: dict[str, Any] = {}
         for c in candidates:
             code = str(getattr(c, "code", "") or "").strip()
@@ -13505,6 +21494,10 @@ class BootstrapApiService:
                 out[k] = float(i) / float(n - 1)
             return out
 
+        market_cap_min = float(getattr(engine, "MARKET_CAP_MIN", 20_000_000_000.0) or 20_000_000_000.0)
+        market_cap_max = float(getattr(engine, "MARKET_CAP_MAX", 50_000_000_000.0) or 50_000_000_000.0)
+        sector_exclusion_audit: list[dict[str, Any]] = []
+
         sectors: list[dict[str, Any]] = []
         for t in themes:
             if not isinstance(t, dict):
@@ -13547,7 +21540,7 @@ class BootstrapApiService:
             cap_rank = _rank01(cap_by_code)
 
             positive_ret5 = [code for code, v in ret5_by_code.items() if isinstance(v, (int, float)) and float(v) > 0]
-            diffusion = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
+            diffusion_all = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
 
             def _median(values: list[float]) -> float:
                 vals = sorted([float(v) for v in values if isinstance(v, (int, float))])
@@ -13559,6 +21552,71 @@ class BootstrapApiService:
                     return float(vals[mid])
                 return float((vals[mid - 1] + vals[mid]) / 2.0)
 
+            cap_median_all = _median(list(cap_by_code.values()))
+
+            leader_potential_all: list[tuple[str, float]] = []
+            core_potential_all: list[tuple[str, float]] = []
+            for code in ret5_by_code.keys():
+                lp = float(0.45 * money_rank.get(code, 0.0) + 0.35 * ret5_rank.get(code, 0.0) + 0.20 * ret20_rank.get(code, 0.0))
+                cp = float(0.35 * cap_rank.get(code, 0.0) + 0.35 * money_rank.get(code, 0.0) + 0.30 * ret20_rank.get(code, 0.0))
+                leader_potential_all.append((code, lp))
+                core_potential_all.append((code, cp))
+            leader_potential_all.sort(key=lambda x: x[1], reverse=True)
+            core_potential_all.sort(key=lambda x: x[1], reverse=True)
+
+            raw_leader = next((c for c, _ in leader_potential_all if c), None)
+            raw_core = next((c for c, _ in core_potential_all if c and c != raw_leader), None)
+            raw_leader_cap = float(cap_by_code.get(str(raw_leader)) or 0.0) if raw_leader else 0.0
+            raw_core_cap = float(cap_by_code.get(str(raw_core)) or 0.0) if raw_core else 0.0
+            if raw_leader and raw_core and raw_leader_cap > market_cap_max and raw_core_cap > market_cap_max:
+                sector_exclusion_audit.append(
+                    {
+                        "sector": theme_name,
+                        "reason": "leader_and_core_are_big_cap",
+                        "big_cap_threshold_yuan": float(market_cap_max),
+                        "evidence": {
+                            "leader": {"code": raw_leader, "cap_yuan": raw_leader_cap},
+                            "core": {"code": raw_core, "cap_yuan": raw_core_cap},
+                        },
+                    }
+                )
+                continue
+
+            in_scope_codes = {
+                code
+                for code, cap in cap_by_code.items()
+                if code
+                and isinstance(cap, (int, float))
+                and float(cap) >= float(market_cap_min)
+                and float(cap) <= float(market_cap_max)
+            }
+            if len(in_scope_codes) < 3:
+                sector_exclusion_audit.append(
+                    {
+                        "sector": theme_name,
+                        "reason": "insufficient_in_scope_members",
+                        "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
+                        "evidence": {
+                            "member_count": len(member_codes),
+                            "metrics_count": len(member_metrics),
+                            "in_scope_count": len(in_scope_codes),
+                        },
+                    }
+                )
+                continue
+
+            money_ratio_by_code = {k: v for k, v in money_ratio_by_code.items() if k in in_scope_codes}
+            ret5_by_code = {k: v for k, v in ret5_by_code.items() if k in in_scope_codes}
+            ret20_by_code = {k: v for k, v in ret20_by_code.items() if k in in_scope_codes}
+            cap_by_code = {k: v for k, v in cap_by_code.items() if k in in_scope_codes}
+
+            money_rank = _rank01(money_ratio_by_code)
+            ret5_rank = _rank01(ret5_by_code)
+            ret20_rank = _rank01(ret20_by_code)
+            cap_rank = _rank01(cap_by_code)
+
+            positive_ret5 = [code for code, v in ret5_by_code.items() if isinstance(v, (int, float)) and float(v) > 0]
+            diffusion = float(len(positive_ret5)) / float(max(1, len(ret5_by_code)))
             cap_median = _median(list(cap_by_code.values()))
 
             leader_potential: list[tuple[str, float]] = []
@@ -13606,8 +21664,11 @@ class BootstrapApiService:
             concept_upwave_payload = {
                 "status": ("upwave" if concept_upwave_ok else "not_upwave"),
                 "diffusion": float(round(diffusion, 4)),
+                "diffusion_all": float(round(diffusion_all, 4)),
                 "avg_top3_return_5d": float(round(avg_top3_ret5, 4)),
                 "avg_top3_money_ratio": float(round(avg_top3_ratio, 4)),
+                "in_scope_member_count": int(len(in_scope_codes)),
+                "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
             }
 
             def build_stock_payload(code: str, role_label: str) -> dict[str, Any]:
@@ -13625,6 +21686,12 @@ class BootstrapApiService:
                 if not isinstance(mcap, (int, float)) or float(mcap) <= 0:
                     mcap = m.get("total_market_cap") if isinstance(m, dict) else None
                 mcap_f = float(mcap) if isinstance(mcap, (int, float)) else None
+                in_scope = bool(
+                    (mcap_f is not None)
+                    and float(mcap_f) >= float(market_cap_min)
+                    and float(mcap_f) <= float(market_cap_max)
+                )
+                out_of_scope = not in_scope
 
                 sell_signal = False
                 sell_reason = None
@@ -13635,6 +21702,10 @@ class BootstrapApiService:
                     if sell:
                         sell_signal = True
                         sell_reason = sell.details
+
+                if out_of_scope and code in positions:
+                    sell_signal = True
+                    sell_reason = "超出市值范围（>500亿或<200亿），不在模型考核范围"
 
                 sector_name = theme_name
                 cooldown_info = cooldown_cache.get(sector_name)
@@ -13652,7 +21723,7 @@ class BootstrapApiService:
                         cooldown_hits = int(cooldown_info.get("hits") or 0)
                     except Exception:
                         cooldown_hits = 0
-                risk_level = "exit" if (sell_signal or cooldown_confirmed) else "warn" if cooldown_hits > 0 else "ok"
+                risk_level = "exit" if (sell_signal or cooldown_confirmed or out_of_scope) else "warn" if cooldown_hits > 0 else "ok"
                 risk_reason: Optional[str] = None
                 if sell_signal:
                     risk_reason = str(sell_reason or "个股卖出信号")
@@ -13660,18 +21731,21 @@ class BootstrapApiService:
                     risk_reason = "冷却确认成立"
                 elif cooldown_hits > 0:
                     risk_reason = "当日命中但未确认"
+                elif out_of_scope:
+                    risk_reason = "超出市值范围（>500亿或<200亿），不在模型考核范围"
 
                 stock_upwave_ok = bool(ret20 > 0 and ret5 > 0 and money_ratio >= 1.05)
                 buy_signal = False
-                if isinstance(buy_score, (int, float)):
-                    buy_signal = bool(
-                        float(buy_score) >= float(engine.BUY_THRESHOLD)
-                        and role_label in {"龙头", "中军"}
-                        and float(resonance) >= float(engine.MIN_RESONANCE)
-                        and market_upwave_ok
-                        and concept_upwave_ok
-                        and stock_upwave_ok
-                    )
+                if out_of_scope:
+                    buy_signal = False
+                elif code in pending_buy_by_code:
+                    buy_signal = True
+                elif (
+                    code in model_buy_codes
+                    and code not in positions
+                    and code not in abandoned_codes
+                ):
+                    buy_signal = True
 
                 confidence_prob = None
                 confidence_samples = 0
@@ -13685,6 +21759,9 @@ class BootstrapApiService:
                     bucket = calibration_map.get(bucket_key)
                     confidence_prob = float(bucket.get("confidence_prob")) if isinstance(bucket, dict) else None
                     confidence_samples = int(bucket.get("n")) if isinstance(bucket, dict) else 0
+
+                certainty_prob = confidence_prob
+                certainty_samples = confidence_samples
 
                 return {
                     "code": code,
@@ -13705,6 +21782,8 @@ class BootstrapApiService:
                     "risk_reason": risk_reason,
                     "confidence_prob": confidence_prob,
                     "confidence_samples": confidence_samples,
+                    "certainty_prob": certainty_prob,
+                    "certainty_samples": certainty_samples,
                     "suggested_entry": "今日" if buy_signal else None,
                     "role_scores": {
                         "money_ratio": float(round(money_ratio, 4)),
@@ -13766,6 +21845,7 @@ class BootstrapApiService:
                         "stale_days": stale_days,
                         "member_count": len(member_set),
                         "diffusion": float(round(diffusion, 4)),
+                        "market_cap_range_yuan": [float(market_cap_min), float(market_cap_max)],
                     },
                 }
             )
@@ -13779,6 +21859,12 @@ class BootstrapApiService:
                 "stale_days": stale_days,
                 "snapshot_date": str(snapshot.get("target_date") or ""),
                 "market_phase": market_phase_payload,
+                "certainty_state_legend": {
+                    "exit": "卖出信号",
+                    "warn": "风险警示的危险状态",
+                    "ok": "态势正常的稳定状态",
+                },
+                "sector_exclusion_audit": sector_exclusion_audit[: min(20, len(sector_exclusion_audit))],
             },
             "date": target_date.isoformat(),
             "sectors": sectors,
@@ -13966,6 +22052,440 @@ class BootstrapApiService:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return str(path)
 
+    def _write_trade_closeout_ledger(self, *, closeout_date: str, payload: dict[str, Any]) -> str:
+        self._trade_closeout_dir.mkdir(parents=True, exist_ok=True)
+        path = self._trade_closeout_dir / f"{closeout_date}.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return str(path)
+
+    def _write_trade_execution_rt_ledger(self, *, target_date: str, payload: dict[str, Any]) -> str:
+        self._trade_execution_rt_dir.mkdir(parents=True, exist_ok=True)
+        path = self._trade_execution_rt_dir / f"{target_date}.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return str(path)
+
+    def _send_ops_alert(
+        self,
+        *,
+        title: str,
+        payload: dict[str, Any],
+        severity: str = "error",
+        timeout_seconds: int = 8,
+    ) -> dict[str, Any]:
+        url = str(os.environ.get("NEOTRADE3_ALERT_WEBHOOK_URL") or "").strip()
+        if not url:
+            return {"status": "skipped", "reason": "alert_webhook_not_configured"}
+        doc = {
+            "title": str(title or "").strip(),
+            "severity": str(severity or "").strip() or "error",
+            "ts_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "payload": payload or {},
+        }
+        body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=int(timeout_seconds)) as resp:
+                raw = resp.read()
+            text = raw.decode("utf-8", errors="replace")
+            return {"status": "ok", "http_status": int(getattr(resp, "status", 200)), "response": text[:2000]}
+        except Exception as exc:
+            return {"status": "failed", "error_type": type(exc).__name__, "error": str(exc)}
+
+    def trade_closeout_yesterday_run_view(self, *, target_date: str, requested_by: str) -> dict[str, Any]:
+        started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        target_date = str(target_date or "").strip()
+        prev_date = self._lowfreq_previous_trading_day(before_date=target_date)
+        if not prev_date:
+            return {
+                "_meta": {"status": "skipped"},
+                "target_date": target_date,
+                "reason": "previous_trading_day_unavailable",
+            }
+
+        state = self._load_lowfreq_sim_state()
+        manual = state.get("manual") if isinstance(state.get("manual"), dict) else {"intents": []}
+        intents = manual.get("intents") if isinstance(manual.get("intents"), list) else []
+
+        closeout_date = str(prev_date)
+        next_date: Optional[str] = None
+        try:
+            next_date = self._lowfreq_next_trading_day(closeout_date)
+        except Exception:
+            next_date = None
+
+        overdue_updated: list[dict[str, Any]] = []
+        executed_items: list[dict[str, Any]] = []
+        inconsistencies: list[dict[str, Any]] = []
+
+        for it in intents:
+            if not isinstance(it, dict):
+                continue
+            it_type = str(it.get("intent_type") or "")
+            status = str(it.get("status") or "pending")
+            if it_type in {"buy_intent", "sell_intent"} and status == "pending":
+                if str(it.get("execute_date") or "").strip() == closeout_date:
+                    it["attempt_count"] = int(it.get("attempt_count") or 0) + 1
+                    it["last_attempt_date"] = closeout_date
+                    it["last_attempt_reason"] = str(it.get("last_attempt_reason") or "overdue_unexecuted")
+                    if next_date:
+                        it["execute_date"] = str(next_date)
+                    overdue_updated.append(
+                        {
+                            "intent_id": it.get("intent_id"),
+                            "intent_type": it_type,
+                            "code": it.get("code"),
+                            "from_execute_date": closeout_date,
+                            "to_execute_date": it.get("execute_date"),
+                            "attempt_count": it.get("attempt_count"),
+                            "last_attempt_reason": it.get("last_attempt_reason"),
+                        }
+                    )
+                continue
+
+            if it_type in {"buy_intent", "sell_intent"} and status == "executed":
+                if str(it.get("executed_date") or "").strip() != closeout_date:
+                    continue
+                missing = []
+                if not it.get("executed_at"):
+                    missing.append("executed_at")
+                if it.get("executed_price") is None:
+                    missing.append("executed_price")
+                if it.get("executed_shares") is None:
+                    missing.append("executed_shares")
+                if missing:
+                    inconsistencies.append(
+                        {
+                            "intent_id": it.get("intent_id"),
+                            "intent_type": it_type,
+                            "code": it.get("code"),
+                            "missing_fields": missing,
+                        }
+                    )
+                executed_items.append(
+                    {
+                        "intent_id": it.get("intent_id"),
+                        "intent_type": it_type,
+                        "code": it.get("code"),
+                        "name": it.get("name"),
+                        "executed_at": it.get("executed_at"),
+                        "executed_price": it.get("executed_price"),
+                        "executed_shares": it.get("executed_shares"),
+                    }
+                )
+
+        if inconsistencies:
+            _ = self._send_ops_alert(
+                title="trade_closeout_inconsistency",
+                payload={
+                    "requested_by": requested_by,
+                    "closeout_date": closeout_date,
+                    "count": len(inconsistencies),
+                    "items": inconsistencies[:20],
+                },
+                severity="error",
+            )
+
+        state["manual"] = {"intents": intents}
+        self._save_lowfreq_sim_state(state)
+
+        finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ledger = {
+            "version": 1,
+            "requested_by": requested_by,
+            "target_date": target_date,
+            "closeout_date": closeout_date,
+            "next_trading_day": next_date,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "overdue_shifted": overdue_updated,
+            "executed_items": executed_items,
+            "inconsistencies": inconsistencies,
+            "summary": {
+                "overdue_shifted_count": len(overdue_updated),
+                "executed_count": len(executed_items),
+                "inconsistency_count": len(inconsistencies),
+            },
+        }
+        path = self._write_trade_closeout_ledger(closeout_date=closeout_date, payload=ledger)
+        return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
+
+    def trade_execution_rt_run_view(
+        self,
+        *,
+        target_date: str,
+        requested_by: str,
+        timeout_seconds: int = 10,
+    ) -> dict[str, Any]:
+        started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        target_date = str(target_date or "").strip()
+
+        try:
+            td = self.trading_day_view(target_date=target_date)
+            is_trading_day = bool(td.get("is_trading_day"))
+        except Exception as exc:
+            is_trading_day = False
+            td = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
+
+        if str(td.get("status") or "") == "error":
+            ledger = {
+                "version": 1,
+                "requested_by": requested_by,
+                "target_date": target_date,
+                "started_at": started_at,
+                "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "trading_day_check": td,
+                "summary": {"status": "failed_trading_day_check"},
+            }
+            path = self._write_trade_execution_rt_ledger(target_date=target_date, payload=ledger)
+            _ = self._send_ops_alert(
+                title="trade_execution_rt_trading_day_check_failed",
+                payload={"target_date": target_date, "requested_by": requested_by, "trading_day_check": td},
+                severity="error",
+            )
+            return {"_meta": {"status": "failed"}, "ledger_path": path, "ledger": ledger}
+
+        if not is_trading_day:
+            ledger = {
+                "version": 1,
+                "requested_by": requested_by,
+                "target_date": target_date,
+                "started_at": started_at,
+                "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "trading_day_check": td,
+                "summary": {"status": "skipped_non_trading_day"},
+            }
+            path = self._write_trade_execution_rt_ledger(target_date=target_date, payload=ledger)
+            return {"_meta": {"status": "skipped"}, "ledger_path": path, "ledger": ledger}
+
+        engine = self._lowfreq_engine_v16()
+        state = self._load_lowfreq_sim_state()
+        positions: dict[str, dict[str, Any]] = state.get("positions", {})
+        cash = float(state.get("cash") or 0.0)
+        closed_trades: list[dict[str, Any]] = state.get("closed_trades", [])
+        manual = state.get("manual") if isinstance(state.get("manual"), dict) else {"intents": []}
+        intents = manual.get("intents") if isinstance(manual.get("intents"), list) else []
+
+        executed_key = target_date
+        exec_dt = date.fromisoformat(target_date)
+        next_date: Optional[str]
+        try:
+            next_date = self._lowfreq_next_trading_day(executed_key)
+        except Exception:
+            next_date = None
+
+        pending: list[dict[str, Any]] = []
+        for it in intents:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("status") or "pending") != "pending":
+                continue
+            if str(it.get("intent_type") or "") not in {"buy_intent", "sell_intent"}:
+                continue
+            if str(it.get("execute_date") or "").strip() != executed_key:
+                continue
+            pending.append(it)
+
+        def _created_at_key(it: dict[str, Any]) -> str:
+            v = it.get("created_at")
+            return str(v) if v is not None else ""
+
+        pending.sort(key=_created_at_key)
+
+        executed_buy = 0
+        executed_sell = 0
+        postponed = 0
+        failed = 0
+        processed: list[dict[str, Any]] = []
+
+        for it in pending:
+            code = str(it.get("code") or "").strip()
+            it_type = str(it.get("intent_type") or "")
+            if not code:
+                it["status"] = "cancelled"
+                it["cancel_reason"] = "invalid_code"
+                it["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+                failed += 1
+                processed.append({"intent_id": it.get("intent_id"), "status": "cancelled", "reason": "invalid_code"})
+                continue
+
+            px, px_meta = self._lowfreq_get_rt_exec_price(
+                code=code, execute_date=exec_dt, timeout_seconds=int(timeout_seconds)
+            )
+            if not px or float(px) <= 0:
+                it["attempt_count"] = int(it.get("attempt_count") or 0) + 1
+                it["last_attempt_date"] = executed_key
+                it["last_attempt_reason"] = str(px_meta.get("reason") or "no_price")
+                if next_date:
+                    it["execute_date"] = str(next_date)
+                postponed += 1
+                processed.append(
+                    {
+                        "intent_id": it.get("intent_id"),
+                        "intent_type": it_type,
+                        "code": code,
+                        "status": "postponed",
+                        "to_execute_date": it.get("execute_date"),
+                        "price_meta": px_meta,
+                    }
+                )
+                continue
+
+            if it_type == "buy_intent":
+                if code in positions and isinstance(positions.get(code), dict):
+                    it["status"] = "cancelled"
+                    it["cancel_reason"] = "already_holding"
+                    it["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+                    failed += 1
+                    processed.append(
+                        {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "cancelled", "reason": "already_holding"}
+                    )
+                    continue
+
+                slots = int(engine.MAX_POSITIONS) - len(positions)
+                if slots <= 0:
+                    it["attempt_count"] = int(it.get("attempt_count") or 0) + 1
+                    it["last_attempt_date"] = executed_key
+                    it["last_attempt_reason"] = "no_slots"
+                    if next_date:
+                        it["execute_date"] = str(next_date)
+                    postponed += 1
+                    processed.append(
+                        {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "postponed", "reason": "no_slots"}
+                    )
+                    continue
+
+                per_slot = cash / max(slots, 1)
+                shares = int(per_slot / float(px) / 100) * 100
+                if shares < 100 or shares * float(px) > cash:
+                    it["attempt_count"] = int(it.get("attempt_count") or 0) + 1
+                    it["last_attempt_date"] = executed_key
+                    it["last_attempt_reason"] = "no_cash"
+                    if next_date:
+                        it["execute_date"] = str(next_date)
+                    postponed += 1
+                    processed.append(
+                        {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "postponed", "reason": "no_cash"}
+                    )
+                    continue
+
+                cash -= shares * float(px)
+                positions[code] = {
+                    "code": code,
+                    "name": str(it.get("name") or ""),
+                    "sector": str(it.get("sector") or ""),
+                    "buy_date": executed_key,
+                    "buy_price": float(px),
+                    "shares": int(shares),
+                    "shares_sold": 0,
+                    "buy_score": float(it.get("buy_score") or 0.0),
+                    "wave_phase": str(it.get("wave_phase") or ""),
+                    "peak_price": float(px),
+                    "partial_taken": False,
+                    "sell_reason": "",
+                    "status": "open",
+                    "role": str(it.get("role") or ""),
+                }
+                it["status"] = "executed"
+                it["executed_date"] = executed_key
+                it["executed_price"] = float(px)
+                it["executed_shares"] = int(shares)
+                it["executed_at"] = datetime.now(timezone.utc).isoformat()
+                executed_buy += 1
+                processed.append(
+                    {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "executed", "price": float(px), "shares": int(shares), "price_meta": px_meta}
+                )
+                continue
+
+            if code not in positions or not isinstance(positions.get(code), dict):
+                it["status"] = "failed"
+                it["error"] = "position_missing"
+                it["failed_at"] = datetime.now(timezone.utc).isoformat()
+                failed += 1
+                processed.append(
+                    {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "failed", "reason": "position_missing"}
+                )
+                _ = self._send_ops_alert(
+                    title="trade_execution_rt_position_missing",
+                    payload={"target_date": executed_key, "code": code, "intent_id": it.get("intent_id"), "requested_by": requested_by},
+                    severity="error",
+                )
+                continue
+
+            trade = self._lowfreq_trade_from_payload(positions[code])
+            ratio = float(it.get("partial_ratio") or 1.0)
+            ratio = 0.5 if ratio < 1.0 else 1.0
+            shares_to_sell = int(trade.shares // 2) if ratio < 1.0 else int(trade.shares)
+            if shares_to_sell <= 0:
+                it["status"] = "failed"
+                it["error"] = "no_shares"
+                it["failed_at"] = datetime.now(timezone.utc).isoformat()
+                failed += 1
+                processed.append(
+                    {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "failed", "reason": "no_shares"}
+                )
+                continue
+
+            cash += float(px) * float(shares_to_sell)
+            ret = (float(px) - trade.buy_price) / max(trade.buy_price, 1e-9) * 100.0
+            closed = self._lowfreq_trade_from_payload(self._lowfreq_trade_to_payload(trade))
+            closed.sell_date = executed_key
+            closed.sell_price = float(px)
+            closed.shares = shares_to_sell
+            closed.return_pct = round(ret, 2)
+            closed.hold_days = engine._count_trading_days(date.fromisoformat(trade.buy_date), exec_dt)
+            closed.sell_reason = str(it.get("sell_reason") or "")
+            closed.status = "closed"
+            closed_trades.append(self._lowfreq_trade_to_payload(closed))
+
+            if ratio < 1.0:
+                trade.shares -= shares_to_sell
+                trade.shares_sold += shares_to_sell
+                trade.partial_taken = True
+                positions[code] = self._lowfreq_trade_to_payload(trade)
+            else:
+                positions.pop(code, None)
+
+            it["status"] = "executed"
+            it["executed_date"] = executed_key
+            it["executed_price"] = float(px)
+            it["executed_shares"] = int(shares_to_sell)
+            it["executed_at"] = datetime.now(timezone.utc).isoformat()
+            executed_sell += 1
+            processed.append(
+                {"intent_id": it.get("intent_id"), "intent_type": it_type, "code": code, "status": "executed", "price": float(px), "shares": int(shares_to_sell), "price_meta": px_meta}
+            )
+
+        state["cash"] = round(cash, 2)
+        state["positions"] = positions
+        state["closed_trades"] = closed_trades
+        state["manual"] = {"intents": intents}
+        self._save_lowfreq_sim_state(state)
+
+        finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ledger = {
+            "version": 1,
+            "requested_by": requested_by,
+            "target_date": target_date,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "trading_day_check": td,
+            "processed": processed,
+            "summary": {
+                "pending_count": len(pending),
+                "executed_buy": executed_buy,
+                "executed_sell": executed_sell,
+                "postponed": postponed,
+                "failed": failed,
+            },
+        }
+        path = self._write_trade_execution_rt_ledger(target_date=target_date, payload=ledger)
+        return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
+
     def daily_pipeline_run_view(self, *, target_date: str, requested_by: str) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         steps: list[dict[str, Any]] = []
@@ -13976,6 +22496,21 @@ class BootstrapApiService:
             "started_at": started_at,
             "steps": steps,
         }
+
+        # #region debug-point B:daily-pipeline-start
+        self._dbg_emit(
+            run_id="pre-fix",
+            hypothesis_id="B",
+            location="apps/api/main.py:daily_pipeline_run_view",
+            msg="[DEBUG] daily_pipeline start",
+            data={
+                "target_date": str(target_date),
+                "requested_by": str(requested_by),
+                "started_at": str(started_at),
+            },
+            trace_id=f"dp-{target_date}-{started_at}",
+        )
+        # #endregion
 
         def add_step(
             step_id: str,
@@ -13995,74 +22530,262 @@ class BootstrapApiService:
                 }
             )
 
+        trading_day_check: dict[str, Any] = {}
+        t_td = time.perf_counter()
+        try:
+            td = self.trading_day_view(target_date=target_date)
+            trading_day_check = td if isinstance(td, dict) else {"status": "error", "reason": "invalid_payload"}
+            add_step(
+                "trading_day_check",
+                "ok",
+                outputs={
+                    "is_trading_day": trading_day_check.get("is_trading_day"),
+                    "source": trading_day_check.get("source"),
+                    "date": trading_day_check.get("date"),
+                },
+                elapsed_ms=(time.perf_counter() - t_td) * 1000.0,
+            )
+        except Exception as exc:
+            trading_day_check = {"status": "error", "error_type": type(exc).__name__, "error": str(exc)}
+            add_step(
+                "trading_day_check",
+                "failed",
+                outputs={"error_type": type(exc).__name__},
+                error=str(exc),
+                elapsed_ms=(time.perf_counter() - t_td) * 1000.0,
+            )
+
+        if str(trading_day_check.get("status") or "") == "error":
+            ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ledger["trade_date"] = None
+            ledger["summary"] = {"status": "failed_trading_day_check"}
+            path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
+            _ = self._send_ops_alert(
+                title="daily_pipeline_trading_day_check_failed",
+                payload={"target_date": target_date, "requested_by": requested_by, "trading_day_check": trading_day_check},
+                severity="error",
+            )
+            return {"_meta": {"status": "failed"}, "ledger_path": path, "ledger": ledger}
+
+        if trading_day_check.get("is_trading_day") is False:
+            ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ledger["trade_date"] = None
+            ledger["summary"] = {"status": "skipped_non_trading_day"}
+            path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
+            return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
+
+        try:
+            today_cn = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        except Exception:
+            today_cn = None
+
+        if today_cn is None or str(target_date) != str(today_cn):
+            add_step(
+                "yesterday_closeout",
+                "ok",
+                outputs={"status": "skipped", "reason": "non_today_target_date", "today_cn": today_cn},
+            )
+        else:
+            t_cl = time.perf_counter()
+            try:
+                closeout = self.trade_closeout_yesterday_run_view(
+                    target_date=target_date,
+                    requested_by=f"{requested_by}.trade_closeout",
+                )
+                add_step(
+                    "yesterday_closeout",
+                    "ok" if str((closeout.get("_meta") or {}).get("status") or "") in {"ok", "skipped"} else "failed",
+                    outputs={
+                        "status": (closeout.get("_meta") or {}).get("status"),
+                        "ledger_path": closeout.get("ledger_path"),
+                        "closeout_date": (closeout.get("ledger") or {}).get("closeout_date"),
+                        "summary": (closeout.get("ledger") or {}).get("summary"),
+                    },
+                    elapsed_ms=(time.perf_counter() - t_cl) * 1000.0,
+                )
+            except Exception as exc:
+                add_step(
+                    "yesterday_closeout",
+                    "failed",
+                    outputs={"error_type": type(exc).__name__},
+                    error=str(exc),
+                    elapsed_ms=(time.perf_counter() - t_cl) * 1000.0,
+                )
+                _ = self._send_ops_alert(
+                    title="trade_closeout_failed",
+                    payload={"target_date": target_date, "requested_by": requested_by, "error": str(exc)},
+                    severity="error",
+                )
+
         trade_date: Optional[str] = None
         calendar_is_trading_day = False
         publish_ok = False
         t0 = time.perf_counter()
-        try:
-            out = self.update_daily_prices_tencent_view(
-                target_date=target_date,
-                requested_by=requested_by,
-                dry_run=False,
-            )
-            tencent_update = out.get("tencent_update") or {}
-            trade_date = tencent_update.get("trade_date")
-            calendar_is_trading_day = bool(tencent_update.get("calendar_is_trading_day"))
-            publish_ok = bool((tencent_update.get("quality_gate") or {}).get("passed"))
+        update_attempts: list[dict[str, Any]] = []
+        last_error: Optional[str] = None
+        last_daily_prices_update: dict[str, Any] = {}
+        last_daily_prices_provider = "tushare"
+        last_fallback_used = False
+        out: dict[str, Any] = {}
+        for attempt in range(1, 4):
+            t_try = time.perf_counter()
+            try:
+                out = self.update_daily_prices_authoritative_view(
+                    target_date=target_date,
+                    requested_by=requested_by,
+                    dry_run=False,
+                )
+                last_fallback_used = bool(out.get("fallback_used"))
+                last_daily_prices_provider = "tencent" if last_fallback_used else "tushare"
+                provider_update = (
+                    ((out.get("fallback_update") or {}).get("tencent_update") or {})
+                    if last_fallback_used
+                    else ((out.get("authoritative_update") or {}).get("tushare_update") or {})
+                )
+                last_daily_prices_update = provider_update if isinstance(provider_update, dict) else {}
+                trade_date = last_daily_prices_update.get("trade_date")
+                calendar_is_trading_day = bool(last_daily_prices_update.get("calendar_is_trading_day"))
+                publish_ok = bool(out.get("status") == "ok")
+                update_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "status": "ok",
+                        "elapsed_ms": (time.perf_counter() - t_try) * 1000.0,
+                        "publish_ok": bool(publish_ok),
+                        "trade_date": trade_date,
+                        "provider": last_daily_prices_provider,
+                        "fallback_used": bool(last_fallback_used),
+                    }
+                )
+                if publish_ok:
+                    break
+                last_error = "blocked_by_quality_gate"
+            except ApiError as exc:
+                last_error = exc.message
+                update_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "status": "failed",
+                        "elapsed_ms": (time.perf_counter() - t_try) * 1000.0,
+                        "error_code": exc.code,
+                        "error": exc.message,
+                    }
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                update_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "status": "failed",
+                        "elapsed_ms": (time.perf_counter() - t_try) * 1000.0,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+            if attempt < 3:
+                time.sleep(300)
+
+        if publish_ok:
             add_step(
-                "tencent_update",
+                "authoritative_update",
                 "ok",
                 outputs={
                     "trade_date": trade_date,
                     "calendar_is_trading_day": calendar_is_trading_day,
                     "publish_ok": publish_ok,
-                    "capture_batch_id": tencent_update.get("capture_batch_id"),
-                    "publish_batch_id": tencent_update.get("publish_batch_id"),
+                    "provider": last_daily_prices_provider,
+                    "fallback_used": bool(last_fallback_used),
+                    "retry_window_used": bool(out.get("retry_window_used")),
+                    "retry_attempts": int(out.get("retry_attempts") or 0),
+                    "retry_deadline": out.get("retry_deadline"),
+                    "primary_final_reason": out.get("primary_final_reason"),
+                    "capture_batch_id": last_daily_prices_update.get("capture_batch_id"),
+                    "publish_batch_id": last_daily_prices_update.get("publish_batch_id"),
+                    "attempts": update_attempts,
                 },
                 elapsed_ms=(time.perf_counter() - t0) * 1000.0,
             )
-        except ApiError as exc:
+        else:
             add_step(
-                "tencent_update",
+                "authoritative_update",
                 "failed",
-                outputs={"error_code": exc.code, "error_details": exc.details},
-                error=exc.message,
+                outputs={
+                    "trade_date": trade_date,
+                    "calendar_is_trading_day": calendar_is_trading_day,
+                    "publish_ok": publish_ok,
+                    "provider": last_daily_prices_provider,
+                    "fallback_used": bool(last_fallback_used),
+                    "retry_window_used": bool(out.get("retry_window_used")),
+                    "retry_attempts": int(out.get("retry_attempts") or 0),
+                    "retry_deadline": out.get("retry_deadline"),
+                    "primary_final_reason": out.get("primary_final_reason"),
+                    "capture_batch_id": last_daily_prices_update.get("capture_batch_id"),
+                    "publish_batch_id": last_daily_prices_update.get("publish_batch_id"),
+                    "attempts": update_attempts,
+                },
+                error=str(last_error or "authoritative_update_failed"),
                 elapsed_ms=(time.perf_counter() - t0) * 1000.0,
             )
-        except Exception as exc:
-            add_step(
-                "tencent_update",
-                "failed",
-                outputs={"error_type": type(exc).__name__},
-                error=str(exc),
-                elapsed_ms=(time.perf_counter() - t0) * 1000.0,
+            _ = self._send_ops_alert(
+                title="authoritative_daily_prices_update_failed",
+                payload={
+                    "target_date": target_date,
+                    "requested_by": requested_by,
+                    "attempts": update_attempts,
+                    "last_error": last_error,
+                },
+                severity="error",
             )
+
+        db_path = Path(
+            os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
+        ).expanduser()
+        calendar_db_is_trading_day = False
+        target_rows = 0
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(1) FROM daily_prices WHERE trade_date = ?",
+                    (str(target_date),),
+                ).fetchone()
+                target_rows = int(row[0] or 0) if row else 0
+            finally:
+                conn.close()
+        except Exception:
+            target_rows = 0
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                calendar_table = None
+                for table_name in ("trading_calendar_cache", "trading_calendar"):
+                    try:
+                        _ = conn.execute(
+                            f"SELECT 1 FROM {table_name} WHERE trade_date = ? LIMIT 1",
+                            (str(target_date),),
+                        ).fetchone()
+                    except sqlite3.Error:
+                        continue
+                    calendar_table = table_name
+                    calendar_db_is_trading_day = bool(_)
+                    break
+                _ = calendar_table
+            finally:
+                conn.close()
+        except Exception:
+            calendar_db_is_trading_day = False
 
         end_date: Optional[str] = None
         if trade_date and calendar_is_trading_day and publish_ok:
             if str(trade_date) == str(target_date):
                 end_date = str(target_date)
             else:
-                db_path = Path(
-                    os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
-                ).expanduser()
-                try:
-                    conn = sqlite3.connect(str(db_path))
-                    try:
-                        row = conn.execute(
-                            "SELECT COUNT(1) FROM daily_prices WHERE trade_date = ?",
-                            (str(target_date),),
-                        ).fetchone()
-                        target_rows = int(row[0] or 0) if row else 0
-                    finally:
-                        conn.close()
-                except Exception:
-                    target_rows = 0
                 if target_rows > 0:
                     end_date = str(target_date)
                 else:
                     add_step(
-                        "tencent_update",
+                        "authoritative_update",
                         "failed",
                         outputs={
                             "trade_date": trade_date,
@@ -14073,6 +22796,72 @@ class BootstrapApiService:
                     )
 
         if not end_date:
+            is_trading_day = bool(calendar_is_trading_day or calendar_db_is_trading_day)
+            should_backfill = bool(is_trading_day and target_rows <= 0 and self._is_market_closed_cn(target_trade_date=str(target_date)))
+            if should_backfill:
+                t_fb = time.perf_counter()
+                try:
+                    fb = self.backfill_daily_prices_tushare_range_view(
+                        start_date=str(target_date),
+                        end_date=str(target_date),
+                        requested_by=f"{requested_by}.fallback_tushare",
+                        dry_run=False,
+                    )
+                    fb_ok = (
+                        isinstance(fb, dict)
+                        and str(fb.get("status") or "") == "ok"
+                        and int(fb.get("ok_days") or 0) == 1
+                        and int(fb.get("failed_days") or 0) == 0
+                        and int(fb.get("skipped_days") or 0) == 0
+                    )
+                    add_step(
+                        "tushare_backfill",
+                        "ok" if fb_ok else "failed",
+                        outputs={
+                            "target_date": str(target_date),
+                            "trading_day": bool(is_trading_day),
+                            "db_rows_before": int(target_rows),
+                            "backfill": {
+                                "status": fb.get("status") if isinstance(fb, dict) else None,
+                                "ok_days": fb.get("ok_days") if isinstance(fb, dict) else None,
+                                "failed_days": fb.get("failed_days") if isinstance(fb, dict) else None,
+                                "skipped_days": fb.get("skipped_days") if isinstance(fb, dict) else None,
+                                "rows_upserted_total": fb.get("rows_upserted_total") if isinstance(fb, dict) else None,
+                                "results_sample": fb.get("results_sample") if isinstance(fb, dict) else None,
+                            },
+                        },
+                        elapsed_ms=(time.perf_counter() - t_fb) * 1000.0,
+                    )
+                    if fb_ok:
+                        end_date = str(target_date)
+                        publish_ok = True
+                except Exception as exc:
+                    add_step(
+                        "tushare_backfill",
+                        "failed",
+                        outputs={"target_date": str(target_date), "error_type": type(exc).__name__},
+                        error=str(exc),
+                        elapsed_ms=(time.perf_counter() - t_fb) * 1000.0,
+                    )
+
+        if not end_date:
+            # #region debug-point C:daily-pipeline-early-exit
+            self._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="C",
+                location="apps/api/main.py:daily_pipeline_run_view",
+                msg="[DEBUG] daily_pipeline early-exit",
+                data={
+                    "target_date": str(target_date),
+                    "trade_date": str(trade_date) if trade_date else None,
+                    "calendar_is_trading_day": bool(calendar_is_trading_day),
+                    "calendar_db_is_trading_day": bool(calendar_db_is_trading_day),
+                    "target_rows": int(target_rows),
+                    "publish_ok": bool(publish_ok),
+                },
+                trace_id=f"dp-{target_date}-{started_at}",
+            )
+            # #endregion
             ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
             return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
@@ -14080,6 +22869,20 @@ class BootstrapApiService:
         t1 = time.perf_counter()
         try:
             health = self.tushare_concept_health_view(requested_by=requested_by)
+            # #region debug-point A:tushare-health
+            self._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="A",
+                location="apps/api/main.py:daily_pipeline_run_view",
+                msg="[DEBUG] tushare_health evaluated",
+                data={
+                    "ok": bool(health.get("ok")),
+                    "errors": health.get("errors"),
+                    "checks": health.get("checks"),
+                },
+                trace_id=f"dp-{target_date}-{started_at}",
+            )
+            # #endregion
             add_step(
                 "tushare_health",
                 "ok" if bool(health.get("ok")) else "failed",
@@ -14092,6 +22895,16 @@ class BootstrapApiService:
                 elapsed_ms=(time.perf_counter() - t1) * 1000.0,
             )
         except Exception as exc:
+            # #region debug-point A:tushare-health-exc
+            self._dbg_emit(
+                run_id="pre-fix",
+                hypothesis_id="A",
+                location="apps/api/main.py:daily_pipeline_run_view",
+                msg="[DEBUG] tushare_health exception",
+                data={"error_type": type(exc).__name__, "error": str(exc)},
+                trace_id=f"dp-{target_date}-{started_at}",
+            )
+            # #endregion
             add_step(
                 "tushare_health",
                 "failed",
@@ -14194,6 +23007,7 @@ class BootstrapApiService:
                 state=state,
                 engine=engine,
                 target_date=date.fromisoformat(end_date),
+                allow_execute=False,
             )
             self._save_lowfreq_sim_state(state)
             settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
@@ -15466,7 +24280,9 @@ class BootstrapApiService:
     def lowfreq_backtest_report_download_view(
         self, *, report_id: str, format: str
     ) -> Any:
-        report_dir = self._lowfreq_backtest_artifacts_dir / str(report_id)
+        report_id, report_dir = self._resolve_lowfreq_backtest_report_dir(
+            report_id=report_id
+        )
         if format == "pdf":
             pdf_path = report_dir / "trades.pdf"
             if not pdf_path.exists():
@@ -15887,6 +24703,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    log_python_runtime(entrypoint="apps.api.main")
+    try:
+        require_python_310(entrypoint="apps.api.main")
+    except RuntimeError as exc:
+        print(
+            json.dumps(
+                {
+                    "service": "neotrade3-bootstrap-api",
+                    "status": "error",
+                    "error": str(exc),
+                },
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 2
 
     project_root = Path(__file__).resolve().parents[2]
     api_key = args.api_key or os.environ.get("NEOTRADE3_API_KEY")

@@ -5,11 +5,14 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ExitReason(str, Enum):
@@ -318,8 +321,13 @@ class SignalBacktester:
                     open_positions[signal.code] = trade
                     capital -= position_value  # Deduct capital
                     
-            except Exception:
-                pass  # Continue on error
+            except Exception as exc:
+                logger.warning(
+                    "SignalBacktester signal generation failed: target_date=%s codes=%s error=%s",
+                    current_date.isoformat(),
+                    ",".join(codes) if codes else "all",
+                    exc,
+                )
             
             # Record equity
             current_equity = self._calculate_equity(
@@ -341,8 +349,22 @@ class SignalBacktester:
                 trade.close(end_date, exit_price, ExitReason.END_OF_TEST)
                 all_trades.append(trade)
                 capital += trade.exit_price * trade.quantity if trade.exit_price else 0
-        
-        open_positions.clear()
+                del open_positions[code]
+        final_equity_point = {
+            "date": end_date.isoformat(),
+            "equity": round(
+                self._calculate_equity(
+                    capital=capital,
+                    open_positions=open_positions,
+                    current_date=end_date,
+                ),
+                2,
+            ),
+        }
+        if equity_curve and equity_curve[-1].get("date") == end_date.isoformat():
+            equity_curve[-1] = final_equity_point
+        else:
+            equity_curve.append(final_equity_point)
         
         # Calculate statistics
         result.trades = all_trades

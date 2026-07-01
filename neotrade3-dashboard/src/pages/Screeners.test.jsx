@@ -48,6 +48,7 @@ function buildRunsPayloads() {
       screener_runs: [
         {
           screener_id: 'shi_pan_xian',
+          target_date: '2026-06-08',
           requested_at: '2026-06-09T09:35:00Z',
           finished_at: '2026-06-09T09:36:00Z',
           status: 'completed',
@@ -227,6 +228,38 @@ describe('Screeners', () => {
 
     await waitFor(() => {
       expect(screen.getByText('下载失败：HTTP 500')).toBeTruthy()
+    })
+  })
+
+  it('downloads recent run with run target date instead of selected date', async () => {
+    const payloads = buildRunsPayloads()
+    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
+      const element = originalCreateElement(tagName)
+      if (tagName === 'a') {
+        element.click = vi.fn()
+      }
+      return element
+    })
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(new Blob(['csv'])),
+    })
+
+    render(<Screeners />)
+
+    await waitFor(() => {
+      expect(screen.getByText('势盘线')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: '下载 CSV' })[0])
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/screeners/runs/2026-06-08/shi_pan_xian/download.csv'
+      )
     })
   })
 })

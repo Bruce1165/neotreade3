@@ -345,6 +345,10 @@ export default function Screeners() {
     }
     return m;
   })();
+  const resolveRunDownloadDate = (runLike) => {
+    const targetDate = String(runLike?.target_date || '').trim();
+    return targetDate || selectedDate;
+  };
   const filteredScreeners = configFilter.trim()
     ? screenerList.filter((s) =>
         `${s.display_name || ''} ${s.screener_id || ''}`
@@ -499,7 +503,14 @@ export default function Screeners() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs text-gray-400 font-mono truncate">{screener.screener_id}</div>
                       <button
-                        onClick={() => handleDownload(selectedDate, screener.screener_id)}
+                        onClick={() =>
+                          handleDownload(
+                            resolveRunDownloadDate(
+                              latestRunByScreenerId.get(String(screener.screener_id || '').trim()),
+                            ),
+                            screener.screener_id,
+                          )
+                        }
                         disabled={!latestRunByScreenerId.has(String(screener.screener_id || '').trim())}
                         className="flex items-center gap-1 px-3 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded disabled:text-gray-400 disabled:hover:bg-transparent disabled:cursor-not-allowed text-sm transition-colors"
                       >
@@ -560,7 +571,9 @@ export default function Screeners() {
                           <td className="py-3 px-4">
                             {run.picks_count > 0 && (
                               <button
-                                onClick={() => handleDownload(selectedDate, run.screener_id)}
+                                onClick={() =>
+                                  handleDownload(resolveRunDownloadDate(run), run.screener_id)
+                                }
                                 className="flex items-center gap-1 px-2 py-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
                               >
                                 <Download size={14} />

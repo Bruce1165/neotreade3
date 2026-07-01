@@ -83,6 +83,39 @@ function httpRequest(url, { method = "GET", headers = {} } = {}) {
   });
 }
 
+function httpRequestToServer(server, requestPath, { method = "GET", headers = {} } = {}) {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("server address is unavailable");
+  }
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port: address.port,
+        method,
+        path: requestPath,
+        headers,
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode || 0,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString("utf-8"),
+          });
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => closeServer(server)));
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -242,5 +275,50 @@ describe("frontend gateway basic auth", () => {
     });
 
     expect(response.statusCode).toBe(400);
+  });
+
+  it("pins proxied targets to the configured api base", async () => {
+    const distDir = await createDistDir();
+    const upstream = await startServer(
+      http.createServer((request, response) => {
+        response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({ path: request.url }));
+      }),
+    );
+    const gateway = await startServer(
+      buildServer({
+        distDir,
+        apiBase: serverOrigin(upstream),
+        dashboardPassword: "secret-pass",
+      }),
+    );
+
+    const absoluteFormResponse = await httpRequestToServer(
+      gateway,
+      "http://evil.example/api/absolute-form?via=absolute",
+      {
+        headers: {
+          Authorization: basicAuthHeader("secret-pass"),
+        },
+      },
+    );
+    expect(absoluteFormResponse.statusCode).toBe(200);
+    expect(JSON.parse(absoluteFormResponse.body)).toEqual({
+      path: "/api/absolute-form?via=absolute",
+    });
+
+    const schemeRelativeResponse = await httpRequestToServer(
+      gateway,
+      "//evil.example/api/scheme-relative?via=scheme-relative",
+      {
+        headers: {
+          Authorization: basicAuthHeader("secret-pass"),
+        },
+      },
+    );
+    expect(schemeRelativeResponse.statusCode).toBe(200);
+    expect(JSON.parse(schemeRelativeResponse.body)).toEqual({
+      path: "/api/scheme-relative?via=scheme-relative",
+    });
   });
 });
