@@ -3,7 +3,9 @@
 NeoTrade3 is the next-generation A-share research and execution operating system.
 
 Current status:
-- The project skeleton is initialized.
+- The core NeoTrade3 worker + API are the current execution and snapshot backbone.
+- The current browser UI is `neotrade3-dashboard/` (React + Vite); the legacy Python bootstrap dashboard under `apps/dashboard/` is retired.
+- Low-frequency model (v16 advanced) can generate signals, simulate runs, and produce backtest reports.
 - NeoTrade2 remains the running baseline and migration reference.
 - NeoTrade3 will become the new IDE project and the future system of record for:
   - data control
@@ -39,21 +41,43 @@ NeoTrade3 v1 focuses on four foundation areas:
 ## Current Entrypoints
 
 - `apps/worker/main.py`
-  - builds the current bootstrap snapshot chain
-- `apps/api/main.py`
-  - exposes read-only bootstrap endpoints
+  - builds the current bootstrap snapshot chain and is the single execution truth source for bootstrap orchestration
+- `apps/api/main.py` + `apps/api/router.py`
+  - exposes API endpoints (supports both `/api/...` and `/api/v1/...` prefixes) and projects worker snapshots into compatibility ledgers/artifacts where needed
+- `neotrade3-dashboard/`
+  - current React + Vite dashboard frontend
 - `apps/dashboard/main.py`
-  - serves the current read-only bootstrap dashboard shell with domain-based loading, `live/stored` switching, summary cards, and structured error display
-- `apps/dashboard/static/`
-  - contains the current dashboard CSS and browser-side JS assets
+  - retired legacy bootstrap dashboard entrypoint; current behavior returns `410 Gone`
 
 Current API groups:
 
 - health:
   - `/healthz`
-- bootstrap:
-  - `/api/bootstrap-summary`
-  - `/api/bootstrap-snapshot`
+- low-frequency trading:
+  - `POST /api/model/run`
+  - `GET /api/sectors/hot`
+  - `POST /api/lowfreq/backtest/run`
+  - `GET /api/lowfreq/backtest/reports?limit=N`
+  - `GET /api/lowfreq/backtest/reports/<report_id>.pdf|.json`
+  - `GET /api/lowfreq/backtest/status?report_id=<report_id>`
+  - `GET /api/lowfreq/backtest/window-summary?end_date=YYYY-MM-DD&window_trading_days=60`
+  - `GET /api/lowfreq/portfolio?date=YYYY-MM-DD`
+  - `GET /api/lowfreq/confidence/overview?date=YYYY-MM-DD`
+  - `GET /api/lowfreq/confidence/calibration?date=YYYY-MM-DD`
+  - `POST /api/lowfreq/confidence/run`
+  - `GET /api/lowfreq/rsi/regression`
+  - `POST /api/lowfreq/rsi/weekly-record`
+  - `POST /api/lowfreq/manual/buy-intent`
+  - `POST /api/lowfreq/manual/abandon`
+  - `POST /api/lowfreq/settings/autopilot`
+  - `GET /api/lowfreq/execution/queue`
+  - `POST /api/lowfreq/execution/processed`
+  - `POST /api/lowfreq/execution/abandon`
+- A-share universe audit:
+  - `GET /api/ashare/midcap/audit?date=YYYY-MM-DD`
+- concepts:
+  - `GET /api/concepts/mainline?date=YYYY-MM-DD`
+  - `GET /api/concepts/mainline/detail?concept_code=...&date=YYYY-MM-DD`
 - domain views:
   - `/api/data-control`
   - `/api/orchestration`
@@ -80,10 +104,17 @@ Current API behavior notes:
 - exposes NeoTrade3 migration mapping decisions through `/api/migration/feature-mapping?domain=...` and supports `status` / `strategy` filters
 - exposes per-domain mapping coverage reports through `/api/migration/feature-mapping-coverage?domain=...`
 
+Current runtime boundary notes:
+
+- `var/ledgers/bootstrap_runs` + `var/artifacts/bootstrap_runs` are the primary bootstrap snapshot fact source
+- `var/ledgers/orchestration_runs` + `var/artifacts/orchestration_runs` are compatibility projections for orchestration-run APIs
+- `var/ledgers/lab_runs` + `var/artifacts/lab_runs` are compatibility projections for legacy lab-run readers
+- snapshot root `publish_succeeded` reflects the effective result of the current run; `requested_publish_succeeded` preserves the requested planning hint
+
 Current dashboard behavior notes:
 
-- shows summary-first cards for target date, source mode, cache status, planned tasks, issue cases, and learning candidates
-- shows per-domain summary text and keeps raw JSON payloads available in expandable sections
+- `neotrade3-dashboard/` is the active UI codebase and currently exposes `Overview` / `Screeners` / `Stock Check` / `Lowfreq`
+- the legacy Python dashboard is retired and should not be treated as the current frontend
 
 ## Current Runbook
 
@@ -110,4 +141,4 @@ Recommended local order:
 
 1. run `worker`
 2. start `api`
-3. start `dashboard`
+3. start `neotrade3-dashboard`

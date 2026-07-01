@@ -311,7 +311,7 @@ children.push(makeTable(
     ["/api/backtest?codes=&date=", "\u56DE\u6D4B\uFF08\u7CFB\u7EDF\u5185\u7F6E\uFF09"],
     ["/api/stocks/lookup?code=", "\u80A1\u7968\u67E5\u8BE2"],
     ["/api/data-control/sync-daily-prices", "POST \u540C\u6B65\u884C\u60C5"],
-    ["/api/data-control/update-daily-prices/tencent", "POST \u817E\u8BAF\u6570\u636E\u66F4\u65B0"],
+    ["/api/data/update", "POST authoritative \u65E5\u7EBF\u66F4\u65B0"],
     ["/api/screeners/run", "POST \u8FD0\u884C\u7B5B\u9009\u5668"],
     ["/api/orchestration/run", "POST \u8FD0\u884C\u7F16\u6392"],
   ],

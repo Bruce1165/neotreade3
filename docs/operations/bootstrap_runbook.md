@@ -13,40 +13,48 @@
 
 ## 2. 当前可用入口
 
-当前仓库已经具备 3 个本地入口:
+当前仓库当前以 3 个主要本地入口为准:
 
 1. `apps/worker/main.py`
 2. `apps/api/main.py`
-3. `apps/dashboard/main.py`
+3. `neotrade3-dashboard/`
+
+旧入口:
+
+- `apps/dashboard/main.py`
+  - 已退役
+  - 当前返回 `410 Gone`
+  - 仅保留为历史兼容壳，不应视为现用 dashboard
 
 它们的职责边界:
 
 - `worker`
   - 统一构建 bootstrap 快照
+  - 当前是 bootstrap/orchestration 主链的唯一执行真相源
   - 可把快照写入 `var/ledgers/` 与 `var/artifacts/`
 - `api`
-  - 只读暴露 healthz、summary、snapshot
-  - 当前直接复用 worker 的快照构建能力
-- `dashboard`
-  - 只读页面壳
-  - 当前通过浏览器请求 `api` 获取 bootstrap 数据
-- 静态资源当前已拆分到:
-  - `apps/dashboard/static/dashboard.css`
-  - `apps/dashboard/static/dashboard.js`
+  - 暴露 bootstrap / 研究 / orchestration 相关 API
+  - 直接复用 worker 的快照构建能力
+  - 会把 worker 结果投影为兼容的 `orchestration_runs` / `lab_runs` 产物
+- `neotrade3-dashboard`
+  - 当前在用前端
+  - 通过 Vite dev server 代理 `/api` 到本地 API
 
 ## 3. 运行前提
 
 - 当前项目根目录:
   - `/Users/mac/NeoTrade3`
 - 当前本地命令使用:
-  - `python3`
+  - `./.venv/bin/python`
 - 当前测试环境实际验证过的 Python 版本:
-  - `3.9.6`
+  - `3.10`
 
 说明:
 
-- `pyproject.toml` 仍声明 `>=3.11`
-- 但当前 bootstrap 代码已经按本地 `3.9.6` 环境完成兼容性验证
+- `pyproject.toml` 当前声明 `>=3.10,<3.11`
+- 当前正式支持版本固定为 Python `3.10.x`
+- 正式本地运行解释器统一为 `./.venv/bin/python`
+- CI 与本地工具口径均按 Python `3.10` 维护
 
 ## 4. 推荐联调顺序
 
@@ -69,7 +77,7 @@
 只构建快照，不落盘:
 
 ```bash
-python3 -m apps.worker.main --date 2026-05-19 --dry-run
+./.venv/bin/python -m apps.worker.main --date 2026-05-19 --dry-run
 ```
 
 ### 5.2 写入本地快照
@@ -77,14 +85,20 @@ python3 -m apps.worker.main --date 2026-05-19 --dry-run
 构建并写入本地文件:
 
 ```bash
-python3 -m apps.worker.main --date 2026-05-19
+./.venv/bin/python -m apps.worker.main --date 2026-05-19
 ```
 
-如果要把 publish-gated 任务从 `blocked` 切换为非阻塞计划态，可加:
+如果要在构建计划时把 publish-gated 任务从 `blocked` 切换为非阻塞计划态，可加:
 
 ```bash
-python3 -m apps.worker.main --date 2026-05-19 --publish-succeeded
+./.venv/bin/python -m apps.worker.main --date 2026-05-19 --publish-succeeded
 ```
+
+说明:
+
+- `--publish-succeeded` 只影响计划阶段的初始 gate 状态。
+- snapshot 根字段里的 `publish_succeeded` 现在表示本次运行的实际 publish 结果。
+- snapshot 根字段里的 `requested_publish_succeeded` 记录是否传入了该 planning hint。
 
 ### 5.3 Worker 当前落盘位置
 
@@ -96,12 +110,22 @@ python3 -m apps.worker.main --date 2026-05-19 --publish-succeeded
 - `var/artifacts/bootstrap_runs/<date>/learning_snapshot.json`
 - `var/artifacts/bootstrap_runs/<date>/bootstrap_run_summary.json`
 
+其中:
+
+- `bootstrap_runs` 是主事实源
+- `bootstrap_run_summary.json` 现在包含:
+  - `target_date`
+  - `publish_succeeded`
+  - `requested_publish_succeeded`
+  - `summary`
+  - `orchestration.task_results` 摘要片段
+
 ## 6. API 用法
 
 ### 6.1 启动命令
 
 ```bash
-python3 -m apps.api.main --host 127.0.0.1 --port 18030
+./.venv/bin/python -m apps.api.main --host 127.0.0.1 --port 18030
 ```
 
 ### 6.2 当前端点
@@ -182,95 +206,100 @@ GET /api/issue-center?date=2026-05-19&source=stored
 - `invalid_source_mode`
 - `not_found`
 - `snapshot_not_found`
+- `authoritative_source_unavailable`
+
+### 6.5 数据源口径（2026-06-16 起）
+
+- 服务层当前已按以下口径收敛：
+  - `daily_prices`：`Tushare` 主源，`Tencent` 仅作 safety-net
+  - `company_announcements` / `policy_documents` / `research_reports` / `report_consensus` / `institutional_surveys` / `etf_*` / `fund_*` / `index_*`：`Tushare` 唯一来源
+  - `concept/theme cache`：`Tushare` 唯一来源
+- 对 `Tushare` 唯一来源资源：
+  - 若主源失败，API 直接返回 `authoritative_source_unavailable`
+  - 不再把主源失败包装成 `status=skipped`
+- 对 `daily_prices`：
+  - 先尝试 `Tushare`
+  - 仅当 `Tushare` 失败时才允许切到 `Tencent`
+  - `Tushare` 成功还必须同时通过覆盖率门禁和格式一致性门禁
+- 当前仓库内生产调度入口已收敛为 authoritative 调用口径。
+- 若本机已安装的 LaunchAgent 仍使用旧模板，需执行安装/校验脚本将本机触发器同步到 `update_daily_prices_authoritative`。
 
 当前响应头行为:
 
 - JSON 响应附带最小 CORS 头，允许 dashboard 从独立本地端口读取:
-  - `Access-Control-Allow-Origin: *`
-  - `Access-Control-Allow-Methods: GET, OPTIONS`
+  - `Access-Control-Allow-Origin`: 按允许来源反射当前请求的 `Origin`
+  - `Vary: Origin`
+  - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+  - `Access-Control-Allow-Headers: Content-Type, X-API-Key`
 
-## 7. Dashboard 用法
+## 7. 前端用法
 
-### 7.1 启动命令
+### 7.1 当前前端
 
-默认依赖本地 API:
+- 当前前端工程位于 `neotrade3-dashboard/`
+- 旧的 `apps/dashboard/main.py` 已退役，不再作为联调入口
+
+### 7.2 启动命令
+
+先启动本地 API，再在前端目录下启动 Vite:
 
 ```bash
-python3 -m apps.dashboard.main --host 127.0.0.1 --port 18031 --api-base-url http://127.0.0.1:18030
+cd neotrade3-dashboard
+npm run dev
 ```
 
-### 7.2 当前页面
+Vite 当前默认:
+
+- 本地端口: `5173`
+- `/api` 代理到: `http://127.0.0.1:18030`
+
+### 7.3 当前页面
 
 打开:
 
 ```text
-http://127.0.0.1:18031/
+http://127.0.0.1:5173/
 ```
 
 当前页面包含:
 
 - `Overview`
-- `Data Control`
-- `Labs`
-- `Daily Orchestration`
-- `Issue Center`
-- `Learning`
+- `Screeners`
+- `Stock Check`
+- `Lowfreq`
 
-当前页面读取方式:
+当前页面会通过 `/api/...` 直接读取后端接口，例如:
 
-- `Overview` 读取 `bootstrap-summary`
-- `Data Control` 读取 `data-control`
-- `Labs` 读取 `labs`
-- `Daily Orchestration` 读取 `orchestration`
-- `Issue Center` 读取 `issue-center`
-- `Learning` 读取 `learning`
+- `Overview` 会读取 `data/status`、`sectors/hot`、`concepts/mainline`、`lowfreq/execution/queue` 等
+- `Screeners` 会读取 `screeners`、`screeners/runs`、`screeners/bulk-runs`
+- `Stock Check` 会读取 `check-stock`
+- `Lowfreq` 会读取 `market-phase`、`sectors/hot`、`lowfreq/portfolio`、`lowfreq/backtest/*`
 
-当前页面支持通过 URL 查询参数切换读取模式:
+### 7.4 当前限制
 
-- `http://127.0.0.1:18031/?source=live`
-- `http://127.0.0.1:18031/?source=stored`
-
-说明:
-
-- `source=live` 透传到 API，按请求即时构建
-- `source=stored` 透传到 API，读取 `worker` 已落盘快照
-- 首页顶部会展示摘要卡片:
-  - `target_date`
-  - `snapshot_source`
-  - `cache_status`
-  - `planned_task_count`
-  - `issue_case_count`
-  - `learning_candidate_count`
-- 各域区块会展示一行摘要与 `_meta` 元信息，同时保留可展开的原始 JSON payload
-- `data-control` 的 `_meta` 现在会额外返回 `source_registry_cache_status`
-- 当 API 返回结构化错误时，页面会把 `error.code` 与 `error.message` 显示在顶部错误条中
-
-### 7.3 当前限制
-
-- 不是正式 dashboard 工程
-- 没有前端构建链
-- 没有登录鉴权
-- 没有写操作
-- 当前展示的是 bootstrap 快照
+- 尚未补齐 lint/test 基线
+- 本地 `vite dev` 入口没有业务登录页；正式外网入口由前端网关统一执行 `HTTP Basic Auth`
+- 仍有部分 bootstrap/迁移相关接口是历史兼容视图
 
 ## 8. 推荐本地联调流程
 
 ### 8.1 第一步: 生成一轮本地快照
 
 ```bash
-python3 -m apps.worker.main --date 2026-05-19
+./.venv/bin/python -m apps.worker.main --date 2026-05-19
 ```
 
 ### 8.2 第二步: 启动 API
 
 ```bash
-python3 -m apps.api.main --host 127.0.0.1 --port 18030
+./.venv/bin/python -m apps.api.main --host 127.0.0.1 --port 18030
 ```
 
-### 8.3 第三步: 启动 Dashboard
+### 8.3 第三步: 启动前端
 
 ```bash
-python3 -m apps.dashboard.main --host 127.0.0.1 --port 18031 --api-base-url http://127.0.0.1:18030
+cd neotrade3-dashboard
+npm run dev
 ```
 
 ### 8.4 第四步: 人工检查
@@ -279,14 +308,14 @@ python3 -m apps.dashboard.main --host 127.0.0.1 --port 18031 --api-base-url http
 
 - `http://127.0.0.1:18030/healthz`
 - `http://127.0.0.1:18030/api/bootstrap-summary`
-- `http://127.0.0.1:18031/`
+- `http://127.0.0.1:5173/`
 
 ## 9. 自动化回归基线
 
 当前仓库已具备一组最小 HTTP 级回归，入口仍然统一在:
 
 ```bash
-python3 -m pytest tests/unit/test_bootstrap_skeleton.py
+./.venv/bin/python -m pytest tests/unit/test_bootstrap_skeleton.py
 ```
 
 这组回归当前不只覆盖骨架对象装配，也覆盖:
@@ -295,11 +324,12 @@ python3 -m pytest tests/unit/test_bootstrap_skeleton.py
 - API server 的无效日期错误路径
 - API server 的 `config-contracts` 与现有域接口可访问性
 - API server 的 `migration/feature-manual` 功能台账可访问性
-- dashboard server 首页与静态资源可访问性
+- 旧 dashboard 的退役行为（返回 `410 Gone`）
+- bootstrap 主链与 API 兼容投影路径
 
 用途:
 
-- 在修改 `worker -> api -> dashboard` 主链后，快速确认 HTTP 级联调没有回归
+- 在修改 `worker -> api` 主链或兼容投影后，快速确认 HTTP 级联调没有回归
 - 避免只靠对象级单元测试而漏掉 handler / server 生命周期问题
 
 ## 10. 当前不应误解的点
@@ -308,7 +338,7 @@ python3 -m pytest tests/unit/test_bootstrap_skeleton.py
 
 - 代码骨架已经可以统一启动
 - 主链已经可以形成本地只读快照
-- API 与 dashboard 已经有最小联调路径
+- API 与 React 前端已经有最小联调路径
 
 当前不应表述为:
 
@@ -320,10 +350,12 @@ python3 -m pytest tests/unit/test_bootstrap_skeleton.py
 
 ### 11.1 LaunchAgents 与环境变量
 
-本机通过 launchd 管理 2 个长期进程:
+本机当前通过 launchd 管理以下入口:
 
-- `com.neotrade3.api`：API 服务（默认监听 `127.0.0.1:18030`）
-- `com.neotrade3.scheduler`：APScheduler 定时任务
+- `com.neotrade3.api`：API 服务（默认监听 `127.0.0.1:18030`，长期进程）
+- `com.neotrade3.frontend_gateway`：V3 前端网关（默认监听 `127.0.0.1:5174`，长期进程，托管 `neotrade3-dashboard/dist` 并代理 `/api/*` 与 `/healthz`）
+- `com.neotrade3.scheduler`：每日下载入口（`launchd` 定时触发 `--run-once update_daily_prices_authoritative`）
+- `com.neotrade3.trade_execution_rt`：09:35 实时执行入口（`launchd` 定时触发 `--run-once trade_execution_rt_0935`）
 
 两者都依赖 secrets 注入:
 
@@ -334,32 +366,115 @@ python3 -m pytest tests/unit/test_bootstrap_skeleton.py
 
 - `TUSHARE_TOKEN`：用于 Tushare 数据补齐（历史日线 backfill、同花顺概念缓存预热）
 - `NEOTRADE3_STOCK_DB_V2_PATH`：可选，用于从 NeoTrade2 行情库补齐缺口
+- `DASHBOARD_PASSWORD`：仅供 `com.neotrade3.frontend_gateway` 使用；缺失时前端网关不得启动
+
+LaunchAgent 模板与安装约定:
+
+- 仓库模板目录：`config/launchd/`
+- 安装/校验脚本：`scripts/install_launchagents.py`
+- `ProgramArguments[0]` 默认写入 `PROJECT_ROOT/.venv/bin/python`，也可通过 `--python-bin` 显式覆盖
+- `Node` 进程模板默认通过 `node` 自动探测，也可通过 `--node-bin` 显式覆盖
+- 只允许修改仓库模板后再执行脚本同步到 `~/Library/LaunchAgents`
+- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.api.plist`
+- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.frontend_gateway.plist`
+- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.scheduler.plist`
+- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.trade_execution_rt.plist`
+- `launchd Weekday` 语义：`1=周一 ... 5=周五，6=周六，0/7=周日`
+
+### 11.1.1 `com.neotrade3.api` 的 `launchd` 真相源与恢复边界
+
+`com.neotrade3.api` 的运行真相源不是“当前哪个 plist 文件名看起来最像正式文件”，而是：
+
+- `launchctl print gui/$(id -u)/com.neotrade3.api`
+  - 重点看 `path`
+  - 重点看 `state`
+  - 重点看 `pid`
+- `http://127.0.0.1:18030/healthz`
+- `http://127.0.0.1:5174/healthz`
+
+2026-06-19 的实际排障结论：
+
+- 旧的 `~/Library/LaunchAgents/com.neotrade3.api.plist` 在 `launchctl bootstrap` 时可直接返回 `Input/output error`
+- 同一条启动命令、同一组环境变量、同一个 label `com.neotrade3.api`
+  - 若改用一份全新写出的 plist 文件路径
+  - 则可被 `launchd` 正常接管
+- 因此该类异常不能简单判断为：
+  - Python 解释器损坏
+  - API 程序本身无法启动
+  - `NEOTRADE3_ENV_FILE` 无法读取
+  - `18030` 端口本身不可用
+
+当前已确认的恢复口径：
+
+- 若 `com.neotrade3.api` 的 canonical plist 在 `bootstrap` 时直接报 `Input/output error`
+- 先不要重启全部 LaunchAgents
+- 先核查：
+  - `launchctl print gui/$(id -u)/com.neotrade3.api`
+  - `curl http://127.0.0.1:18030/healthz`
+  - `curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/healthz`
+- 若确认是“旧 plist 文件状态异常”，可用“全新生成的 same-label plist”恢复 `com.neotrade3.api`
+- 恢复后必须重新执行 `scripts/install_launchagents.py check --target-dir "$HOME/Library/LaunchAgents" --launchctl --python-bin "$PROJECT_PYTHON"` 复核
+
+当前机器上的已确认状态示例：
+
+- label：`com.neotrade3.api`
+- `launchctl` 当前 `path`：`~/Library/LaunchAgents/com.neotrade3.api.fresh.plist`
+- `launchctl` 当前 `state`：`running`
+- API 与前端网关健康检查：均返回 `ok`
+
+本机前端网关联调口径:
+
+- 网关入口：`http://127.0.0.1:5174/`
+- 网关自身健康检查：`http://127.0.0.1:5174/_gateway/healthz`
+- 通过网关访问 API 健康检查：`http://127.0.0.1:5174/healthz`
+- 对外域名 `sanford.vip.cpolar.cn` 应指向前端网关端口 `5174`，不再指向旧 `V2` Flask 端口 `8765`
+- 未携带 Basic Auth 访问网关任一路径时，返回 `401` 属于正常行为
+- 认证口径固定为浏览器原生 Basic Auth 提示框，网关只校验密码，不关心用户名
+
+常用验证命令:
+
+```bash
+curl -i http://127.0.0.1:5174/
+curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/_gateway/healthz
+curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/healthz
+curl -u user:$DASHBOARD_PASSWORD https://sanford.vip.cpolar.cn/healthz
+```
 
 ### 11.2 Scheduler 定时任务清单（APScheduler）
 
 入口: `neotrade3/scheduler/task_scheduler.py`
 
-- `update_daily_prices_tencent`（工作日 18:05）
+说明:
+
+- 本节描述的是代码内 APScheduler 注册定义
+- 当前生产实际触发仍以 `launchd` 的 `--run-once` LaunchAgent 为准
+- 若代码定义与 `config/launchd/` 模板不一致，应优先核对并修正模板与运维文档
+- 任何生产任务的时间、工作日、启停状态，均不得只通过 APScheduler 注册来判断
+- `task_scheduler.py` 在这里代表代码能力与本地调试入口，不等于生产启用清单
+
+- `update_daily_prices_authoritative`（代码内定义：工作日 15:45）
   - 目标: 把“当日收盘后的日线”写入 `var/db/stock_data.db`
   - 机制: CN 时区判断收盘（默认 15:10 后），并具备 catch-up 能力（漏跑会从 DB 最新交易日追到 cutoff）
-- `update_financial_data`（每天 18:00）
-- `fetch_news`（工作日 9:00–14:59，每 30 分钟）
-- `warm_tushare_theme_cache`（每 2 分钟）
+- `update_financial_data`（代码内定义：每天 18:00）
+- `fetch_news`（代码内定义：工作日 9:00–14:59，每 30 分钟）
+- `warm_tushare_theme_cache`（代码内定义：每 2 分钟）
   - 目标: 预热同花顺概念列表与成分缓存，避免刷新时触发频控
 
-### 11.3 日线写库与质量闸门（腾讯 → 回填 → 落库）
+### 11.3 日线写库与质量闸门（Tushare 主源 → Tencent safety-net → 落库）
 
-入口: `apps/api/main.py:update_daily_prices_tencent_view`
+入口: `apps/api/main.py:update_daily_prices_authoritative_view`
 
 流程要点:
 
-- 数据来源（腾讯）是实时行情快照，不等价于“收盘价”，因此引入质量闸门:
+- 首先使用 `Tushare pro.daily(trade_date=YYYYMMDD)` 作为主源抓取 `target_date`
+- `Tushare` 成功还必须同时通过：
   - 覆盖率门槛（close/amount/turnover 等）
-  - 交易日当天未到收盘窗口会阻止 publish（`market_not_closed`）
-- 当腾讯返回的 `trade_date != target_date`（常见于漏跑或时区/时点不一致）时:
-  - 优先用 `Tushare pro.daily(trade_date=YYYYMMDD)` 回填 `target_date`
-  - 若回填后仍存在“较上一交易日缺口的 code”，且这些 code 在当日为停牌（`suspend_d`），则合成一条零成交 bar（OHLC=前收，volume/amount=0）以保持矩阵完整
-  - 若配置了 `NEOTRADE3_STOCK_DB_V2_PATH` 且目标日仍缺失，则从 NeoTrade2 行情库同步补齐
+  - 格式一致性门禁（OHLC 区间、`pct_change` 与 `close/preclose` 基本一致等）
+- 若当日 `Tushare daily` 返回空记录，会在 `16:00` 前按 `3` 分钟间隔短重试
+- 仅当 `Tushare` 主源失败时，才允许切到腾讯 safety-net
+- 腾讯 fallback 成功后仍需通过原有质量门禁，且结果会被记录为 fallback 路径
+- 若目标日仍存在停牌缺口，会继续结合 `suspend_d` 合成零成交 bar 以保持矩阵完整
+- 若配置了 `NEOTRADE3_STOCK_DB_V2_PATH` 且目标日仍缺失，则从 NeoTrade2 行情库同步补齐
 - publish/backfill 成功后会重建 `trading_calendar_cache`
 
 ### 11.4 Daily Pipeline（自动化任务的前置条件）

@@ -1,10 +1,37 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-05-27
+**Last Updated**: 2026-06-16
 
 ---
 
 ## 项目核心逻辑（已在对话中确认）
+
+### 0) 当前正式业务依据（2026-06-18 纠偏）
+
+- 当前正式模型依据必须按四层同时理解，不能只摘取其中一段单独使用：
+  1. 用户最初给出的五维模型调整依据：
+     - 周期位置
+     - 主流指数择时
+     - 行业渗透率
+     - 技术层面
+     - 资金与情绪面
+  2. 后续两份补充信息对五维框架的细化修正。
+  3. 随后口头确认的执行约束：
+     - 回撤止损 `-5%` 是硬性指标
+     - `确定性 > 85` 仅作参考，不再是硬门槛
+     - 其他旧指标可为调整后的模型逻辑让步
+  4. 2026-06-12 证监会改革相关政策指导材料，以及团队对该材料的重点范围修正。
+- 对政策材料的正式吸收方式不是“四大主线平均看待”，而是：
+  - 第一、第三、第四、第五大类大多属于 `K 型向下` 或低优先级观察范围；
+  - 真正重点范围是第二大类硬科技；
+  - 第二大类必须买龙头，且是细分赛道龙头；
+  - `ETF 高配 + 机构高配` 是关键增强证据；
+  - 人工智能龙头优先级最高。
+- 因此，当前正式对标重点不是“是否严格保留所有旧确定性/旧评分定义”，而是：
+  - 是否按五维框架先确定主线与景气度；
+  - 是否把重点范围收敛到第二大类硬科技细分龙头；
+  - 是否把 `-5%` 回撤止损作为硬性指标落实；
+  - 其余旧指标若与上述逻辑冲突，应让位于调整后的模型逻辑。
 
 ### 1) 数据主链（Data Control）
 
@@ -33,6 +60,15 @@
 - 下载以 CSV 为准：筛选器与监控池的对外下载为 CSV；JSON 仅作为开发者模式下的原始数据。
 - 数据未就绪时要直说：显示“数据没准备好，先更新数据/交易日历”，并阻止下游运行按钮。
 
+## 当前运行边界（2026-06 代码现状）
+
+- `apps/worker/main.py` 是 bootstrap 主链的唯一执行真相源；`/api/orchestration/run` 已改为复用 worker 结果，不再维护独立执行语义。
+- `var/ledgers/bootstrap_runs/<date>/` 与 `var/artifacts/bootstrap_runs/<date>/` 是当前 bootstrap 主事实源。
+- `var/ledgers/orchestration_runs/<date>/` 与 `var/artifacts/orchestration_runs/<date>/` 现在是 API 为兼容 orchestration 运行记录读取链路而写出的投影产物，不是独立执行源。
+- `var/ledgers/lab_runs/<date>/` 与 `var/artifacts/lab_runs/<date>/` 现在是 API 为兼容既有 lab 结果读取链路而补写的投影产物，不是独立执行源。
+- snapshot 根字段 `publish_succeeded` 表示本次运行的实际 publish 结果；`requested_publish_succeeded` 保留请求侧传入的 planning hint。
+- `apps/dashboard/main.py` 已退役，当前会返回 `410 Gone`；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
+
 ## Code-Wiki（以代码事实为准）
 
 ### 1) 终极目标与边界（对齐交接文档）
@@ -43,13 +79,13 @@
 
 ### 2) 当前“版本/模型”地图（避免口径混乱）
 
-- 低频引擎（根目录脚本线）：以 `lowfreq_engine_v16_advanced.py` 为最佳版基线（含板块共振、跟随股溃散预警、基本面筛选开关、分批止盈/尾随止损、完整回测）。
+- 低频引擎（根目录脚本线）：当前正式代码真相源是 `lowfreq_engine_v16_advanced.py`，但不能沿用历史文档对其能力的宽泛描述；正式卖出逻辑与历史会话中的“分批止盈/目标止盈/max_hold 已完整生效”口径存在偏差，必须以现行代码与回测产物核对。
 - 系统内实验室（V3 集成线）：`quant_trading_lab` 对外返回 `analysis_version: "v2_enhanced"`（候选+信号生成，不等价于低频脚本的完整交易执行/回测）。
 - 现状结论：当前仓库同时存在“脚本策略引擎线”和“V3 分析/信号线”，两者尚未统一为一个可配置、可复现、可审计的单一策略版本体系。
 
 ### 3) 关键链路（从数据到结果）
 
-- 数据更新（API 写入）：`update_daily_prices_tencent_view` → upsert `daily_prices` → 重建交易日历；必要时可从 V2 sqlite 通过 `sync_daily_prices_view(target_date=...)` 补齐指定日期。
+- 数据更新（API 写入）：`update_daily_prices_authoritative_view` → `Tushare` 主源写入 `daily_prices`，必要时由 `Tencent` 仅作 safety-net；成功后重建交易日历；必要时可从 V2 sqlite 通过 `sync_daily_prices_view(target_date=...)` 补齐指定日期。
 - 数据就绪（Data Control）：`DataControlPipeline.capture/compose/publish`（capture 负责交易日历生成与单位校验；publish 以“单位校验 + compose 产物存在”为发布闸门）。
 - 选股/因子矩阵：`FactorMatrixBuilder` 生成 `factor_matrix_daily.json`（包含 market_context、tiers、signals 等）；筛选器通过 registry 运行并对外以 CSV 交付。
 - 实验室：`LabRuntimeAdapter` 统一入口（杯柄/量化交易等），由 `DailyMasterOrchestrator` 在 worker 中按 phases/tasks 调度执行。
@@ -213,13 +249,19 @@
   - API 结构：HTTP Handler 从 `apps/api/main.py` 抽到 `apps/api/http.py`，集中管理 CORS/鉴权/响应编码。
 - 2026-05-27（结构性拆分继续推进）：
   - API 结构：shared types 抽到 `apps/api/shared.py`；Router 抽到 `apps/api/router.py`；`apps/api/http.py` 改为依赖新模块，`apps/api/main.py` 保持兼容导出。
-  - 回归：`python3 -m pytest -q`（42 passed）。
+  - 回归：`./.venv/bin/python -m pytest -q`（42 passed）。
   - API 结构：新增 `apps/api/service.py` 作为 Service 的稳定导出入口（当前仍从 `apps/api/main.py` 兼容导入），为后续把 `BootstrapApiService` 真正迁出做准备。
   - 数据：`POST /api/data-control/sync-daily-prices` 支持传 `target_date`（或 `date`）进行历史补齐（例如补齐 2026-05-25）。
   - 低频控制台（前端）：`section-neotrade3-enhanced` 新增“模拟交易状态/全历史回测报告（PDF）”面板，并将“模型运行/筛选器运行”从 simulated 改为真实调用。
   - 低频模型（后端）：新增 `POST /api/model/run`（低频 v16 模拟交易推进）、`GET /api/sectors/hot` 返回人气板块 + 龙头/中军/跟随 + 买入/离场信号 + 模拟持仓汇总。
   - 回测报告（PDF）：引入 `reportlab` 生成 PDF；新增 `POST /api/lowfreq/backtest/run` 生成全历史回测报告，并提供 `/api/lowfreq/backtest/reports/<report_id>.pdf|.json` 下载。
-  - 仓库清理：根目录只保留 `lowfreq_engine_v16_advanced.py` / `lowfreq_engine_v15_final.py` / `lowfreq_engine_v3.py` 三个低频脚本，其余旧脚本归档到 `scripts/archive/*`；删除重复文档 `NeoTrade3实施交接文档_副本.md`。
+-  - 仓库清理：低频当前权威引擎保留为根目录 `lowfreq_engine_v16_advanced.py`；历史根目录低频引擎已迁到 `legacy/lowfreq/`，其余旧脚本继续归档到 `scripts/archive/*`；删除重复文档 `NeoTrade3实施交接文档_副本.md`。
+
+- 2026-06-06（本轮新增能力与交付物）：
+  - A 股中市值审计（200—500 亿）：新增 `GET /api/ashare/midcap/audit?date=YYYY-MM-DD`（同时支持 `/api/v1/...`），输出 `qualified_clean / qualified_flagged / excluded` 三类结果，并给出每只股票的 `issues`（含 `risk_level` 与证据字段）。
+  - 概念主线计算：API 已具备 `GET /api/concepts/mainline` 与 `GET /api/concepts/mainline/detail`（同样支持 `/api/v1/...`），对概念板块给出热度评分与主线排序所需字段（heat / MA20/60/90 / mainline_score 等）。
+  - 低频研究报告交付（LaTeX）：已在 `var/tmp/lowfreq_research_report/latex/main.tex` 固化研究报告排版源文件，并可用 `tectonic` 编译为 `main.pdf`（同目录产出）。
+  - 环境约束（重要）：当前执行环境对 `~/Downloads` 写入受限，报告交付建议以项目内路径为准（例如 `var/tmp/lowfreq_research_report/latex/main.pdf`），再由本机终端或 Finder 手工拷贝到 Downloads。
 
 ## 文档一致性说明
 
