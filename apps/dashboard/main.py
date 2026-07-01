@@ -81,6 +81,7 @@ class DashboardPageBuilder:
         <nav class="sidebar-nav">
           <div class="sidebar-group-title">总览</div>
           <a href="#section-overview">今日总览</a>
+          <a href="#section-market-intelligence">主线审阅</a>
 
           <div class="sidebar-group-title">低频交易</div>
           <a href="#section-lowfreq-today">今日快照</a>
@@ -215,6 +216,34 @@ class DashboardPageBuilder:
         <details class="raw-payload dev-only">
           <summary>总览原始数据</summary>
           <pre id="overview">加载中...</pre>
+        </details>
+      </section>
+      <section id="section-market-intelligence" class="section-wide" data-scope="result">
+        <h2>主线审阅</h2>
+        <p class="summary-text">目标：把主线赛道、建议层候选与结构化决策摘要放到同一审阅区，先看方向，再看候选。</p>
+        <div id="market-intelligence-status" class="status-banner">加载中...</div>
+        <div id="market-intelligence-error" class="status-banner error-banner" hidden>—</div>
+
+        <div id="market-intelligence-summary-grid" class="summary-grid"></div>
+
+        <div class="section-box">
+          <h3>主线赛道</h3>
+          <div id="market-intelligence-themes">加载中...</div>
+        </div>
+
+        <div class="section-box">
+          <h3>建议层候选</h3>
+          <div id="market-intelligence-candidates">加载中...</div>
+        </div>
+
+        <div class="section-box">
+          <h3>联动摘要</h3>
+          <div id="market-intelligence-links">加载中...</div>
+        </div>
+
+        <details class="raw-payload dev-only">
+          <summary>主线审阅原始数据</summary>
+          <pre id="market-intelligence-raw">加载中...</pre>
         </details>
       </section>
       <section id="section-daily-workbench" class="section-wide" data-scope="result">

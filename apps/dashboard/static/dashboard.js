@@ -968,6 +968,229 @@ function renderListBox(containerId, title, items) {
   container.appendChild(ul);
 }
 
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatMarketStatusBadge(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return '<span class="mi-badge mi-badge--muted">未知</span>';
+  const normalized = raw.toLowerCase();
+  let cls = "mi-badge--muted";
+  if (["focused", "high", "推荐", "up", "exception"].includes(raw) || ["focused", "high", "up", "exception"].includes(normalized)) {
+    cls = "mi-badge--good";
+  } else if (["mixed", "medium", "观察", "unknown"].includes(raw) || ["mixed", "medium", "unknown"].includes(normalized)) {
+    cls = "mi-badge--warn";
+  } else if (["weak", "low", "回避", "down"].includes(raw) || ["weak", "low", "down"].includes(normalized)) {
+    cls = "mi-badge--bad";
+  }
+  return `<span class="mi-badge ${cls}">${escapeHtml(raw)}</span>`;
+}
+
+function renderMarketIntelligenceSummary(summaryPayload) {
+  const container = document.getElementById("market-intelligence-summary-grid");
+  if (!container) return;
+  clearElement(container);
+  const payload = summaryPayload && typeof summaryPayload === "object" ? summaryPayload : {};
+  const summary = payload.summary && typeof payload.summary === "object" ? payload.summary : {};
+  const counts = payload.counts && typeof payload.counts === "object" ? payload.counts : {};
+  const cards = [
+    {
+      label: "主线集中度",
+      value: summary.mainline_concentration || PLACEHOLDER,
+      detail: `推荐 ${counts.recommended ?? 0} · 观察 ${counts.watchlist ?? 0} · 回避 ${counts.avoid ?? 0}`,
+    },
+    {
+      label: "AI 聚焦",
+      value: summary.ai_focus || PLACEHOLDER,
+      detail: `AI 推荐 ${counts.recommended_ai ?? 0}`,
+    },
+    {
+      label: "K 型干扰",
+      value: summary.kshape_interference || PLACEHOLDER,
+      detail: `推荐区向下 ${counts.recommended_kshape_down ?? 0} · 观察区向下 ${counts.watch_kshape_down ?? 0}`,
+    },
+    {
+      label: "推荐集中度",
+      value: summary.recommendation_concentration || PLACEHOLDER,
+      detail: "建议层集中度摘要",
+    },
+  ];
+
+  for (const card of cards) {
+    const article = document.createElement("article");
+    article.className = "metric-card";
+    article.innerHTML = `
+      <div class="metric-label">${escapeHtml(card.label)}</div>
+      <div class="metric-value metric-value--large">${formatMarketStatusBadge(card.value)}</div>
+      <div class="metric-detail">${escapeHtml(card.detail)}</div>
+    `;
+    container.appendChild(article);
+  }
+}
+
+function renderMarketIntelligenceThemes(reviewBoardPayload) {
+  const container = document.getElementById("market-intelligence-themes");
+  if (!container) return;
+  const payload = reviewBoardPayload && typeof reviewBoardPayload === "object" ? reviewBoardPayload : {};
+  const themeSummary = payload.theme_summary && typeof payload.theme_summary === "object" ? payload.theme_summary : {};
+  const items = Array.isArray(themeSummary.items) ? themeSummary.items : [];
+  if (items.length === 0) {
+    container.innerHTML = '<div class="summary-line">暂无主线赛道。</div>';
+    return;
+  }
+  const rows = items.slice(0, 8).map((item) => {
+    const thematicTags = item && typeof item === "object" && item.thematic_tags && typeof item.thematic_tags === "object"
+      ? item.thematic_tags
+      : {};
+    const kshape = thematicTags.kshape_direction && typeof thematicTags.kshape_direction === "object"
+      ? thematicTags.kshape_direction.value
+      : PLACEHOLDER;
+    const penetration = thematicTags.penetration_stage && typeof thematicTags.penetration_stage === "object"
+      ? (Array.isArray(thematicTags.penetration_stage.values) ? thematicTags.penetration_stage.values.join(", ") : thematicTags.penetration_stage.value || PLACEHOLDER)
+      : PLACEHOLDER;
+    const aiRelated = thematicTags.ai_related && thematicTags.ai_related.result ? "AI" : "非 AI";
+    return `
+      <tr>
+        <td>${escapeHtml(item.concept_name || item.concept_code || PLACEHOLDER)}</td>
+        <td>${formatMarketStatusBadge(aiRelated)}</td>
+        <td>${formatMarketStatusBadge(kshape)}</td>
+        <td>${escapeHtml(penetration || PLACEHOLDER)}</td>
+        <td>${escapeHtml(String(item.board_score ?? PLACEHOLDER))}</td>
+        <td>${escapeHtml(String(item.config_candidate_count ?? 0))}/${escapeHtml(String(item.institutional_candidate_count ?? 0))}/${escapeHtml(String(item.trading_candidate_count ?? 0))}</td>
+      </tr>
+    `;
+  }).join("");
+  container.innerHTML = `
+    <div class="summary-line">前 ${Math.min(items.length, 8)} 条主线赛道，顺序沿用后端审阅排序。</div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>赛道</th>
+            <th>AI</th>
+            <th>K 型</th>
+            <th>渗透率</th>
+            <th>分数</th>
+            <th>候选数</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMarketIntelligenceCandidates(reviewBoardPayload) {
+  const container = document.getElementById("market-intelligence-candidates");
+  if (!container) return;
+  const payload = reviewBoardPayload && typeof reviewBoardPayload === "object" ? reviewBoardPayload : {};
+  const candidateSummary = payload.candidate_summary && typeof payload.candidate_summary === "object" ? payload.candidate_summary : {};
+  const items = Array.isArray(candidateSummary.items) ? candidateSummary.items : [];
+  if (items.length === 0) {
+    container.innerHTML = '<div class="summary-line">暂无建议层候选。</div>';
+    return;
+  }
+  const rows = items.slice(0, 10).map((item) => {
+    const leaderSummary = item && typeof item === "object" && item.leader_summary && typeof item.leader_summary === "object"
+      ? item.leader_summary
+      : {};
+    const candidateTypes = Array.isArray(leaderSummary.candidate_types) ? leaderSummary.candidate_types.join(" + ") : PLACEHOLDER;
+    const reasons = Array.isArray(item.recommendation_reasons) ? item.recommendation_reasons.slice(0, 2).join("；") : PLACEHOLDER;
+    return `
+      <tr>
+        <td>${escapeHtml(item.stock_code || PLACEHOLDER)}</td>
+        <td>${escapeHtml(item.stock_name || PLACEHOLDER)}</td>
+        <td>${formatMarketStatusBadge(item.recommendation_status || PLACEHOLDER)}</td>
+        <td>${escapeHtml(candidateTypes)}</td>
+        <td>${escapeHtml(reasons || PLACEHOLDER)}</td>
+      </tr>
+    `;
+  }).join("");
+  container.innerHTML = `
+    <div class="summary-line">前 ${Math.min(items.length, 10)} 条建议层候选，按后端建议层排序展示。</div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>代码</th>
+            <th>名称</th>
+            <th>状态</th>
+            <th>龙头身份</th>
+            <th>原因摘要</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMarketIntelligenceLinks(reviewBoardPayload) {
+  const container = document.getElementById("market-intelligence-links");
+  if (!container) return;
+  const payload = reviewBoardPayload && typeof reviewBoardPayload === "object" ? reviewBoardPayload : {};
+  const items = Array.isArray(payload.links) ? payload.links : [];
+  if (items.length === 0) {
+    container.innerHTML = '<div class="summary-line">暂无候选与赛道联动摘要。</div>';
+    return;
+  }
+  const rows = items.slice(0, 10).map((item) => {
+    const matchedThemes = Array.isArray(item.matched_themes)
+      ? item.matched_themes.map((entry) => String(entry.concept_name || entry.concept_code || "")).filter((value) => value).join(" / ")
+      : "";
+    const penetration = Array.isArray(item.penetration_values) ? item.penetration_values.join(", ") : "";
+    return `
+      <tr>
+        <td>${escapeHtml(item.stock_code || PLACEHOLDER)}</td>
+        <td>${escapeHtml(item.stock_name || PLACEHOLDER)}</td>
+        <td>${escapeHtml(matchedThemes || PLACEHOLDER)}</td>
+        <td>${escapeHtml(penetration || PLACEHOLDER)}</td>
+        <td>${formatMarketStatusBadge(item.recommendation_status || PLACEHOLDER)}</td>
+      </tr>
+    `;
+  }).join("");
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>代码</th>
+            <th>名称</th>
+            <th>关联赛道</th>
+            <th>渗透率</th>
+            <th>建议状态</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMarketIntelligenceBoard({ reviewBoardPayload, decisionSummaryPayload }) {
+  const statusEl = document.getElementById("market-intelligence-status");
+  const errorEl = document.getElementById("market-intelligence-error");
+  const rawEl = document.getElementById("market-intelligence-raw");
+  if (statusEl) statusEl.textContent = "主线审阅已加载。";
+  if (errorEl) errorEl.hidden = true;
+  if (rawEl) {
+    rawEl.textContent = formatJson({
+      review_board: reviewBoardPayload,
+      decision_summary: decisionSummaryPayload,
+    });
+  }
+  renderMarketIntelligenceSummary(decisionSummaryPayload);
+  renderMarketIntelligenceThemes(reviewBoardPayload);
+  renderMarketIntelligenceCandidates(reviewBoardPayload);
+  renderMarketIntelligenceLinks(reviewBoardPayload);
+}
+
 function renderDataControlStageSummary(payload) {
   const dataControl = payload.data_control || {};
   const stageSummary = dataControl.stage_summary || {};
@@ -2748,9 +2971,11 @@ function renderFactorMatrixBox(payload) {
       const tdName = document.createElement("td");
       tdName.textContent = row.stock_name;
       const tdScore = document.createElement("td");
-      tdScore.textContent = row.score ? row.score.toFixed(2) : "-";
+      tdScore.textContent =
+        row.score == null ? "-" : Number(row.score).toFixed(2);
       const tdCert = document.createElement("td");
-      tdCert.textContent = row.certainty ? row.certainty.toFixed(2) : "-";
+      tdCert.textContent =
+        row.certainty == null ? "-" : Number(row.certainty).toFixed(2);
       const tdReason = document.createElement("td");
       tdReason.textContent = row.check || "-";
       tr.appendChild(tdTier);
@@ -3678,6 +3903,31 @@ async function loadDashboard() {
     try { marketPhasePayload = await fetchJson("/api/market-phase"); } catch (e) { /* ignore */ }
     try { sectorRotationPayload = await fetchJson("/api/sector-rotation"); } catch (e) { /* ignore */ }
 
+    try {
+      const [reviewBoardPayload, decisionSummaryPayload] = await Promise.all([
+        fetchJson("/api/market-intelligence/review-board?top_n=10"),
+        fetchJson("/api/market-intelligence/decision-summary?top_n=10"),
+      ]);
+      renderMarketIntelligenceBoard({
+        reviewBoardPayload,
+        decisionSummaryPayload,
+      });
+    } catch (error) {
+      const statusEl = document.getElementById("market-intelligence-status");
+      const errorEl = document.getElementById("market-intelligence-error");
+      const rawEl = document.getElementById("market-intelligence-raw");
+      const message = `加载失败：${formatErrorMessage(error)}`;
+      if (statusEl) statusEl.textContent = "主线审阅加载失败。";
+      if (errorEl) {
+        errorEl.hidden = false;
+        errorEl.textContent = message;
+      }
+      if (rawEl) rawEl.textContent = message;
+      renderListBox("market-intelligence-themes", "主线赛道", [message]);
+      renderListBox("market-intelligence-candidates", "建议层候选", [message]);
+      renderListBox("market-intelligence-links", "联动摘要", [message]);
+    }
+
     renderOverviewSummary({
       execDate,
       issuePayload: issueCenter,
@@ -3838,7 +4088,6 @@ function initControls() {
   const syncV2Button = document.getElementById("control-sync-v2-daily-prices");
   const managementResult = document.getElementById("management-result");
   const wbSync = document.getElementById("wb-sync");
-  const wbUpdateTencent = document.getElementById("wb-update-tencent");
   const wbJumpLatest = document.getElementById("wb-jump-latest");
   const wbBulkRun = document.getElementById("wb-bulk-run");
   const wbQmRun = document.getElementById("wb-qm-run");
@@ -4039,7 +4288,7 @@ function initControls() {
     return [
       `执行日期：${targetDate}`,
       `状态：${status}`,
-      `任务数：${taskCount}（ok ${okCount} / failed ${failedCount} / blocked ${blockedCount} / skipped ${skippedCount} / pending ${pendingCount}）`,
+      `任务数：${taskCount}（通过 ${okCount} / 失败 ${failedCount} / 阻塞 ${blockedCount} / 跳过 ${skippedCount} / 待实现 ${pendingCount}）`,
       `发布闸门：${publishSucceeded}`,
       `触发时间：${requestedAt}`,
     ].join("\n");
@@ -4168,46 +4417,6 @@ function initControls() {
         wbResult.textContent = `同步失败：${formatErrorMessage(error)}`;
       } finally {
         wbSync.disabled = false;
-      }
-    });
-  }
-
-  if (wbUpdateTencent && wbResult) {
-    wbUpdateTencent.addEventListener("click", async (event) => {
-      event.preventDefault();
-      clearWorkbenchError();
-      wbUpdateTencent.disabled = true;
-      const dateInput = document.getElementById("control-date");
-      const targetDate = String(
-        (dateInput && dateInput.value) || effectiveDate || ""
-      ).trim();
-      wbResult.textContent = `从腾讯更新中...（日期 ${targetDate}）`;
-      try {
-        const payload = await postJson("/api/data-control/update-daily-prices/tencent", {
-          date: targetDate,
-          requested_by: "dashboard_workbench",
-          dry_run: false,
-        });
-        const summary =
-          payload && payload._meta && payload._meta.status === "ok"
-            ? `更新完成（日期 ${targetDate}）。`
-            : `更新已完成（日期 ${targetDate}，请刷新查看最新状态）。`;
-        wbResult.textContent = summary;
-        tradingCalendarMeta = await fetchJson("/api/trading-calendar/meta");
-        renderDailyWorkbench({ factorMatrix: null, pools: null, screeners: null });
-      } catch (error) {
-        const apiError =
-          error && error.payload && error.payload.error ? error.payload.error : null;
-        if (apiError && apiError.code === "unauthorized") {
-          showWorkbenchError(
-            formatUnauthorizedHint("更新")
-          );
-        } else {
-          showWorkbenchError(`更新失败：${formatErrorMessage(error)}`);
-        }
-        wbResult.textContent = `更新失败：${formatErrorMessage(error)}`;
-      } finally {
-        wbUpdateTencent.disabled = false;
       }
     });
   }
