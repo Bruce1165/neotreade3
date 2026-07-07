@@ -504,17 +504,35 @@ def _audit_daily_reason(
             "reason": f"市场情绪过滤（{market_state['sentiment']} {market_state['score']:.0f}分）",
         }
 
-    signals = ctx.signals(target_date)
-    if str(code) in signals:
-        sig = signals[str(code)]
+    entry_signals = ctx.entry_signals(target_date)
+    if str(code) in entry_signals:
+        sig = entry_signals[str(code)]
         return {
             "date": target_date.isoformat(),
-            "stage": "signal_selected",
-            "reason": "进入正式买入信号",
+            "stage": "entry_signal_selected",
+            "reason": "进入正式建仓池",
             "signal": {
                 "buy_score": float(sig.get("buy_score") or 0.0),
                 "role": str(sig.get("role") or ""),
                 "wave_phase": str(sig.get("wave_phase") or ""),
+                "candidate_tier": str(sig.get("candidate_tier") or ""),
+                "reasons": list(sig.get("reasons") or []),
+            },
+        }
+
+    candidate_signals = ctx.candidate_signals(target_date)
+    if str(code) in candidate_signals:
+        sig = candidate_signals[str(code)]
+        return {
+            "date": target_date.isoformat(),
+            "stage": "candidate_signal_selected",
+            "reason": "进入候选池，但未进入正式建仓池",
+            "signal": {
+                "buy_score": float(sig.get("buy_score") or 0.0),
+                "role": str(sig.get("role") or ""),
+                "wave_phase": str(sig.get("wave_phase") or ""),
+                "candidate_tier": str(sig.get("candidate_tier") or ""),
+                "entry_ready": bool(sig.get("entry_ready")),
                 "reasons": list(sig.get("reasons") or []),
             },
         }
@@ -648,6 +666,37 @@ def _load_trading_dates(conn: sqlite3.Connection, *, start_date: date, end_date:
     return [str(r[0]) for r in rows if r and r[0]]
 
 
+def _build_buy_signal_audit_index(entries: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        code = str(entry.get("code") or "").strip()
+        if not code:
+            continue
+        out[code].append(dict(entry))
+    for code, items in out.items():
+        items.sort(key=lambda x: (str(x.get("date") or ""), str(x.get("event") or "")))
+        out[code] = items
+    return out
+
+
+def _audit_block_reason_text(entry: dict[str, Any]) -> str:
+    blocked_reason = str(entry.get("blocked_reason") or "").strip()
+    execution_block_reason = str(entry.get("execution_block_reason") or "").strip()
+    if blocked_reason == "chase_entry_blocked":
+        return "信号存在但因追高型买点被硬禁"
+    if blocked_reason == "execution_signal_gate_blocked":
+        return "信号存在但因执行信号闸门被阻断"
+    if execution_block_reason == "entry_window_missed":
+        return "信号存在但执行窗口失效"
+    if execution_block_reason == "positions_full":
+        return "信号存在但同期仓位已满"
+    if execution_block_reason == "cash_insufficient":
+        return "信号存在但资金不足"
+    return ""
+
+
 def _extract_execution_reason(
     *,
     code: str,
@@ -657,12 +706,29 @@ def _extract_execution_reason(
     engine: LowFreqTradingEngineV16,
     ctx: AuditContext,
     max_positions: int,
+    segment_top_date: str,
+    buy_signal_audits: list[dict[str, Any]],
+    code_trades: list[dict[str, Any]],
+    execution_mode: str = "bounded",
     execution_one_price_limit_only: bool = False,
     limit_up_pct: float = 9.8,
 ) -> str:
     if not signal_dates:
         return ""
     first_signal = signal_dates[0]
+    top_key = str(segment_top_date or "").strip()
+    top_audits = [x for x in buy_signal_audits if str(x.get("date") or "") <= top_key] if top_key else list(buy_signal_audits)
+    blocking_audits = [x for x in top_audits if str(x.get("action_type") or "") == "block"]
+    late_trades = [x for x in code_trades if top_key and str(x.get("buy_date") or "") > top_key]
+    if blocking_audits:
+        latest_block = max(blocking_audits, key=lambda x: str(x.get("date") or ""))
+        reason = _audit_block_reason_text(latest_block)
+        if reason:
+            if late_trades:
+                return f"{reason}，见顶后才成交"
+            return reason
+    if late_trades:
+        return "信号存在但见顶后才成交"
     rows = conn.execute(
         """
         SELECT trade_date, pct_change, high, low, close
@@ -695,7 +761,11 @@ def _extract_execution_reason(
                 break
         if all_limit_up:
             return "信号存在但连续涨停，无法成交"
-    if first_signal in positions_timeline and len(positions_timeline[first_signal]) >= int(max_positions):
+    if (
+        str(execution_mode or "").strip().lower() != "unbounded_opportunity"
+        and first_signal in positions_timeline
+        and len(positions_timeline[first_signal]) >= int(max_positions)
+    ):
         return "信号存在但同期仓位已满"
     signal_map = ctx.signals(date.fromisoformat(str(first_signal)))
     sig = signal_map.get(str(code))
@@ -727,15 +797,11 @@ def _sell_reason_bucket(sell_reason: str) -> str:
     if reason.startswith("回测结束平仓"):
         return "回测结束平仓"
     if "板块见顶确认" in reason:
-        return "sector_top"
+        return "sector_top_confirmed"
     if "见顶确认" in reason or "见顶：" in reason:
-        return "market_top"
-    if "代理回撤" in reason:
-        return "market_drawdown"
-    if "个股回调" in reason:
-        return "stock_drawdown"
-    if "跌破买入价止损" in reason:
-        return "entry_stop_loss"
+        return "market_top_confirmed"
+    if "跌破买入价止损" in reason or "硬证伪退出" in reason:
+        return "thesis_invalidated"
     return "other"
 
 
@@ -755,17 +821,30 @@ def _not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
         "global_score_filtered": 4,
         "global_cap_filtered": 5,
         "sector_candidate_not_selected": 5,
+        "candidate_signal_selected": 6,
+        "entry_signal_selected": 7,
     }
     if not daily_audits:
-        return "主升段内从未形成正式信号"
+        return "主升段内从未进入候选池"
     max_priority = max(int(stage_priority.get(str(x.get("stage") or ""), 0)) for x in daily_audits)
     preferred = [x for x in daily_audits if int(stage_priority.get(str(x.get("stage") or ""), 0)) == max_priority]
     if not preferred:
         preferred = daily_audits
     reason_counter = Counter(str(x.get("reason") or "") for x in preferred if x.get("reason"))
     if not reason_counter:
-        return "主升段内从未形成正式信号"
+        return "主升段内从未进入候选池"
     return str(reason_counter.most_common(1)[0][0])
+
+
+def _candidate_only_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
+    candidate_hits = [x for x in daily_audits if str(x.get("stage") or "") == "candidate_signal_selected"]
+    if not candidate_hits:
+        return "进入候选池但未进入正式建仓池"
+    first_hit = candidate_hits[0]
+    signal = first_hit.get("signal") if isinstance(first_hit.get("signal"), dict) else {}
+    if str(signal.get("candidate_tier") or "") == "soft_retained":
+        return "进入候选池但被软保留，未进入正式建仓池"
+    return "进入候选池但未进入正式建仓池"
 
 
 def _analyze_topk(
@@ -779,6 +858,16 @@ def _analyze_topk(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     report_rows: list[dict[str, Any]] = []
+    summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
+    config_snapshot = backtest_payload.get("config_snapshot") if isinstance(backtest_payload, dict) else {}
+    execution_mode = (
+        str(config_snapshot.get("execution_mode") or "").strip()
+        if isinstance(config_snapshot, dict)
+        else ""
+    ) or str(getattr(engine, "EXECUTION_MODE", "unbounded_opportunity") or "unbounded_opportunity")
+    buy_signal_audit_by_code = _build_buy_signal_audit_index(
+        list(summary.get("buy_signal_audit") or []) if isinstance(summary, dict) else []
+    )
     min_start = date(year, 1, 1)
     max_top = date(year, 12, 31)
     for item in ranking:
@@ -811,6 +900,8 @@ def _analyze_topk(
                     "name": name,
                     "annual_return_pct": item["annual_return_pct"],
                     "segment_status": str(segment.get("status") or "unknown"),
+                    "candidate_picked": False,
+                    "entry_picked": False,
                     "picked": False,
                     "bought": False,
                     "held_to_top": False,
@@ -826,7 +917,8 @@ def _analyze_topk(
         top_idx = int(date_to_idx.get(top_key, start_idx))
         segment_dates = trading_dates[start_idx : top_idx + 1]
         daily_audits: list[dict[str, Any]] = []
-        signal_dates: list[str] = []
+        candidate_dates: list[str] = []
+        entry_dates: list[str] = []
         for d_key in segment_dates:
             audit = _audit_daily_reason(
                 engine=engine,
@@ -837,8 +929,10 @@ def _analyze_topk(
                 target_date=date.fromisoformat(d_key),
             )
             daily_audits.append(audit)
-            if audit.get("stage") == "signal_selected":
-                signal_dates.append(d_key)
+            if audit.get("stage") in {"candidate_signal_selected", "entry_signal_selected"}:
+                candidate_dates.append(d_key)
+            if audit.get("stage") == "entry_signal_selected":
+                entry_dates.append(d_key)
 
         code_trades = sorted(
             trades_by_code.get(code, []),
@@ -855,7 +949,8 @@ def _analyze_topk(
             for t in relevant_trades
         )
 
-        first_signal_date = signal_dates[0] if signal_dates else ""
+        first_candidate_date = candidate_dates[0] if candidate_dates else ""
+        first_entry_date = entry_dates[0] if entry_dates else ""
         first_buy_date = str(relevant_trades[0].get("buy_date") or "") if relevant_trades else ""
         first_sell_date = str(relevant_trades[0].get("sell_date") or "") if relevant_trades else ""
         latest_exit_reason = ""
@@ -863,28 +958,35 @@ def _analyze_topk(
             latest_trade = max(relevant_trades, key=lambda x: str(x.get("sell_date") or ""))
             latest_exit_reason = str(latest_trade.get("sell_reason") or "")
 
-        if signal_dates and not bought:
+        if bought and held_to_top:
+            primary_reason = "实际持仓延续到市场事实见顶"
+            reason_bucket = "held_to_top"
+        elif bought:
+            primary_reason = latest_exit_reason or "已买入但未持有到见顶"
+            reason_bucket = _sell_reason_bucket(latest_exit_reason)
+        elif entry_dates:
             primary_reason = _extract_execution_reason(
                 code=code,
-                signal_dates=signal_dates,
+                signal_dates=entry_dates,
                 positions_timeline=positions_timeline,
                 conn=conn,
                 engine=engine,
                 ctx=ctx,
                 max_positions=int(engine.MAX_POSITIONS),
+                segment_top_date=top_key,
+                buy_signal_audits=buy_signal_audit_by_code.get(code, []),
+                code_trades=code_trades,
+                execution_mode=execution_mode,
                 execution_one_price_limit_only=bool(execution_one_price_limit_only),
                 limit_up_pct=float(getattr(engine, "EXEC_LIMIT_UP_PCT", 9.8) or 9.8),
             )
             reason_bucket = "picked_not_bought"
-        elif not signal_dates:
+        elif candidate_dates:
+            primary_reason = _candidate_only_primary_reason(daily_audits)
+            reason_bucket = "candidate_not_entry"
+        else:
             primary_reason = _not_picked_primary_reason(daily_audits)
             reason_bucket = "not_picked"
-        elif bought and held_to_top:
-            primary_reason = "实际持仓延续到市场事实见顶"
-            reason_bucket = "held_to_top"
-        else:
-            primary_reason = latest_exit_reason or "已买入但未持有到见顶"
-            reason_bucket = _sell_reason_bucket(latest_exit_reason)
 
         summary_counters[reason_bucket] += 1
         report_rows.append(
@@ -897,9 +999,15 @@ def _analyze_topk(
                 "segment_start_date": start_key,
                 "segment_top_date": top_key,
                 "segment_return_pct": float(segment["segment_return_pct"]),
-                "picked": bool(signal_dates),
-                "first_signal_date": first_signal_date,
-                "signal_count_in_segment": len(signal_dates),
+                "candidate_picked": bool(candidate_dates),
+                "entry_picked": bool(entry_dates),
+                "picked": bool(entry_dates),
+                "first_candidate_date": first_candidate_date,
+                "candidate_signal_count_in_segment": len(candidate_dates),
+                "first_entry_date": first_entry_date,
+                "first_signal_date": first_entry_date,
+                "entry_signal_count_in_segment": len(entry_dates),
+                "signal_count_in_segment": len(entry_dates),
                 "bought": bought,
                 "first_buy_date": first_buy_date,
                 "first_sell_date": first_sell_date,
@@ -913,7 +1021,9 @@ def _analyze_topk(
 
     aggregate = {
         "count": len(report_rows),
-        "picked_count": int(sum(1 for x in report_rows if x.get("picked"))),
+        "candidate_picked_count": int(sum(1 for x in report_rows if x.get("candidate_picked"))),
+        "entry_picked_count": int(sum(1 for x in report_rows if x.get("entry_picked"))),
+        "picked_count": int(sum(1 for x in report_rows if x.get("entry_picked"))),
         "bought_count": int(sum(1 for x in report_rows if x.get("bought"))),
         "held_to_top_count": int(sum(1 for x in report_rows if x.get("held_to_top"))),
         "reason_buckets": dict(summary_counters),
@@ -941,12 +1051,14 @@ def _write_markdown_report(
     lines.append("- 年度涨幅口径：未复权收盘价，使用年内首个有效交易日与最后一个有效交易日。")
     lines.append("- 主升段起点：见顶日前 180 个交易日窗口内最低收盘价。")
     lines.append("- 见顶日期：2025 年内最高收盘价所在交易日。")
-    lines.append("- 模型行为口径：当前收紧 `market_top` 且补正 `301* -> 创业板` 后的引擎逻辑。")
+    lines.append("- 分层信号口径：`candidate_signals` 表示进入候选池，`entry_signals` 表示进入正式建仓池；active 归因不再读取旧 `buy_signals` 别名。")
+    lines.append("- 模型行为口径：当前引擎主动离场归因为 `market_top_confirmed`、`sector_top_confirmed`、`thesis_invalidated`。")
     lines.append("")
     lines.append("## 总体摘要")
     lines.append("")
     lines.append(f"- Top{int(limit)} count: {len(ranking)}")
-    lines.append(f"- 模型曾挑中：{aggregate.get('picked_count', 0)}")
+    lines.append(f"- 进入候选池：{aggregate.get('candidate_picked_count', 0)}")
+    lines.append(f"- 进入正式建仓池：{aggregate.get('entry_picked_count', 0)}")
     lines.append(f"- 实际买入：{aggregate.get('bought_count', 0)}")
     lines.append(f"- 持有到市场事实见顶：{aggregate.get('held_to_top_count', 0)}")
     summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
@@ -960,9 +1072,16 @@ def _write_markdown_report(
     for reason, count in top_reasons.most_common():
         lines.append(f"- {reason}: {count}")
     lines.append("")
-    lines.append("## 典型未挑中样本")
+    lines.append("## 典型候选未转建仓样本")
     lines.append("")
-    for row in [x for x in attribution_rows if not x.get("picked")][:20]:
+    for row in [x for x in attribution_rows if x.get("candidate_picked") and not x.get("entry_picked")][:20]:
+        lines.append(
+            f"- {row['code']} {row['name']} | 年涨幅 {row['annual_return_pct']:.2f}% | 起涨 {row['segment_start_date']} | 首次候选 {row['first_candidate_date']} | 原因：{row['primary_reason']}"
+        )
+    lines.append("")
+    lines.append("## 典型未进候选样本")
+    lines.append("")
+    for row in [x for x in attribution_rows if not x.get("candidate_picked")][:20]:
         lines.append(
             f"- {row['code']} {row['name']} | 年涨幅 {row['annual_return_pct']:.2f}% | 起涨 {row['segment_start_date']} | 见顶 {row['segment_top_date']} | 原因：{row['primary_reason']}"
         )
