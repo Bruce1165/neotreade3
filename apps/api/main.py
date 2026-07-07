@@ -30,6 +30,15 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from neotrade3.config_contracts import build_config_contract_report
+from neotrade3.data_control import (
+    build_attention_item,
+    build_freshness_proof,
+    build_quality_status,
+    project_d1_daily_price_fact,
+    project_d7_security_master_minimal,
+    project_d7_trading_day_status,
+    project_pf1_trading_profile,
+)
 from neotrade3.migration import (
     build_feature_inventory_payload,
     build_feature_mapping_coverage_payload,
@@ -39,9 +48,16 @@ from apps.worker.main import BootstrapWorkerApp
 from neotrade3.data_control import SourceRegistry
 from neotrade3.data_control.pipeline import DataControlPipeline
 from neotrade3.labs import LabRegistry
+from neotrade3.labs.contracts import (
+    build_lab_runtime_artifacts_payload,
+    resolve_lab_runtime_task_id,
+    write_lab_contract_artifacts,
+)
+from neotrade3.labs.runtime import LabRuntimeAdapter
+from neotrade3.lowfreq_score import LOWFREQ_SCORE_STATES, LowfreqScoreStore
 from neotrade3.orchestration import load_orchestrator_config
 from neotrade3.orchestration.daily_master_orchestrator import DailyMasterOrchestrator
-from neotrade3.orchestration.models import DailyRunRequest
+from neotrade3.orchestration.models import DailyRunRequest, RunStatus
 from neotrade3.screeners.registry import load_screener_registry
 from neotrade3.screeners.storage import (
     list_bulk_runs,
@@ -241,23 +257,23 @@ class BootstrapApiService:
         }
         self._auto_opt_dir = self.project_root / "var/ledgers/auto_optimization"
         self._feature_inventory_file = (
-            self.project_root / "docs/migration/neotrade2_feature_inventory.v3.json"
+            self.project_root / "config/migration/neotrade2_feature_inventory.v3.json"
         )
         self._strategy_and_lab_mapping_file = (
             self.project_root
-            / "docs/migration/mappings/neotrade3_feature_mapping_strategy_and_lab_v1.json"
+            / "config/migration/mappings/neotrade3_feature_mapping_strategy_and_lab_v1.json"
         )
         self._assistant_mapping_file = (
             self.project_root
-            / "docs/migration/mappings/neotrade3_feature_mapping_assistant_v1.json"
+            / "config/migration/mappings/neotrade3_feature_mapping_assistant_v1.json"
         )
         self._operations_mapping_file = (
             self.project_root
-            / "docs/migration/mappings/neotrade3_feature_mapping_operations_v1.json"
+            / "config/migration/mappings/neotrade3_feature_mapping_operations_v1.json"
         )
         self._screeners_mapping_file = (
             self.project_root
-            / "docs/migration/mappings/neotrade3_feature_mapping_screeners_v1.json"
+            / "config/migration/mappings/neotrade3_feature_mapping_screeners_v1.json"
         )
         self._cache: dict[tuple[str, ...], ApiCacheEntry] = {}
         self._cache_lock = threading.RLock()
@@ -1154,6 +1170,16 @@ class BootstrapApiService:
             },
             "source_registry": registry_payload,
             "data_control": snapshot["data_control"],
+            "m1_formal_contracts": self._m1_formal_contract_catalog(),
+            "compatibility_boundaries": {
+                "note": "正式 M1 消费面已切到 /api/data-control/m1/...；旧分析与信号接口仅保留兼容读取语义，不应被声明为首批正式对象。",
+                "required_formal_entrypoints": [
+                    "/api/data-control/m1/d1/daily-price-facts",
+                    "/api/data-control/m1/d7/security-master",
+                    "/api/data-control/m1/d7/trading-day-status",
+                    "/api/data-control/m1/d8/trading-profiles",
+                ],
+            },
         }
 
     def data_control_runs_view(
@@ -1332,7 +1358,7 @@ class BootstrapApiService:
             status_counts[str(item.get("status"))] = (
                 status_counts.get(str(item.get("status")), 0) + 1
             )
-        overall_status = "ok" if status_counts.get("failed", 0) == 0 else "partial"
+        overall_status = self._resolve_orchestration_snapshot_status(snapshot)
 
         run_ledger_payload = {
             "version": 1,
@@ -1381,7 +1407,10 @@ class BootstrapApiService:
                 encoding="utf-8",
             )
 
-        return {"_meta": {"status": "ok"}, "orchestrator_run": run_ledger_payload}
+        return {
+            "_meta": {"status": overall_status},
+            "orchestrator_run": run_ledger_payload,
+        }
 
     @staticmethod
     def _snapshot_task_results(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1411,15 +1440,83 @@ class BootstrapApiService:
             status = str(item.get("status", ""))
             if not isinstance(lab_id, str) or not lab_id.strip():
                 continue
-            if status not in {"ok", "skipped"} or lab_id in seen_lab_ids:
+            if lab_id in seen_lab_ids:
                 continue
-            self.lab_run_view(
-                target_date=target_date,
-                lab_id=lab_id,
-                requested_by=requested_by,
-                dry_run=dry_run,
-            )
+            if status == "ok":
+                self.lab_run_view(
+                    target_date=target_date,
+                    lab_id=lab_id,
+                    requested_by=requested_by,
+                    dry_run=dry_run,
+                )
+            elif status in {"skipped", "failed", "blocked", "pending_implementation"}:
+                self._materialize_snapshot_backed_lab_run(
+                    target_date=target_date,
+                    lab_id=lab_id,
+                    requested_by=requested_by,
+                    dry_run=dry_run,
+                    task_result=item,
+                )
             seen_lab_ids.add(lab_id)
+
+    def _materialize_snapshot_backed_lab_run(
+        self,
+        *,
+        target_date: str,
+        lab_id: str,
+        requested_by: str,
+        dry_run: bool,
+        task_result: dict[str, Any],
+    ) -> None:
+        requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ledger_path, artifact_path = self._lab_run_paths(target_date=target_date, lab_id=lab_id)
+        run_status = str(task_result.get("status", "")).strip().lower() or "failed"
+        details = task_result.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        registry = LabRegistry.from_file(self._labs_config)
+        lab = registry.get_lab(lab_id)
+        lab_name = lab.display_name if lab is not None else lab_id
+        ledger_payload = {
+            "version": 1,
+            "lab_id": lab_id,
+            "lab_name": lab_name,
+            "target_date": target_date,
+            "requested_by": requested_by,
+            "requested_at": requested_at,
+            "status": run_status,
+            "artifact_path": self._safe_ref_path(str(artifact_path)),
+        }
+        artifact_payload = {
+            "version": 1,
+            "task_id": task_result.get("task_id"),
+            "lab_id": lab_id,
+            "lab_name": lab_name,
+            "target_date": target_date,
+            "requested_by": requested_by,
+            "requested_at": requested_at,
+            "status": run_status,
+            "message": str(task_result.get("message", "")),
+            "details": details,
+            "artifact_refs": (
+                task_result.get("artifact_refs", [])
+                if isinstance(task_result.get("artifact_refs", []), list)
+                else []
+            ),
+        }
+        if not dry_run:
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            ledger_path.write_text(
+                json.dumps(ledger_payload, indent=2, ensure_ascii=False, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            artifact_path.write_text(
+                json.dumps(artifact_payload, indent=2, ensure_ascii=False, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
 
     def orchestration_runs_view(
         self,
@@ -1906,6 +2003,7 @@ class BootstrapApiService:
 
             return {
                 "_meta": {"status": "accepted"},
+                "status": "running",
                 "message": "已提交后台运行，请稍后刷新查看结果",
                 "job": {
                     "job_id": job_id,
@@ -2017,9 +2115,52 @@ class BootstrapApiService:
             )
 
         return {
-            "_meta": {"status": "ok"},
+            "_meta": {"status": bulk_status},
+            "status": bulk_status,
             "bulk_run": bulk_ledger_payload,
         }
+
+    @staticmethod
+    def _summarize_shared_run_statuses(statuses: list[str]) -> str:
+        normalized = [
+            str(status or "").strip().lower()
+            for status in statuses
+            if str(status or "").strip()
+        ]
+        if not normalized:
+            return RunStatus.PENDING_IMPLEMENTATION.value
+        priority = [
+            RunStatus.FAILED.value,
+            RunStatus.BLOCKED.value,
+            RunStatus.SKIPPED.value,
+            RunStatus.PENDING_IMPLEMENTATION.value,
+            RunStatus.OK.value,
+            RunStatus.PLANNED.value,
+        ]
+        unique = set(normalized)
+        for status in priority:
+            if status in unique:
+                return status
+        return normalized[0]
+
+    @classmethod
+    def _resolve_orchestration_snapshot_status(cls, snapshot: dict[str, Any]) -> str:
+        top_level_status = str(snapshot.get("status", "")).strip().lower()
+        if top_level_status:
+            return top_level_status
+        orchestration = snapshot.get("orchestration", {})
+        if isinstance(orchestration, dict):
+            run_ledger = orchestration.get("run_ledger", {})
+            if isinstance(run_ledger, dict):
+                run_ledger_status = str(run_ledger.get("status", "")).strip().lower()
+                if run_ledger_status:
+                    return run_ledger_status
+        return cls._summarize_shared_run_statuses(
+            [
+                str(item.get("status", ""))
+                for item in cls._snapshot_task_results(snapshot)
+            ]
+        )
 
     @staticmethod
     def _summarize_runtime_statuses(statuses: list[str]) -> str:
@@ -5103,6 +5244,49 @@ class BootstrapApiService:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    @staticmethod
+    def _resolve_lab_runtime_task_id(lab: Any) -> str:
+        return resolve_lab_runtime_task_id(lab)
+
+    def _build_lab_runtime_artifacts_payload(
+        self,
+        *,
+        lab: Any,
+        runtime_result: dict[str, Any],
+        target_date: str,
+        requested_by: str,
+        requested_at: str,
+        run_status: str,
+    ) -> dict[str, Any]:
+        try:
+            return build_lab_runtime_artifacts_payload(
+                lab=lab,
+                runtime_result=runtime_result,
+                target_date=target_date,
+                requested_by=requested_by,
+                requested_at=requested_at,
+                run_status=run_status,
+            )
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="lab_artifact_contract_mismatch",
+                message=str(exc),
+                details={"lab_id": str(getattr(lab, "lab_id", ""))},
+            ) from exc
+
+    def _write_lab_contract_artifacts(
+        self,
+        *,
+        lab: Any,
+        artifacts_payload: dict[str, Any],
+    ) -> None:
+        write_lab_contract_artifacts(
+            project_root=self.project_root,
+            lab=lab,
+            artifacts_payload=artifacts_payload,
+        )
+
     def lab_run_view(
         self,
         *,
@@ -5140,9 +5324,6 @@ class BootstrapApiService:
         )
         requested_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        compose_artifact = self._read_data_control_compose_artifact(
-            target_date=target_date
-        )
         publish_artifact = self._read_data_control_publish_artifact(
             target_date=target_date
         )
@@ -5161,108 +5342,27 @@ class BootstrapApiService:
                     details={"lab_id": lab_id, "target_date": target_date},
                 )
 
-        artifacts_payload: dict[str, Any] = {}
-        if lab_id == "cup_handle_lab":
-            screener_artifact = read_screener_run_artifact(
-                project_root=self.project_root,
-                target_date=target_date,
-                screener_id="cup_handle_v4",
+        runtime_result = LabRuntimeAdapter.run_job(
+            task_id=self._resolve_lab_runtime_task_id(lab),
+            target_date=target_date,
+            lab_id=lab_id,
+            project_root=self.project_root,
+        )
+        if not isinstance(runtime_result, dict):
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="lab_runtime_invalid",
+                message="lab runtime returned a non-object payload",
+                details={"lab_id": lab_id, "target_date": target_date},
             )
-            picks = (
-                screener_artifact.get("picks")
-                if isinstance(screener_artifact, dict)
-                else None
-            )
-            if isinstance(picks, list):
-                codes = [str(item).split(".", 1)[0].strip() for item in picks]
-                codes = [code for code in codes if re.fullmatch(r"\d{6}", code)]
-            else:
-                codes = []
-            artifacts_payload["cup_handle_daily_report"] = {
-                "version": 1,
-                "target_date": target_date,
-                "status": "pending_implementation",
-                "message": "杯柄实验室运行逻辑尚未迁移；当前仅将 cup_handle_v4 命中结果作为候选输入。",
-                "candidates": codes,
-                "source_refs": {
-                    "screener_id": "cup_handle_v4",
-                    "artifact_path": self._safe_ref_path(
-                        str(
-                            self.project_root
-                            / "var/artifacts/screener_runs"
-                            / target_date
-                            / "screener_cup_handle_v4_result.json"
-                        )
-                    ),
-                },
-            }
-        elif lab_id == "five_flags_lab":
-            candidates = self._extract_candidate_codes_from_compose(compose_artifact)
-            artifacts_payload["five_flags_scan_results"] = {
-                "version": 1,
-                "target_date": target_date,
-                "status": "pending_implementation",
-                "message": "老鸭头五图扫描逻辑尚未迁移；当前输出候选输入快照（来自 data_control.compose）。",
-                "pool": candidates,
-                "sector_top5_by_amount": (
-                    compose_artifact.get("sector_top5_by_amount")
-                    if isinstance(compose_artifact, dict)
-                    else []
-                ),
-                "source_refs": {
-                    "compose_artifact_path": self._safe_ref_path(
-                        str(
-                            self.project_root
-                            / "var/artifacts/data_control"
-                            / target_date
-                            / "data_control_compose_result.json"
-                        )
-                    )
-                },
-            }
-        elif lab_id == "paper_simulation_lab":
-            candidates = self._extract_candidate_codes_from_compose(compose_artifact)
-            artifacts_payload["paper_simulation_positions"] = {
-                "version": 1,
-                "target_date": target_date,
-                "status": "pending_implementation",
-                "message": "量化模拟交易逻辑尚未迁移；当前输出候选输入快照与空持仓结构。",
-                "cash_yuan": 1000000.0,
-                "positions": [],
-                "candidates": candidates,
-                "universe_snapshot": {
-                    "candidate_count": len(candidates),
-                    "candidates": candidates[:200],
-                },
-                "source_refs": {
-                    "compose_artifact_path": self._safe_ref_path(
-                        str(
-                            self.project_root
-                            / "var/artifacts/data_control"
-                            / target_date
-                            / "data_control_compose_result.json"
-                        )
-                    )
-                },
-            }
-
-        if not artifacts_payload:
-            artifacts_payload = {
-                artifact.artifact_id: {
-                    "version": 1,
-                    "target_date": target_date,
-                    "status": "pending_implementation",
-                    "message": "实验室运行逻辑尚未迁移。",
-                }
-                for artifact in lab.artifacts
-            }
-
-        run_status = self._summarize_runtime_statuses(
-            [
-                str(item.get("status", ""))
-                for item in artifacts_payload.values()
-                if isinstance(item, dict)
-            ]
+        run_status = str(runtime_result.get("status", "")).strip().lower() or "failed"
+        artifacts_payload = self._build_lab_runtime_artifacts_payload(
+            lab=lab,
+            runtime_result=runtime_result,
+            target_date=target_date,
+            requested_by=requested_by,
+            requested_at=requested_at,
+            run_status=run_status,
         )
         run_payload = {
             "version": 1,
@@ -5298,8 +5398,12 @@ class BootstrapApiService:
                 + "\n",
                 encoding="utf-8",
             )
+            self._write_lab_contract_artifacts(
+                lab=lab,
+                artifacts_payload=artifacts_payload,
+            )
 
-        return {"_meta": {"status": "ok"}, "lab_run": ledger_payload}
+        return {"_meta": {"status": run_status}, "lab_run": ledger_payload}
 
     def _read_data_control_compose_artifact(
         self, *, target_date: str
@@ -5416,8 +5520,14 @@ class BootstrapApiService:
                 message="lab run stored payloads are not JSON objects",
                 details={"target_date": target_date, "lab_id": lab_id},
             )
+        response_status = (
+            str(ledger_payload.get("status") or artifact_payload.get("status") or "ok")
+            .strip()
+            .lower()
+            or "ok"
+        )
         return {
-            "_meta": {"status": "ok"},
+            "_meta": {"status": response_status},
             "lab_run": ledger_payload,
             "lab_result": artifact_payload,
         }
@@ -8944,6 +9054,10 @@ class BootstrapApiService:
                     "stock_code": focus_candidate.get("stock_code"),
                     "stock_name": focus_candidate.get("stock_name"),
                     "recommendation_status": focus_candidate.get("recommendation_status"),
+                    "special_markers": list(focus_candidate.get("special_markers") or []),
+                    "special_marker_notes": list(
+                        focus_candidate.get("special_marker_notes") or []
+                    ),
                 },
             },
         }
@@ -9173,6 +9287,32 @@ class BootstrapApiService:
                 "kshape_down_is_interfering": kshape_interference in {"medium", "high"},
                 "recommendations_are_concentrated": recommendation_concentration == "focused",
             },
+        }
+
+    def _market_intelligence_decision_summary_cached_brief(
+        self,
+        *,
+        top_n: int = 10,
+        trade_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        cache_key = self._market_intelligence_review_board_cache_key(
+            top_n=min(max(1, int(top_n)), 200),
+            trade_date=trade_date,
+        )
+        with self._cache_lock:
+            cached_review_board = self._cache_get(cache_key)
+        if not isinstance(cached_review_board, dict):
+            return {"signals": {}}
+        review_focus = (
+            cached_review_board.get("review_focus")
+            if isinstance(cached_review_board.get("review_focus"), dict)
+            else {}
+        )
+        return {
+            "signals": {
+                "focus_theme": review_focus.get("theme"),
+                "focus_candidate": review_focus.get("candidate"),
+            }
         }
 
     def _market_intelligence_theme_board_payload(
@@ -10168,6 +10308,20 @@ class BootstrapApiService:
             if not bool(format_gate.get("passed")):
                 gate_reasons.extend([str(x) for x in (format_gate.get("gate_reasons") or []) if str(x)])
 
+            trading_calendar_payload = None
+            if (
+                not dry_run
+                and isinstance(tushare_backfill, dict)
+                and str(tushare_backfill.get("status") or "").strip().lower() == "ok"
+            ):
+                trading_calendar_result = self.rebuild_trading_calendar_view(
+                    sqlite_db_path=str(db_path),
+                    table="daily_prices",
+                    date_column="trade_date",
+                    requested_by=requested_by.strip(),
+                )
+                trading_calendar_payload = trading_calendar_result.get("trading_calendar")
+
             ok = bool(isinstance(tushare_backfill, dict) and tushare_backfill.get("status") == "ok") and (len(gate_reasons) == 0)
             return {
                 "_meta": {"status": "ok"},
@@ -10191,6 +10345,7 @@ class BootstrapApiService:
                     "db_rows_before": tushare_backfill.get("before_rows") if isinstance(tushare_backfill, dict) else None,
                     "db_rows_after": tushare_backfill.get("after_rows") if isinstance(tushare_backfill, dict) else None,
                     "volume_normalized_rows": tushare_backfill.get("volume_normalized_rows") if isinstance(tushare_backfill, dict) else None,
+                    "trading_calendar": trading_calendar_payload,
                 },
                 "backfill": tushare_backfill,
             }
@@ -14144,6 +14299,482 @@ class BootstrapApiService:
             .expanduser()
         )
 
+    def _stock_db_path(self) -> Path:
+        return (
+            Path(
+                os.environ.get("NEOTRADE3_STOCK_DB_PATH")
+                or str(self._stock_db_default_path)
+            )
+            .expanduser()
+        )
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, *, table: str) -> set[str]:
+        try:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        except Exception:
+            return set()
+        out: set[str] = set()
+        for row in rows:
+            if not row or len(row) < 2:
+                continue
+            raw = str(row[1] or "").strip()
+            if raw:
+                out.add(raw)
+        return out
+
+    @staticmethod
+    def _sql_column_or_null(columns: set[str], column: str, *, alias: Optional[str] = None) -> str:
+        safe_alias = alias or column
+        return column if column in columns else f"NULL AS {safe_alias}"
+
+    @staticmethod
+    def _normalize_stock_codes(codes: Optional[list[str]]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in list(codes or []):
+            code = str(raw or "").strip().split(".", 1)[0].strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            normalized.append(code)
+        return normalized
+
+    def _select_m1_codes_for_trade_date(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        trade_date: str,
+        requested_codes: Optional[list[str]],
+        limit: int,
+    ) -> list[str]:
+        normalized = self._normalize_stock_codes(requested_codes)
+        if normalized:
+            return normalized
+
+        daily_columns = self._table_columns(conn, table="daily_prices")
+        order_expr = "amount DESC, code ASC" if "amount" in daily_columns else "code ASC"
+        rows = conn.execute(
+            f"SELECT code FROM daily_prices WHERE trade_date = ? ORDER BY {order_expr} LIMIT ?",
+            (trade_date, int(limit)),
+        ).fetchall()
+        out: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            code = str(row[0] or "").strip() if row and len(row) >= 1 else ""
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            out.append(code)
+        return out
+
+    @staticmethod
+    def _m1_formal_contract_catalog() -> dict[str, Any]:
+        return {
+            "formal_entrypoints": {
+                "d1_daily_price_fact": "/api/data-control/m1/d1/daily-price-facts",
+                "d7_security_master_minimal": "/api/data-control/m1/d7/security-master",
+                "d7_trading_day_status": "/api/data-control/m1/d7/trading-day-status",
+                "pf1_trading_profile": "/api/data-control/m1/d8/trading-profiles",
+            },
+            "compatibility_only_paths": [
+                "/api/signals",
+                "/api/market-phase",
+                "/api/sector-rotation",
+                "/api/stock-tiering",
+                "/api/factor-matrix/daily",
+            ],
+            "explicit_exclusions": [
+                "theme_momentum",
+                "market_phase",
+                "sector_rotation",
+                "stock_tiering",
+                "factor_matrix",
+                "config_leader_candidate",
+                "institutional_attention_candidate",
+                "trading_leader_candidate",
+            ],
+        }
+
+    def m1_d1_daily_price_facts_view(
+        self, *, target_date: str, stock_codes: Optional[list[str]] = None, limit: int = 100
+    ) -> dict[str, Any]:
+        db_path = self._stock_db_path()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="stock db is not ready",
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            daily_columns = self._table_columns(conn, table="daily_prices")
+            if "code" not in daily_columns or "trade_date" not in daily_columns:
+                raise ApiError(
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    code="daily_prices_not_ready",
+                    message="daily_prices required columns are missing",
+                )
+
+            select_fields = [
+                "code",
+                "trade_date",
+                self._sql_column_or_null(daily_columns, "open"),
+                self._sql_column_or_null(daily_columns, "high"),
+                self._sql_column_or_null(daily_columns, "low"),
+                self._sql_column_or_null(daily_columns, "close"),
+                self._sql_column_or_null(daily_columns, "volume"),
+                self._sql_column_or_null(daily_columns, "amount"),
+                self._sql_column_or_null(daily_columns, "turnover"),
+                self._sql_column_or_null(daily_columns, "preclose"),
+                self._sql_column_or_null(daily_columns, "pct_change"),
+                self._sql_column_or_null(daily_columns, "updated_at"),
+            ]
+
+            params: list[Any] = [target_date]
+            where = "trade_date = ?"
+            codes = self._normalize_stock_codes(stock_codes)
+            if codes:
+                placeholders = ",".join(["?"] * len(codes))
+                where += f" AND code IN ({placeholders})"
+                params.extend(codes)
+                order_by = "code ASC"
+            else:
+                order_by = "code ASC"
+                params.append(int(limit))
+
+            limit_clause = "" if codes else " LIMIT ?"
+            rows = conn.execute(
+                f"SELECT {', '.join(select_fields)} FROM daily_prices WHERE {where} "
+                f"ORDER BY {order_by}{limit_clause}",
+                tuple(params),
+            ).fetchall()
+            items = [project_d1_daily_price_fact(dict(row)).to_payload() for row in rows]
+        finally:
+            conn.close()
+
+        attention_items = []
+        if not items:
+            attention_items.append(
+                build_attention_item(
+                    issue_code="m1_d1_missing_for_target_date",
+                    severity="high",
+                    message="target_date 对应的 D1 正式对象为空",
+                    impacts=["m2", "m3"],
+                    details={"target_date": target_date},
+                ).to_payload()
+            )
+        quality_status = build_quality_status(
+            source_status="ok" if items else "missing",
+            freshness_status="ok" if items else "unknown",
+            coverage_status="ok" if items else "insufficient",
+            replay_status=(
+                "ok" if items and all(item.get("updated_at") for item in items) else "partial"
+            ),
+            details={"target_date": target_date, "count": len(items)},
+        ).to_payload()
+        freshness_proof = build_freshness_proof(
+            object_family="d1_daily_price_fact",
+            verdict="ready" if items else "not_ready",
+            reason="target_date_rows_present" if items else "target_date_rows_missing",
+            target_date=target_date,
+            observed_date=target_date if items else None,
+            source_ref="daily_prices",
+            details={"count": len(items)},
+        ).to_payload()
+        return {
+            "_meta": {
+                "status": "ok",
+                "formal_object": "d1_daily_price_fact",
+                "compatibility_mode": "formal_only",
+            },
+            "target_date": target_date,
+            "count": len(items),
+            "items": items,
+            "quality_status": quality_status,
+            "freshness_proof": freshness_proof,
+            "attention_items": attention_items,
+        }
+
+    def m1_d7_security_master_view(
+        self, *, stock_codes: Optional[list[str]] = None, limit: int = 100
+    ) -> dict[str, Any]:
+        db_path = self._stock_db_path()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="stock db is not ready",
+            )
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            stock_columns = self._table_columns(conn, table="stocks")
+            if "code" not in stock_columns:
+                raise ApiError(
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    code="stocks_not_ready",
+                    message="stocks required columns are missing",
+                )
+            select_fields = [
+                "code",
+                self._sql_column_or_null(stock_columns, "name"),
+                self._sql_column_or_null(stock_columns, "asset_type"),
+                self._sql_column_or_null(stock_columns, "is_delisted"),
+                self._sql_column_or_null(stock_columns, "sector_lv1"),
+                self._sql_column_or_null(stock_columns, "sector_lv2"),
+                self._sql_column_or_null(stock_columns, "last_trade_date"),
+            ]
+            codes = self._normalize_stock_codes(stock_codes)
+            if codes:
+                placeholders = ",".join(["?"] * len(codes))
+                rows = conn.execute(
+                    f"SELECT {', '.join(select_fields)} FROM stocks WHERE code IN ({placeholders}) ORDER BY code ASC",
+                    tuple(codes),
+                ).fetchall()
+            else:
+                asset_type_expr = (
+                    "COALESCE(asset_type, 'stock') = 'stock'" if "asset_type" in stock_columns else "1 = 1"
+                )
+                is_delisted_expr = (
+                    "COALESCE(is_delisted, 0) = 0" if "is_delisted" in stock_columns else "1 = 1"
+                )
+                rows = conn.execute(
+                    f"SELECT {', '.join(select_fields)} FROM stocks "
+                    f"WHERE {asset_type_expr} AND {is_delisted_expr} ORDER BY code ASC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            items = [project_d7_security_master_minimal(dict(row)).to_payload() for row in rows]
+        finally:
+            conn.close()
+
+        attention_items = []
+        if not items:
+            attention_items.append(
+                build_attention_item(
+                    issue_code="m1_d7_security_master_missing",
+                    severity="high",
+                    message="D7 最小证券主数据对象为空",
+                    impacts=["m2", "m3"],
+                ).to_payload()
+            )
+        quality_status = build_quality_status(
+            source_status="ok" if items else "missing",
+            freshness_status="ok" if items else "unknown",
+            coverage_status="ok" if items else "insufficient",
+            replay_status="ok",
+            details={"count": len(items)},
+        ).to_payload()
+        freshness_proof = build_freshness_proof(
+            object_family="d7_security_master_minimal",
+            verdict="ready" if items else "not_ready",
+            reason="security_master_rows_present" if items else "security_master_rows_missing",
+            source_ref="stocks",
+            details={"count": len(items)},
+        ).to_payload()
+        return {
+            "_meta": {
+                "status": "ok",
+                "formal_object": "d7_security_master_minimal",
+                "compatibility_mode": "formal_only",
+            },
+            "count": len(items),
+            "items": items,
+            "quality_status": quality_status,
+            "freshness_proof": freshness_proof,
+            "attention_items": attention_items,
+        }
+
+    def m1_d7_trading_day_status_view(self, *, target_date: str) -> dict[str, Any]:
+        raw_payload = self.trading_day_view(target_date=target_date)
+        item = project_d7_trading_day_status(raw_payload)
+        attention_items = []
+        source_status = "ok" if item.calendar_source else "missing"
+        if item.is_trading_day is None:
+            attention_items.append(
+                build_attention_item(
+                    issue_code="m1_d7_trading_day_unknown",
+                    severity="high",
+                    message="交易日状态未知，不能静默降级为非交易日",
+                    impacts=["m2", "m3"],
+                    details={"target_date": target_date, "calendar_source": item.calendar_source},
+                ).to_payload()
+            )
+        quality_status = build_quality_status(
+            source_status=source_status,
+            freshness_status="ok" if item.calendar_covered_until else "unknown",
+            coverage_status="ok" if item.is_trading_day is not None else "insufficient",
+            replay_status="ok" if item.target_date else "unknown",
+            details={"target_date": target_date, "calendar_source": item.calendar_source},
+        ).to_payload()
+        freshness_proof = build_freshness_proof(
+            object_family="d7_trading_day_status",
+            verdict="ready" if item.is_trading_day is not None else "not_ready",
+            reason=(
+                "calendar_coverage_confirmed"
+                if item.is_trading_day is not None
+                else "calendar_coverage_unknown"
+            ),
+            target_date=target_date,
+            observed_date=item.calendar_covered_until,
+            source_ref=item.calendar_source,
+            details={"nearest_trading_day": item.nearest_trading_day},
+        ).to_payload()
+        return {
+            "_meta": {
+                "status": "ok",
+                "formal_object": "d7_trading_day_status",
+                "compatibility_mode": "formal_only",
+            },
+            "item": item.to_payload(),
+            "quality_status": quality_status,
+            "freshness_proof": freshness_proof,
+            "attention_items": attention_items,
+        }
+
+    def m1_d8_trading_profiles_view(
+        self, *, target_date: str, stock_codes: Optional[list[str]] = None, limit: int = 100
+    ) -> dict[str, Any]:
+        db_path = self._stock_db_path()
+        if not db_path.exists() or not db_path.is_file():
+            raise ApiError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                code="stock_db_not_ready",
+                message="stock db is not ready",
+            )
+
+        trading_day_payload = self.trading_day_view(target_date=target_date)
+        trading_day_item = project_d7_trading_day_status(trading_day_payload)
+        used_trade_date = target_date
+        if trading_day_item.is_trading_day is False and trading_day_item.nearest_trading_day:
+            used_trade_date = trading_day_item.nearest_trading_day
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            daily_columns = self._table_columns(conn, table="daily_prices")
+            if "code" not in daily_columns or "trade_date" not in daily_columns:
+                raise ApiError(
+                    status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                    code="daily_prices_not_ready",
+                    message="daily_prices required columns are missing",
+                )
+            select_fields = [
+                "trade_date",
+                self._sql_column_or_null(daily_columns, "close"),
+                self._sql_column_or_null(daily_columns, "amount"),
+                self._sql_column_or_null(daily_columns, "turnover"),
+                self._sql_column_or_null(daily_columns, "pct_change"),
+            ]
+            selected_codes = self._select_m1_codes_for_trade_date(
+                conn=conn,
+                trade_date=used_trade_date,
+                requested_codes=stock_codes,
+                limit=limit,
+            )
+            items = []
+            ready_20d_count = 0
+            for code in selected_codes:
+                rows = conn.execute(
+                    f"SELECT {', '.join(select_fields)} FROM daily_prices "
+                    "WHERE code = ? AND trade_date <= ? ORDER BY trade_date DESC LIMIT 20",
+                    (code, used_trade_date),
+                ).fetchall()
+                profile = project_pf1_trading_profile(
+                    stock_code=code,
+                    price_rows=[dict(row) for row in rows],
+                )
+                if profile is None:
+                    continue
+                if profile.window_20d_ready:
+                    ready_20d_count += 1
+                items.append(profile.to_payload())
+        finally:
+            conn.close()
+
+        attention_items = []
+        if trading_day_item.is_trading_day is None:
+            attention_items.append(
+                build_attention_item(
+                    issue_code="m1_d8_trading_profile_trading_day_unknown",
+                    severity="high",
+                    message="D8 生成所依赖的交易日状态未知",
+                    impacts=["m2", "m3"],
+                    details={"target_date": target_date},
+                ).to_payload()
+            )
+        if not items:
+            attention_items.append(
+                build_attention_item(
+                    issue_code="m1_d8_trading_profile_missing",
+                    severity="high",
+                    message="target_date 对应的 PF1 交易画像对象为空",
+                    impacts=["m2", "m3"],
+                    details={"target_date": target_date, "used_trade_date": used_trade_date},
+                ).to_payload()
+            )
+
+        coverage_status = "ok"
+        if not items:
+            coverage_status = "insufficient"
+        elif ready_20d_count < len(items):
+            coverage_status = "partial"
+
+        freshness_status = "ok" if items and used_trade_date == target_date else "lagging"
+        if trading_day_item.is_trading_day is None:
+            freshness_status = "unknown"
+
+        quality_status = build_quality_status(
+            source_status="ok" if items else "missing",
+            freshness_status=freshness_status,
+            coverage_status=coverage_status,
+            replay_status="ok" if used_trade_date else "unknown",
+            details={
+                "target_date": target_date,
+                "used_trade_date": used_trade_date,
+                "count": len(items),
+                "full_window_20d_count": ready_20d_count,
+            },
+        ).to_payload()
+        freshness_proof = build_freshness_proof(
+            object_family="pf1_trading_profile",
+            verdict=(
+                "ready"
+                if items and coverage_status == "ok"
+                else ("partial" if items else "not_ready")
+            ),
+            reason=(
+                "full_20d_windows_confirmed"
+                if items and coverage_status == "ok"
+                else ("partial_20d_windows" if items else "target_date_profiles_missing")
+            ),
+            target_date=target_date,
+            observed_date=used_trade_date,
+            source_ref="daily_prices",
+            required_window="20d",
+            available_window=f"{ready_20d_count}/{len(items)} full 20d windows" if items else "0/0",
+            details={"count": len(items), "full_window_20d_count": ready_20d_count},
+        ).to_payload()
+        return {
+            "_meta": {
+                "status": "ok",
+                "formal_object": "pf1_trading_profile",
+                "compatibility_mode": "formal_only",
+                "compatibility_boundary": "不应回退使用 /api/signals 中的临时 trading_profile 或 market_intelligence payload 作为正式对象",
+            },
+            "target_date": target_date,
+            "used_trade_date": used_trade_date,
+            "trading_day_status": trading_day_item.to_payload(),
+            "count": len(items),
+            "items": items,
+            "quality_status": quality_status,
+            "freshness_proof": freshness_proof,
+            "attention_items": attention_items,
+        }
+
     @staticmethod
     def _calendar_meta(conn: sqlite3.Connection) -> dict[str, str]:
         try:
@@ -16033,6 +16664,7 @@ class BootstrapApiService:
         state["cash"] = round(cash, 2)
         state["positions"] = positions
         state["closed_trades"] = closed_trades
+        self._lowfreq_apply_execution_contracts_to_intents(intents)
         state["manual"] = {"intents": intents}
         return {"executed_buy": executed_buy, "executed_sell": executed_sell}
 
@@ -16042,6 +16674,61 @@ class BootstrapApiService:
             json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _lowfreq_normalize_execution_block_reason(raw_reason: Any) -> str:
+        reason = str(raw_reason or "").strip()
+        if reason in {"no_slots", "reserved_due_to_full_book"}:
+            return "positions_full"
+        if reason in {"no_cash"}:
+            return "cash_insufficient"
+        if reason in {"pending_conflict_older_intent_wins"}:
+            return "conflict_with_exit"
+        if reason in {"reservation_expired", "signal_expired"}:
+            return "entry_window_missed"
+        if reason in {"no_open_price", "no_price", "invalid_code", "already_holding", "position_missing", "no_shares", "abandoned"}:
+            return "execution_rule_blocked"
+        return reason
+
+    def _lowfreq_execution_contract_from_intent(self, intent: dict[str, Any]) -> dict[str, Any]:
+        intent_type = str(intent.get("intent_type") or "").strip()
+        status = str(intent.get("status") or "").strip()
+        cancel_reason = str(intent.get("cancel_reason") or intent.get("error") or "").strip()
+        last_attempt_reason = str(intent.get("last_attempt_reason") or intent.get("reason") or "").strip()
+        action_type = "block"
+        order_action = "block"
+        execution_status = status or "unknown"
+        if intent_type == "buy_intent":
+            action_type = "buy"
+            order_action = "buy"
+        elif intent_type == "sell_intent":
+            action_type = "exit"
+            order_action = "exit"
+        elif intent_type == "abandon":
+            action_type = "block"
+            order_action = "block"
+        if status in {"postponed", "cancelled", "failed"}:
+            action_type = "block"
+            order_action = "block"
+        execution_block_reason = ""
+        if action_type == "block":
+            execution_block_reason = self._lowfreq_normalize_execution_block_reason(
+                cancel_reason or last_attempt_reason
+            )
+        return {
+            "source_layer": "execution",
+            "action_type": action_type,
+            "order_action": order_action,
+            "reserve_action": "",
+            "execution_status": execution_status,
+            "execution_block_reason": execution_block_reason,
+        }
+
+    def _lowfreq_apply_execution_contracts_to_intents(self, intents: list[dict[str, Any]]) -> None:
+        for intent in intents:
+            if not isinstance(intent, dict):
+                continue
+            intent.update(self._lowfreq_execution_contract_from_intent(intent))
 
     def _lowfreq_trade_from_payload(self, payload: dict[str, Any]):
         from lowfreq_engine_v16_advanced import TradeRecord
@@ -16261,6 +16948,7 @@ class BootstrapApiService:
                     "sell_signal": str(getattr(sell, "reason", "") or ""),
                     "partial_ratio": 0.5 if str(getattr(sell, "reason", "") or "") == "partial_profit" else 1.0,
                     "created_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "auto",
                 }
             )
             created_sell += 1
@@ -16269,7 +16957,12 @@ class BootstrapApiService:
             signals = engine.generate_buy_signals(requested_date)
         except Exception:
             signals = {}
-        raw = signals.get("buy_signals", []) if isinstance(signals, dict) else []
+        raw = []
+        if isinstance(signals, dict):
+            if "entry_signals" in signals and isinstance(signals.get("entry_signals"), list):
+                raw = signals.get("entry_signals", [])
+            else:
+                raw = signals.get("buy_signals", [])
         if buy_signal_memory_days > 0:
             expire_date = self._lowfreq_nth_next_trading_day(requested_key, buy_signal_memory_days)
             by_code: dict[str, dict[str, Any]] = {}
@@ -16382,6 +17075,7 @@ class BootstrapApiService:
             )
             created_buy += 1
 
+        self._lowfreq_apply_execution_contracts_to_intents(intents)
         state["positions"] = positions
         state["manual"] = {"intents": intents}
         state["signal_memory"] = {"buy_signals": kept_memory}
@@ -16614,7 +17308,16 @@ class BootstrapApiService:
             if str(intent.get("status") or "pending") != "pending":
                 continue
             if str(intent.get("code") or "").strip() == code and str(intent.get("requested_date") or "").strip() == requested_date:
-                return {"_meta": {"status": "ok", "requested_by": requested_by}, "intent": intent}
+                return {
+                    "_meta": {
+                        "status": "ok",
+                        "requested_by": requested_by,
+                        "deprecated": self._lowfreq_score_deprecation_meta(
+                            replacement_endpoint="/api/lowfreq-score/pool"
+                        ),
+                    },
+                    "intent": intent,
+                }
 
         intent = {
             "intent_id": uuid.uuid4().hex,
@@ -16629,11 +17332,21 @@ class BootstrapApiService:
             "execute_date": execute_date,
             "attempt_count": 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "source": "manual",
         }
         intents.append(intent)
         state["manual"] = {"intents": intents}
         self._save_lowfreq_sim_state(state)
-        return {"_meta": {"status": "ok", "requested_by": requested_by}, "intent": intent}
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "deprecated": self._lowfreq_score_deprecation_meta(
+                    replacement_endpoint="/api/lowfreq-score/pool"
+                ),
+            },
+            "intent": intent,
+        }
 
     def lowfreq_manual_abandon_view(
         self, *, code: str, requested_date: str, requested_by: str = "api"
@@ -16684,7 +17397,62 @@ class BootstrapApiService:
         intents.append(abandon_intent)
         state["manual"] = {"intents": intents}
         self._save_lowfreq_sim_state(state)
-        return {"_meta": {"status": "ok", "requested_by": requested_by}, "intent": abandon_intent}
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "deprecated": self._lowfreq_score_deprecation_meta(
+                    replacement_endpoint="/api/lowfreq-score/events"
+                ),
+            },
+            "intent": abandon_intent,
+        }
+
+    def lowfreq_score_manual_buy_intent_view(
+        self,
+        *,
+        code: str,
+        requested_date: str,
+        name: str = "",
+        sector: str = "",
+        role: str = "",
+        buy_score: float = 0.0,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        payload = self.lowfreq_manual_buy_intent_view(
+            code=code,
+            requested_date=requested_date,
+            name=name,
+            sector=sector,
+            role=role,
+            buy_score=buy_score,
+            requested_by=requested_by,
+        )
+        meta = dict(payload.get("_meta") or {})
+        meta.pop("deprecated", None)
+        meta["authoritative_layer"] = "operation_logic"
+        meta["contract"] = "lowfreq-score/manual-buy-intent.v1alpha1"
+        return {
+            "_meta": meta,
+            "intent": payload.get("intent"),
+        }
+
+    def lowfreq_score_manual_abandon_view(
+        self, *, code: str, requested_date: str, requested_by: str = "api"
+    ) -> dict[str, Any]:
+        payload = self.lowfreq_manual_abandon_view(
+            code=code,
+            requested_date=requested_date,
+            requested_by=requested_by,
+        )
+        meta = dict(payload.get("_meta") or {})
+        meta.pop("deprecated", None)
+        meta["authoritative_layer"] = "operation_logic"
+        meta["contract"] = "lowfreq-score/manual-abandon.v1alpha1"
+        return {
+            "_meta": meta,
+            "intent": payload.get("intent"),
+        }
 
     def lowfreq_settings_set_autopilot_view(
         self,
@@ -17115,6 +17883,7 @@ class BootstrapApiService:
         state["cash"] = round(cash, 2)
         state["positions"] = positions
         state["closed_trades"] = closed_trades
+        self._lowfreq_apply_execution_contracts_to_intents(intents)
         state["manual"] = {"intents": intents}
         self._save_lowfreq_sim_state(state)
         return {"_meta": {"status": "ok", "requested_by": requested_by}, "intent": dict(target_intent)}
@@ -17213,6 +17982,11 @@ class BootstrapApiService:
                 process_stage = "exit_signal"
             elif market_exit_state or sector_exit_state:
                 process_stage = "exit_watch"
+            contract_snapshot = engine._position_contract_snapshot(
+                trade=trade,
+                current_date=target_date,
+                sell=sell,
+            )
             trade_payload = self._lowfreq_trade_to_payload(trade)
             positions[code] = trade_payload
             open_positions.append(
@@ -17247,6 +18021,7 @@ class BootstrapApiService:
                     "system_exit_grace_scope": str(getattr(trade, "system_exit_grace_scope", "") or ""),
                     "system_exit_grace_date": str(getattr(trade, "system_exit_grace_date", "") or ""),
                     "system_exit_grace_reason": str(getattr(trade, "system_exit_grace_reason", "") or ""),
+                    **contract_snapshot,
                 }
             )
 
@@ -17264,6 +18039,17 @@ class BootstrapApiService:
                 realized_pnl = (float(trade.sell_price) - float(trade.buy_price)) * float(shares)
                 peak_return_pct = float(engine._peak_return_pct(trade) or 0.0)
                 realized_pnl_total += realized_pnl
+                exit_contract = engine._layer_contract_payload(
+                    current_stage="exited",
+                    decision="exit",
+                    score=float(trade.return_pct or 0.0),
+                    reasons=[str(trade.sell_reason or "")] if str(trade.sell_reason or "").strip() else [],
+                    evidence=[str(trade.sell_reason or "")] if str(trade.sell_reason or "").strip() else [],
+                    flags=[],
+                    source_layer="exit",
+                    next_action="closed",
+                    last_transition=str(trade.sell_date or ""),
+                )
                 closed_trades_payload.append(
                     {
                         "code": str(trade.code),
@@ -17292,6 +18078,15 @@ class BootstrapApiService:
                         "system_exit_grace_scope": str(getattr(trade, "system_exit_grace_scope", "") or ""),
                         "system_exit_grace_date": str(getattr(trade, "system_exit_grace_date", "") or ""),
                         "system_exit_grace_reason": str(getattr(trade, "system_exit_grace_reason", "") or ""),
+                        "hold_state": "closed",
+                        "noise_evidence": [],
+                        "not_exit_reasons": [],
+                        "warning_flags": [],
+                        "exit_ready": False,
+                        "exit_scope": "",
+                        "exit_reason_type": str(trade.sell_reason or ""),
+                        "exit_evidence_bundle": [str(trade.sell_reason or "")] if str(trade.sell_reason or "").strip() else [],
+                        **exit_contract,
                     }
                 )
         closed_trades_payload.sort(key=lambda x: (str(x.get("sell_date") or ""), str(x.get("buy_date") or "")), reverse=True)
@@ -17301,7 +18096,9 @@ class BootstrapApiService:
         intents = manual.get("intents") if isinstance(manual.get("intents"), list) else []
         for it in intents[-50:]:
             if isinstance(it, dict):
-                manual_intents_payload.append(dict(it))
+                payload = dict(it)
+                payload.update(self._lowfreq_execution_contract_from_intent(payload))
+                manual_intents_payload.append(payload)
 
         total_value = cash + positions_value
         total_return_pct = (total_value - initial_capital) / max(initial_capital, 1e-9) * 100
@@ -19414,7 +20211,2186 @@ class BootstrapApiService:
         state = self._load_lowfreq_sim_state()
         portfolio = self._lowfreq_portfolio_view(engine=engine, state=state, target_date=target_dt)
         self._save_lowfreq_sim_state(state)
-        return {"_meta": {"status": "ok", "requested_by": requested_by}, "portfolio": portfolio}
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "deprecated": self._lowfreq_score_deprecation_meta(
+                    replacement_endpoint="/api/lowfreq-score/pool"
+                ),
+            },
+            "portfolio": portfolio,
+        }
+
+    @staticmethod
+    def _lowfreq_score_deprecation_meta(*, replacement_endpoint: str) -> dict[str, Any]:
+        return {
+            "is_deprecated": True,
+            "replacement_endpoint": replacement_endpoint,
+            "replacement_spec": "docs/superpowers/specs/2026-07-05-lowfreq-score-system-boundary-design.md",
+            "replacement_plan": "docs/superpowers/specs/2026-07-05-lowfreq-score-system-boundary-plan.md",
+            "reason": "旧虚拟交易系统操作层语义进入退役路径，showcase 将切换到 lowfreq-score 新事实层接口。",
+        }
+
+    def _lowfreq_score_store(self) -> LowfreqScoreStore:
+        return LowfreqScoreStore(db_path=self._stock_db_default_path)
+
+    def _lowfreq_score_sync_event_id(self, *, event_type: str, code: str, event_date: str) -> str:
+        seed = f"lowfreq-score:{event_type}:{str(code).strip()}:{str(event_date).strip()}"
+        return uuid.uuid5(uuid.NAMESPACE_URL, seed).hex
+
+    def _lowfreq_score_target_date(self, *, target_date: Optional[str] = None) -> date:
+        if target_date:
+            return date.fromisoformat(str(target_date))
+        return date.fromisoformat(self._lowfreq_latest_trade_date())
+
+    @staticmethod
+    def _lowfreq_score_avg(values: list[Optional[float]]) -> Optional[float]:
+        filtered = [float(v) for v in values if isinstance(v, (int, float))]
+        if not filtered:
+            return None
+        return round(sum(filtered) / float(len(filtered)), 2)
+
+    @staticmethod
+    def _lowfreq_score_ratio(numerator: int, denominator: int) -> Optional[float]:
+        if int(denominator or 0) <= 0:
+            return None
+        return round(float(numerator) / float(denominator), 4)
+
+    @staticmethod
+    def _lowfreq_score_month_start(target_dt: date) -> str:
+        return date(target_dt.year, target_dt.month, 1).isoformat()
+
+    @staticmethod
+    def _lowfreq_score_date_in_period(raw: Optional[str], start_key: str, end_key: str) -> bool:
+        value = str(raw or "").strip()
+        return bool(value) and start_key <= value <= end_key
+
+    @staticmethod
+    def _lowfreq_score_state_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+        counts = {"跟踪": 0, "持有中": 0, "已清仓": 0}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            state_value = str(item.get("state") or "").strip()
+            if state_value in counts:
+                counts[state_value] += 1
+        return counts
+
+    @staticmethod
+    def _lowfreq_score_pool_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+        counts = BootstrapApiService._lowfreq_score_state_counts(items)
+        holding_returns = [
+            item.get("current_return_pct")
+            for item in items
+            if isinstance(item, dict) and str(item.get("state") or "").strip() == "持有中"
+        ]
+        realized_returns = [
+            item.get("realized_return_pct")
+            for item in items
+            if isinstance(item, dict) and str(item.get("state") or "").strip() == "已清仓"
+        ]
+        return {
+            "pool_size": len(items),
+            "tracked_count": counts["跟踪"],
+            "holding_count": counts["持有中"],
+            "closed_count": counts["已清仓"],
+            "holding_return_pct": BootstrapApiService._lowfreq_score_avg(holding_returns),
+            "realized_return_pct": BootstrapApiService._lowfreq_score_avg(realized_returns),
+        }
+
+    @staticmethod
+    def _lowfreq_score_ui_contract() -> dict[str, Any]:
+        return {
+            "state_enum": list(LOWFREQ_SCORE_STATES),
+            "event_type_enum": [
+                "tracked",
+                "entered_holding",
+                "top_detected",
+                "closed",
+                "daily_mark",
+            ],
+            "period_type_enum": ["day", "month", "week"],
+            "field_definitions": {
+                "state": "当前唯一权威状态，只允许为 跟踪 / 持有中 / 已清仓。",
+                "current_return_pct": "持有中股票按最新价格相对买入价计算的浮动收益率。",
+                "realized_return_pct": "已清仓股票按卖出价相对买入价计算的已实现收益率。",
+                "capture_quality": "当前阶段 entered_count / (tracked_count + entered_count)，衡量跟踪样本转入持有的比例。",
+                "top_exit_quality": "当前阶段内正收益清仓样本占比，作为见顶退出质量的最小代理指标。",
+            },
+        }
+
+    @staticmethod
+    def _lowfreq_score_week_start(target_dt: date) -> str:
+        return (target_dt - timedelta(days=target_dt.weekday())).isoformat()
+
+    @staticmethod
+    def _lowfreq_score_pool_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+        state_rank = {"持有中": 0, "跟踪": 1, "已清仓": 2}
+        state_value = str(item.get("state") or "").strip()
+        updated_at = str(item.get("updated_at") or "")
+        code = str(item.get("code") or "")
+        return (state_rank.get(state_value, 9), f"\uffff{updated_at}", code)
+
+    @staticmethod
+    def _lowfreq_score_event_sort_key(item: dict[str, Any]) -> tuple[str, str, str]:
+        event_date = str(item.get("event_date") or "")
+        created_at = str(item.get("created_at") or "")
+        event_id = str(item.get("event_id") or "")
+        return (event_date, created_at, event_id)
+
+    def _lowfreq_score_sector_name_map(self, *, codes: Sequence[str]) -> dict[str, str]:
+        normalized_codes = sorted(
+            {str(code).strip() for code in list(codes or []) if str(code).strip()}
+        )
+        if not normalized_codes:
+            return {}
+        conn = None
+        try:
+            conn = sqlite3.connect(str(self._stock_db_default_path))
+            cursor = conn.cursor()
+            placeholders = ",".join(["?"] * len(normalized_codes))
+            cursor.execute(
+                f"""
+                SELECT
+                  code,
+                  COALESCE(NULLIF(TRIM(sector_lv2), ''), NULLIF(TRIM(sector_lv1), ''), '')
+                FROM stocks
+                WHERE code IN ({placeholders})
+                """,
+                tuple(normalized_codes),
+            )
+            return {
+                str(code or "").strip(): str(sector_name or "").strip()
+                for code, sector_name in cursor.fetchall()
+                if str(code or "").strip() and str(sector_name or "").strip()
+            }
+        except Exception:
+            return {}
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _lowfreq_score_resolve_sector_name(
+        *,
+        code: str,
+        raw_sector: Any,
+        sector_name_by_code: dict[str, str],
+    ) -> str:
+        mapped_sector = str(sector_name_by_code.get(str(code).strip()) or "").strip()
+        if mapped_sector:
+            return mapped_sector
+        return str(raw_sector or "").strip()
+
+    def _lowfreq_score_sync_state(
+        self,
+        *,
+        target_date: Optional[str] = None,
+        persist: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        target_dt = self._lowfreq_score_target_date(target_date=target_date)
+        target_key = target_dt.isoformat()
+        latest_trade_date = self._lowfreq_latest_trade_date()
+        should_persist = (
+            bool(persist) if persist is not None else target_key == str(latest_trade_date)
+        )
+        updated_at = datetime.now(timezone.utc).isoformat()
+        store = self._lowfreq_score_store()
+        existing_pool: dict[str, dict[str, Any]] = {}
+        if should_persist:
+            store.ensure_schema()
+            existing_pool = {
+                str(item.get("code") or "").strip(): item
+                for item in store.list_pool_current(limit=5000)
+                if isinstance(item, dict) and str(item.get("code") or "").strip()
+            }
+        state = self._load_lowfreq_sim_state()
+        engine = self._lowfreq_engine_v16()
+
+        try:
+            model_signals = engine.generate_buy_signals(target_dt)
+        except Exception:
+            model_signals = {}
+
+        raw_candidates = []
+        if isinstance(model_signals, dict):
+            if isinstance(model_signals.get("candidate_signals"), list):
+                raw_candidates = model_signals.get("candidate_signals") or []
+            elif isinstance(model_signals.get("buy_signals"), list):
+                raw_candidates = model_signals.get("buy_signals") or []
+
+        positions = state.get("positions") if isinstance(state.get("positions"), dict) else {}
+        raw_closed = (
+            state.get("closed_trades") if isinstance(state.get("closed_trades"), list) else []
+        )
+        sector_lookup_codes: set[str] = set()
+        for sig in raw_candidates:
+            if not isinstance(sig, dict):
+                continue
+            code_value = str(sig.get("code") or "").strip()
+            if code_value:
+                sector_lookup_codes.add(code_value)
+
+        eligible_positions: dict[str, dict[str, Any]] = {}
+        historical_holding_from_closed: set[str] = set()
+        for code, payload in positions.items():
+            if not isinstance(payload, dict):
+                continue
+            code_value = str(code or "").strip()
+            if not code_value:
+                continue
+            buy_date = str(payload.get("buy_date") or "").strip()
+            if buy_date and buy_date > target_key:
+                continue
+            eligible_positions[code_value] = payload
+            sector_lookup_codes.add(code_value)
+        for payload in raw_closed:
+            if not isinstance(payload, dict):
+                continue
+            code_value = str(payload.get("code") or "").strip()
+            if not code_value:
+                continue
+            sector_lookup_codes.add(code_value)
+            buy_date = str(payload.get("buy_date") or "").strip()
+            sell_date = str(payload.get("sell_date") or "").strip()
+            if buy_date and buy_date > target_key:
+                continue
+            if sell_date and sell_date <= target_key:
+                continue
+            historical_holding_from_closed.add(code_value)
+        sector_name_by_code = self._lowfreq_score_sector_name_map(
+            codes=sector_lookup_codes
+        )
+
+        active_codes: set[str] = set()
+        candidate_codes: set[str] = set()
+        synced_tracking = 0
+        synced_holding = 0
+        synced_closed = 0
+        synced_events = 0
+        projected_pool_by_code: dict[str, dict[str, Any]] = {}
+        projected_events_by_id: dict[str, dict[str, Any]] = {}
+
+        def add_event(payload: dict[str, Any]) -> None:
+            event_id = str(payload.get("event_id") or "").strip()
+            if not event_id:
+                return
+            projected_events_by_id[event_id] = payload
+
+        def upsert_projected_pool(payload: dict[str, Any]) -> None:
+            code_value = str(payload.get("code") or "").strip()
+            if not code_value:
+                return
+            projected_pool_by_code[code_value] = payload
+
+        for sig in raw_candidates:
+            if not isinstance(sig, dict):
+                continue
+            code = str(sig.get("code") or "").strip()
+            if (
+                not code
+                or code in eligible_positions
+                or code in historical_holding_from_closed
+            ):
+                continue
+            candidate_codes.add(code)
+            active_codes.add(code)
+            existing = existing_pool.get(code) or {}
+            last_price = None
+            try:
+                px = engine._get_price(code, target_dt)
+                last_price = float(px) if px is not None else None
+            except Exception:
+                last_price = None
+            tracking_since = str(existing.get("tracking_since") or "").strip() or target_key
+            state_since = (
+                str(existing.get("state_since") or "").strip()
+                if str(existing.get("state") or "").strip() == "跟踪"
+                else target_key
+            ) or target_key
+            raw_sector = str(sig.get("sector") or "")
+            upsert_projected_pool(
+                {
+                    "code": code,
+                    "name": str(sig.get("name") or ""),
+                    "sector": raw_sector,
+                    "sector_name": self._lowfreq_score_resolve_sector_name(
+                        code=code,
+                        raw_sector=raw_sector,
+                        sector_name_by_code=sector_name_by_code,
+                    ),
+                    "state": "跟踪",
+                    "state_since": state_since,
+                    "tracking_since": tracking_since,
+                    "buy_date": None,
+                    "buy_price": None,
+                    "sell_date": None,
+                    "sell_price": None,
+                    "last_trade_date": target_key,
+                    "last_price": last_price,
+                    "current_return_pct": None,
+                    "realized_return_pct": None,
+                    "top_signal_date": None,
+                    "engine_snapshot_ref": f"engine://buy-signals/{target_key}/{code}",
+                    "updated_at": updated_at,
+                }
+            )
+            add_event(
+                {
+                    "event_id": self._lowfreq_score_sync_event_id(
+                        event_type="tracked", code=code, event_date=tracking_since
+                    ),
+                    "code": code,
+                    "sector_name": self._lowfreq_score_resolve_sector_name(
+                        code=code,
+                        raw_sector=raw_sector,
+                        sector_name_by_code=sector_name_by_code,
+                    ),
+                    "event_type": "tracked",
+                    "event_date": tracking_since,
+                    "from_state": "",
+                    "to_state": "跟踪",
+                    "trigger_source": "engine.candidate_signals",
+                    "engine_evidence_ref": f"engine://buy-signals/{target_key}/{code}",
+                    "price": last_price,
+                    "note": str(
+                        (sig.get("reasons") or ["候选识别成立"])[0]
+                        if isinstance(sig.get("reasons"), list) and sig.get("reasons")
+                        else "候选识别成立"
+                    ),
+                    "created_at": updated_at,
+                }
+            )
+            synced_tracking += 1
+            synced_events += 1
+
+        def project_holding_trade(
+            *,
+            trade_payload: dict[str, Any],
+            trigger_source: str,
+            note: str,
+        ) -> None:
+            nonlocal synced_holding, synced_events
+            trade = self._lowfreq_trade_from_payload(trade_payload)
+            code_value = str(trade.code or "").strip()
+            if not code_value:
+                return
+            active_codes.add(code_value)
+            existing = existing_pool.get(code_value) or {}
+            try:
+                current_price = engine._get_price(code_value, target_dt)
+                current_price = (
+                    float(current_price)
+                    if current_price is not None
+                    else float(trade.buy_price or 0.0)
+                )
+            except Exception:
+                current_price = float(trade.buy_price or 0.0)
+            current_return_pct = None
+            if float(trade.buy_price or 0.0) > 0 and current_price > 0:
+                current_return_pct = (
+                    (current_price - float(trade.buy_price))
+                    / max(float(trade.buy_price), 1e-9)
+                    * 100.0
+                )
+            tracking_since = (
+                str(existing.get("tracking_since") or "").strip()
+                or str(trade.buy_date or target_key)
+            )
+            state_since = (
+                str(existing.get("state_since") or "").strip()
+                if str(existing.get("state") or "").strip() == "持有中"
+                else str(trade.buy_date or target_key)
+            ) or target_key
+            raw_sector = str(trade.sector or "")
+            upsert_projected_pool(
+                {
+                    "code": code_value,
+                    "name": str(trade.name or ""),
+                    "sector": raw_sector,
+                    "sector_name": self._lowfreq_score_resolve_sector_name(
+                        code=code_value,
+                        raw_sector=raw_sector,
+                        sector_name_by_code=sector_name_by_code,
+                    ),
+                    "state": "持有中",
+                    "state_since": state_since,
+                    "tracking_since": tracking_since,
+                    "buy_date": str(trade.buy_date or "") or None,
+                    "buy_price": float(trade.buy_price or 0.0)
+                    if trade.buy_price is not None
+                    else None,
+                    "sell_date": None,
+                    "sell_price": None,
+                    "last_trade_date": target_key,
+                    "last_price": float(current_price) if current_price else None,
+                    "current_return_pct": round(float(current_return_pct), 2)
+                    if current_return_pct is not None
+                    else None,
+                    "realized_return_pct": None,
+                    "top_signal_date": None,
+                    "engine_snapshot_ref": f"engine://positions/{target_key}/{code_value}",
+                    "updated_at": updated_at,
+                }
+            )
+            if str(trade.buy_date or "").strip():
+                add_event(
+                    {
+                        "event_id": self._lowfreq_score_sync_event_id(
+                            event_type="entered_holding",
+                            code=code_value,
+                            event_date=str(trade.buy_date),
+                        ),
+                        "code": code_value,
+                        "sector_name": self._lowfreq_score_resolve_sector_name(
+                            code=code_value,
+                            raw_sector=raw_sector,
+                            sector_name_by_code=sector_name_by_code,
+                        ),
+                        "event_type": "entered_holding",
+                        "event_date": str(trade.buy_date),
+                        "from_state": "跟踪",
+                        "to_state": "持有中",
+                        "trigger_source": trigger_source,
+                        "engine_evidence_ref": f"engine://positions/{target_key}/{code_value}",
+                        "price": float(trade.buy_price or 0.0)
+                        if trade.buy_price is not None
+                        else None,
+                        "note": note,
+                        "created_at": updated_at,
+                    }
+                )
+                synced_events += 1
+            sell_signal = None
+            try:
+                sell_signal = engine.check_sell_signal_v2(trade, target_dt)
+            except Exception:
+                sell_signal = None
+            if sell_signal is not None:
+                add_event(
+                    {
+                        "event_id": self._lowfreq_score_sync_event_id(
+                            event_type="top_detected",
+                            code=code_value,
+                            event_date=target_key,
+                        ),
+                        "code": code_value,
+                        "sector_name": self._lowfreq_score_resolve_sector_name(
+                            code=code_value,
+                            raw_sector=raw_sector,
+                            sector_name_by_code=sector_name_by_code,
+                        ),
+                        "event_type": "top_detected",
+                        "event_date": target_key,
+                        "from_state": "持有中",
+                        "to_state": "持有中",
+                        "trigger_source": "engine.check_sell_signal_v2",
+                        "engine_evidence_ref": f"engine://sell-signal/{target_key}/{code_value}",
+                        "price": float(current_price) if current_price else None,
+                        "note": str(
+                            getattr(sell_signal, "details", "")
+                            or getattr(sell_signal, "reason", "")
+                            or "见顶判定触发"
+                        ),
+                        "created_at": updated_at,
+                    }
+                )
+                synced_events += 1
+            synced_holding += 1
+
+        for code, trade_payload in eligible_positions.items():
+            if not isinstance(trade_payload, dict):
+                continue
+            project_holding_trade(
+                trade_payload=trade_payload,
+                trigger_source="operation_logic.positions",
+                note="正式买点成立并进入持有",
+            )
+
+        for raw_trade in raw_closed:
+            if not isinstance(raw_trade, dict):
+                continue
+            trade = self._lowfreq_trade_from_payload(raw_trade)
+            code_value = str(trade.code or "").strip()
+            if not code_value or code_value in candidate_codes:
+                continue
+            buy_date = str(trade.buy_date or "").strip()
+            sell_date = str(trade.sell_date or "").strip()
+            if buy_date and buy_date > target_key:
+                continue
+            if not sell_date or sell_date > target_key:
+                if code_value in active_codes:
+                    continue
+                project_holding_trade(
+                    trade_payload=raw_trade,
+                    trigger_source="operation_logic.closed_trades",
+                    note="历史持有记录回填",
+                )
+                continue
+            if code_value in active_codes:
+                continue
+            active_codes.add(code_value)
+            existing = existing_pool.get(code_value) or {}
+            realized_return_pct = (
+                trade.net_return_pct
+                if float(trade.net_return_pct or 0.0) != 0.0
+                else trade.return_pct
+            )
+            tracking_since = (
+                str(existing.get("tracking_since") or "").strip() or str(trade.buy_date or "")
+            )
+            state_since = (
+                str(existing.get("state_since") or "").strip()
+                if str(existing.get("state") or "").strip() == "已清仓"
+                else str(trade.sell_date or target_key)
+            ) or target_key
+            raw_sector = str(trade.sector or "")
+            upsert_projected_pool(
+                {
+                    "code": code_value,
+                    "name": str(trade.name or ""),
+                    "sector": raw_sector,
+                    "sector_name": self._lowfreq_score_resolve_sector_name(
+                        code=code_value,
+                        raw_sector=raw_sector,
+                        sector_name_by_code=sector_name_by_code,
+                    ),
+                    "state": "已清仓",
+                    "state_since": state_since,
+                    "tracking_since": tracking_since,
+                    "buy_date": str(trade.buy_date or "") or None,
+                    "buy_price": float(trade.buy_price or 0.0) if trade.buy_price is not None else None,
+                    "sell_date": str(trade.sell_date or "") or None,
+                    "sell_price": float(trade.sell_price or 0.0) if trade.sell_price is not None else None,
+                    "last_trade_date": str(trade.sell_date or "") or None,
+                    "last_price": float(trade.sell_price or 0.0) if trade.sell_price is not None else None,
+                    "realized_return_pct": round(float(realized_return_pct), 2) if realized_return_pct is not None else None,
+                    "top_signal_date": str(trade.sell_date or "") or None,
+                    "engine_snapshot_ref": f"engine://closed-trades/{str(trade.sell_date or target_key)}/{code_value}",
+                    "updated_at": updated_at,
+                }
+            )
+            if str(trade.buy_date or "").strip():
+                add_event(
+                    {
+                        "event_id": self._lowfreq_score_sync_event_id(
+                            event_type="entered_holding",
+                            code=code_value,
+                            event_date=str(trade.buy_date),
+                        ),
+                        "code": code_value,
+                        "sector_name": self._lowfreq_score_resolve_sector_name(
+                            code=code_value,
+                            raw_sector=raw_sector,
+                            sector_name_by_code=sector_name_by_code,
+                        ),
+                        "event_type": "entered_holding",
+                        "event_date": str(trade.buy_date),
+                        "from_state": "跟踪",
+                        "to_state": "持有中",
+                        "trigger_source": "operation_logic.closed_trades",
+                        "engine_evidence_ref": f"engine://closed-trades/{str(trade.sell_date or target_key)}/{code_value}",
+                        "price": float(trade.buy_price or 0.0) if trade.buy_price is not None else None,
+                        "note": "历史持有记录回填",
+                        "created_at": updated_at,
+                    }
+                )
+                synced_events += 1
+            if str(trade.sell_date or "").strip():
+                add_event(
+                    {
+                        "event_id": self._lowfreq_score_sync_event_id(
+                            event_type="closed",
+                            code=code_value,
+                            event_date=str(trade.sell_date),
+                        ),
+                        "code": code_value,
+                        "sector_name": self._lowfreq_score_resolve_sector_name(
+                            code=code_value,
+                            raw_sector=raw_sector,
+                            sector_name_by_code=sector_name_by_code,
+                        ),
+                        "event_type": "closed",
+                        "event_date": str(trade.sell_date),
+                        "from_state": "持有中",
+                        "to_state": "已清仓",
+                        "trigger_source": "operation_logic.closed_trades",
+                        "engine_evidence_ref": f"engine://closed-trades/{str(trade.sell_date)}/{code_value}",
+                        "price": float(trade.sell_price or 0.0) if trade.sell_price is not None else None,
+                        "note": str(trade.sell_reason or "已清仓"),
+                        "created_at": updated_at,
+                    }
+                )
+                synced_events += 1
+            synced_closed += 1
+
+        current_items = sorted(
+            list(projected_pool_by_code.values()),
+            key=lambda item: (
+                {"持有中": 0, "跟踪": 1, "已清仓": 2}.get(
+                    str(item.get("state") or "").strip(), 9
+                ),
+                str(item.get("code") or ""),
+            ),
+        )
+        projected_snapshots = []
+        for item in current_items:
+            if not isinstance(item, dict):
+                continue
+            state_value = str(item.get("state") or "").strip()
+            if state_value not in set(LOWFREQ_SCORE_STATES):
+                continue
+            projected_snapshots.append(
+                {
+                    "trade_date": target_key,
+                    "code": str(item.get("code") or "").strip(),
+                    "state": state_value,
+                    "close_price": item.get("last_price"),
+                    "buy_price": item.get("buy_price"),
+                    "sell_price": item.get("sell_price"),
+                    "unrealized_return_pct": item.get("current_return_pct")
+                    if state_value == "持有中"
+                    else None,
+                    "realized_return_pct": item.get("realized_return_pct")
+                    if state_value == "已清仓"
+                    else None,
+                    "snapshot_refreshed_at": updated_at,
+                }
+            )
+
+        day_start = target_key
+        week_start = self._lowfreq_score_week_start(target_dt)
+        month_start = self._lowfreq_score_month_start(target_dt)
+        projected_summaries = []
+        for period_type, period_start in (
+            ("day", day_start),
+            ("week", week_start),
+            ("month", month_start),
+        ):
+            tracked_count = 0
+            holding_count = 0
+            closed_count = 0
+            entered_count = 0
+            holding_returns: list[Optional[float]] = []
+            realized_returns: list[Optional[float]] = []
+            pool_returns: list[Optional[float]] = []
+            period_closed_positive = 0
+            period_closed_total = 0
+
+            for item in current_items:
+                if not isinstance(item, dict):
+                    continue
+                state_value = str(item.get("state") or "").strip()
+                if state_value == "跟踪":
+                    tracked_count += 1
+                elif state_value == "持有中":
+                    holding_count += 1
+                    holding_returns.append(item.get("current_return_pct"))
+                    pool_returns.append(item.get("current_return_pct"))
+                elif state_value == "已清仓":
+                    if self._lowfreq_score_date_in_period(item.get("sell_date"), period_start, target_key):
+                        closed_count += 1
+                        realized_value = item.get("realized_return_pct")
+                        realized_returns.append(realized_value)
+                        pool_returns.append(realized_value)
+                        if isinstance(realized_value, (int, float)) and float(realized_value) > 0.0:
+                            period_closed_positive += 1
+                        period_closed_total += 1
+                if self._lowfreq_score_date_in_period(item.get("buy_date"), period_start, target_key):
+                    entered_count += 1
+
+            projected_summaries.append(
+                {
+                    "period_type": period_type,
+                    "period_start": period_start,
+                    "period_end": target_key,
+                    "tracked_count": tracked_count,
+                    "holding_count": holding_count,
+                    "closed_count": closed_count,
+                    "entered_count": entered_count,
+                    "holding_return_pct": self._lowfreq_score_avg(holding_returns),
+                    "realized_return_pct": self._lowfreq_score_avg(realized_returns),
+                    "pool_return_pct": self._lowfreq_score_avg(pool_returns),
+                    "capture_quality": self._lowfreq_score_ratio(entered_count, tracked_count + entered_count),
+                    "top_exit_quality": self._lowfreq_score_ratio(period_closed_positive, period_closed_total),
+                    "updated_at": updated_at,
+                }
+            )
+        projected_events = sorted(
+            list(projected_events_by_id.values()),
+            key=lambda item: self._lowfreq_score_event_sort_key(item),
+            reverse=True,
+        )
+        if should_persist:
+            store.prune_pool_current(active_codes=active_codes)
+            for item in current_items:
+                store.upsert_pool_current(item)
+            for event in projected_events:
+                store.append_event(event)
+            for snapshot in projected_snapshots:
+                store.upsert_daily_snapshot(snapshot)
+            for summary in projected_summaries:
+                store.upsert_period_summary(summary)
+        return {
+            "target_date": target_key,
+            "persisted": should_persist,
+            "synced_tracking": synced_tracking,
+            "synced_holding": synced_holding,
+            "synced_closed": synced_closed,
+            "synced_events": synced_events,
+            "synced_snapshots": len(current_items),
+            "synced_summaries": len(projected_summaries),
+            "pool": current_items,
+            "events": projected_events,
+            "snapshots": projected_snapshots,
+            "summaries": projected_summaries,
+        }
+
+    def lowfreq_score_pool_view(
+        self,
+        *,
+        state: Optional[str] = None,
+        limit: int = 500,
+        target_date: Optional[str] = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        sync_meta = self._lowfreq_score_sync_state(target_date=target_date)
+        state_value = str(state or "").strip() or None
+        if state_value and state_value not in set(LOWFREQ_SCORE_STATES):
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_lowfreq_score_state",
+                message=f"invalid lowfreq score state: {state_value}",
+                details={"state": state_value, "allowed": list(LOWFREQ_SCORE_STATES)},
+            )
+        store = self._lowfreq_score_store()
+        store.ensure_schema()
+        projected_pool = sync_meta.get("pool")
+        if isinstance(projected_pool, list):
+            pool = [
+                item
+                for item in projected_pool
+                if isinstance(item, dict)
+                and (state_value is None or str(item.get("state") or "").strip() == state_value)
+            ][: max(1, int(limit))]
+        else:
+            pool = store.list_pool_current(state=state_value, limit=limit)
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "authoritative_layer": "operation_logic",
+                "contract": "lowfreq-score/pool.v1alpha1",
+            },
+            "meta": {
+                "as_of_date": sync_meta.get("target_date"),
+                "states": list(LOWFREQ_SCORE_STATES),
+                "state_filter": state_value,
+                "limit": max(1, int(limit)),
+                "sync": self._lowfreq_score_sync_brief(sync_meta),
+            },
+            "summary": self._lowfreq_score_pool_summary(pool),
+            "ui_contract": self._lowfreq_score_ui_contract(),
+            "pool": pool,
+        }
+
+    @staticmethod
+    def _lowfreq_score_sync_brief(sync_meta: dict[str, Any]) -> dict[str, Any]:
+        pool_items = sync_meta.get("pool")
+        events = sync_meta.get("events")
+        snapshots = sync_meta.get("snapshots")
+        summaries = sync_meta.get("summaries")
+        return {
+            "target_date": sync_meta.get("target_date"),
+            "persisted": bool(sync_meta.get("persisted")),
+            "synced_tracking": int(sync_meta.get("synced_tracking") or 0),
+            "synced_holding": int(sync_meta.get("synced_holding") or 0),
+            "synced_closed": int(sync_meta.get("synced_closed") or 0),
+            "synced_events": int(sync_meta.get("synced_events") or 0),
+            "synced_snapshots": int(sync_meta.get("synced_snapshots") or 0),
+            "synced_summaries": int(sync_meta.get("synced_summaries") or 0),
+            "pool_count": len(pool_items) if isinstance(pool_items, list) else None,
+            "events_count": len(events) if isinstance(events, list) else None,
+            "snapshots_count": len(snapshots) if isinstance(snapshots, list) else None,
+            "summaries_count": len(summaries) if isinstance(summaries, list) else None,
+        }
+
+    def lowfreq_score_pool_item_view(
+        self,
+        *,
+        code: str,
+        event_limit: int = 100,
+        target_date: Optional[str] = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        sync_meta = self._lowfreq_score_sync_state(target_date=target_date)
+        code_value = str(code or "").strip()
+        if not code_value:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_code",
+                message="code must be a non-empty string",
+                details={"code": code},
+            )
+        store = self._lowfreq_score_store()
+        store.ensure_schema()
+        projected_pool = sync_meta.get("pool")
+        item = None
+        if isinstance(projected_pool, list):
+            item = next(
+                (
+                    row
+                    for row in projected_pool
+                    if isinstance(row, dict) and str(row.get("code") or "").strip() == code_value
+                ),
+                None,
+            )
+        if item is None:
+            item = store.get_pool_current(code=code_value)
+        if item is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="lowfreq_score_pool_item_not_found",
+                message=f"lowfreq score pool item not found for code: {code_value}",
+                details={"code": code_value},
+            )
+        projected_events = sync_meta.get("events")
+        if isinstance(projected_events, list):
+            events = [
+                row
+                for row in projected_events
+                if isinstance(row, dict) and str(row.get("code") or "").strip() == code_value
+            ][: max(1, int(event_limit))]
+        else:
+            events = store.list_events(code=code_value, limit=event_limit)
+        projected_snapshots = sync_meta.get("snapshots")
+        if isinstance(projected_snapshots, list):
+            snapshots = [
+                row
+                for row in projected_snapshots
+                if isinstance(row, dict) and str(row.get("code") or "").strip() == code_value
+            ][: max(1, int(event_limit))]
+        else:
+            snapshots = store.list_daily_snapshots(code=code_value, limit=event_limit)
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "authoritative_layer": "operation_logic",
+                "contract": "lowfreq-score/pool-item.v1alpha1",
+            },
+            "meta": {
+                "as_of_date": sync_meta.get("target_date"),
+                "event_limit": max(1, int(event_limit)),
+                "sync": self._lowfreq_score_sync_brief(sync_meta),
+            },
+            "ui_contract": self._lowfreq_score_ui_contract(),
+            "item": item,
+            "events": events,
+            "snapshots": snapshots,
+        }
+
+    def lowfreq_score_events_view(
+        self,
+        *,
+        code: Optional[str] = None,
+        limit: int = 200,
+        target_date: Optional[str] = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        sync_meta = self._lowfreq_score_sync_state(target_date=target_date)
+        code_value = str(code or "").strip() or None
+        store = self._lowfreq_score_store()
+        store.ensure_schema()
+        projected_events = sync_meta.get("events")
+        if isinstance(projected_events, list):
+            events = [
+                row
+                for row in projected_events
+                if isinstance(row, dict)
+                and (code_value is None or str(row.get("code") or "").strip() == code_value)
+            ][: max(1, int(limit))]
+        else:
+            events = store.list_events(code=code_value, limit=limit)
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "authoritative_layer": "operation_logic",
+                "contract": "lowfreq-score/events.v1alpha1",
+            },
+            "meta": {
+                "as_of_date": sync_meta.get("target_date"),
+                "code_filter": code_value,
+                "limit": max(1, int(limit)),
+                "sync": self._lowfreq_score_sync_brief(sync_meta),
+            },
+            "ui_contract": self._lowfreq_score_ui_contract(),
+            "events": events,
+        }
+
+    def lowfreq_score_summary_view(
+        self,
+        *,
+        period_type: Optional[str] = None,
+        limit: int = 120,
+        target_date: Optional[str] = None,
+        requested_by: str = "api",
+    ) -> dict[str, Any]:
+        sync_meta = self._lowfreq_score_sync_state(target_date=target_date)
+        period_value = str(period_type or "").strip() or None
+        store = self._lowfreq_score_store()
+        store.ensure_schema()
+        projected_summaries = sync_meta.get("summaries")
+        if isinstance(projected_summaries, list):
+            summaries = [
+                row
+                for row in projected_summaries
+                if isinstance(row, dict)
+                and (
+                    period_value is None
+                    or str(row.get("period_type") or "").strip() == period_value
+                )
+            ][: max(1, int(limit))]
+        else:
+            summaries = store.list_period_summaries(period_type=period_value, limit=limit)
+        return {
+            "_meta": {
+                "status": "ok",
+                "requested_by": requested_by,
+                "authoritative_layer": "operation_logic",
+                "contract": "lowfreq-score/summary.v1alpha1",
+            },
+            "meta": {
+                "as_of_date": sync_meta.get("target_date"),
+                "period_type_filter": period_value,
+                "limit": max(1, int(limit)),
+                "sync": self._lowfreq_score_sync_brief(sync_meta),
+            },
+            "ui_contract": self._lowfreq_score_ui_contract(),
+            "summaries": summaries,
+        }
+
+    @staticmethod
+    def _workbench_role_rank(role: str) -> int:
+        normalized = str(role or "").strip()
+        if normalized == "龙头":
+            return 0
+        if normalized == "中军":
+            return 1
+        if normalized == "跟随":
+            return 2
+        return 3
+
+    @staticmethod
+    def _workbench_tracking_status_priority(status: str) -> int:
+        normalized = str(status or "").strip()
+        if normalized == "entry_ready":
+            return 0
+        if normalized == "queued":
+            return 1
+        if normalized == "watch":
+            return 2
+        if normalized == "watch_follower":
+            return 3
+        if normalized == "blocked":
+            return 4
+        if normalized == "abandoned":
+            return 5
+        return 9
+
+    @staticmethod
+    def _workbench_phase_label(phase: str) -> str:
+        normalized = str(phase or "").strip().lower()
+        labels = {
+            "bull": "进攻阶段",
+            "bear": "防守阶段",
+            "range": "震荡阶段",
+            "transition": "切换阶段",
+        }
+        return labels.get(normalized, "未知阶段")
+
+    @staticmethod
+    def _workbench_bias_from_phase(phase: str) -> tuple[str, str]:
+        normalized = str(phase or "").strip().lower()
+        if normalized == "bull":
+            return "attack", "进攻"
+        if normalized == "bear":
+            return "defense", "防守"
+        return "balanced", "均衡"
+
+    @staticmethod
+    def _workbench_risk_from_phase(phase: str, confidence: Optional[float]) -> tuple[str, str]:
+        normalized = str(phase or "").strip().lower()
+        conf = float(confidence) if isinstance(confidence, (int, float)) else None
+        if normalized == "bear":
+            return "high", "高"
+        if normalized == "bull":
+            if conf is not None and conf >= 0.6:
+                return "low", "低"
+            return "medium", "中"
+        return "medium", "中"
+
+    @staticmethod
+    def _workbench_reason_text(value: object) -> str:
+        if isinstance(value, list):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return "；".join(parts[:2])
+        text = str(value or "").strip()
+        return text
+
+    @staticmethod
+    def _workbench_summary_or_none(*values: object) -> Optional[str]:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return None
+
+    @staticmethod
+    def _workbench_focus_theme_text(value: object) -> str:
+        if isinstance(value, dict):
+            concept_name = str(value.get("concept_name") or "").strip()
+            if concept_name:
+                return concept_name
+            concept_code = str(value.get("concept_code") or "").strip()
+            if concept_code:
+                return concept_code
+            return ""
+        return str(value or "").strip()
+
+    def _build_lowfreq_workbench_market_summary(
+        self,
+        *,
+        target_date: str,
+        market_phase_payload: dict[str, Any],
+        decision_summary_payload: dict[str, Any],
+        hot_sectors: list[dict[str, Any]],
+        autopilot_enabled: bool,
+    ) -> dict[str, Any]:
+        market_phase = (
+            market_phase_payload.get("market_phase")
+            if isinstance(market_phase_payload.get("market_phase"), dict)
+            else {}
+        )
+        phase = str(market_phase.get("phase") or "").strip().lower()
+        phase_label = self._workbench_phase_label(phase)
+        bias, bias_label = self._workbench_bias_from_phase(phase)
+        risk_level, risk_label = self._workbench_risk_from_phase(
+            phase,
+            market_phase.get("confidence"),
+        )
+        focus_theme = ""
+        signals = (
+            decision_summary_payload.get("signals")
+            if isinstance(decision_summary_payload.get("signals"), dict)
+            else {}
+        )
+        focus_theme = self._workbench_focus_theme_text(signals.get("focus_theme"))
+        if not focus_theme and hot_sectors:
+            focus_theme = str(hot_sectors[0].get("sector_name") or "").strip()
+        summary_parts = [
+            f"当前处于{phase_label}",
+            f"操作倾向{bias_label}",
+            f"风险{risk_label}",
+        ]
+        if focus_theme:
+            summary_parts.append(f"关注{focus_theme}")
+        summary_parts.append("自动执行开启" if autopilot_enabled else "自动执行关闭")
+        evidence: list[str] = [f"phase={phase or 'unknown'}"]
+        confidence = market_phase.get("confidence")
+        if isinstance(confidence, (int, float)):
+            evidence.append(f"confidence={float(confidence):.2f}")
+        breadth = market_phase.get("market_breadth")
+        if isinstance(breadth, (int, float)):
+            evidence.append(f"breadth={float(breadth):.2%}")
+        amount_trend = str(market_phase.get("amount_trend") or "").strip()
+        if amount_trend:
+            evidence.append(f"amount_trend={amount_trend}")
+        if focus_theme:
+            evidence.append(f"focus_theme={focus_theme}")
+        return {
+            "as_of_date": target_date,
+            "phase": phase or "unknown",
+            "phase_label": phase_label,
+            "bias": bias,
+            "bias_label": bias_label,
+            "risk_level": risk_level,
+            "risk_label": risk_label,
+            "summary_text": "，".join(summary_parts),
+            "evidence": evidence[:5],
+        }
+
+    def _build_lowfreq_workbench_hot_sectors(
+        self,
+        *,
+        sectors_payload: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for sector in sectors_payload:
+            if not isinstance(sector, dict):
+                continue
+            meta = sector.get("meta") if isinstance(sector.get("meta"), dict) else {}
+            leaders = sector.get("leaders") if isinstance(sector.get("leaders"), list) else []
+            middle = sector.get("middle") if isinstance(sector.get("middle"), list) else []
+            followers = sector.get("followers") if isinstance(sector.get("followers"), list) else []
+            status = "watch"
+            status_text = "观察"
+            risk_level = str(meta.get("risk_level") or "").strip().lower()
+            upwave = sector.get("upwave") if isinstance(sector.get("upwave"), dict) else {}
+            if risk_level == "exit":
+                status = "avoid"
+                status_text = "回避"
+            elif str(upwave.get("status") or "").strip() == "upwave":
+                status = "active"
+                status_text = "主升"
+            actionable_count = sum(
+                1
+                for stock in [*leaders, *middle, *followers]
+                if isinstance(stock, dict) and bool(stock.get("buy_signal"))
+            )
+            mainline_rank = meta.get("mainline_rank")
+            trend_state = str(meta.get("trend_state") or "").strip()
+            summary_parts: list[str] = []
+            if isinstance(mainline_rank, (int, float)):
+                summary_parts.append(f"主线#{int(mainline_rank)}")
+            if trend_state:
+                summary_parts.append(f"趋势{trend_state}")
+            summary_parts.append(status_text)
+            items.append(
+                {
+                    "sector_code": str(sector.get("code") or "").strip(),
+                    "sector_name": str(sector.get("name") or "").strip(),
+                    "heat_score": float(sector.get("heat_score") or 0.0),
+                    "status": status,
+                    "status_text": status_text,
+                    "summary_text": "，".join(summary_parts),
+                    "leader_count": len(leaders),
+                    "middle_count": len(middle),
+                    "follower_count": len(followers),
+                    "actionable_count": actionable_count,
+                    "representatives": [
+                        {
+                            "code": str(stock.get("code") or "").strip(),
+                            "name": str(stock.get("name") or "").strip(),
+                            "role": str(stock.get("role") or "").strip(),
+                            "role_text": str(stock.get("role") or "").strip() or "--",
+                            "tracking_status": "entry_ready" if bool(stock.get("buy_signal")) else "watch",
+                            "tracking_status_text": "可建仓" if bool(stock.get("buy_signal")) else "跟踪",
+                            "certainty_score": (
+                                round(float(stock.get("certainty_prob")) * 100.0, 1)
+                                if isinstance(stock.get("certainty_prob"), (int, float))
+                                else (
+                                    round(float(stock.get("buy_score")), 1)
+                                    if isinstance(stock.get("buy_score"), (int, float))
+                                    else None
+                                )
+                            ),
+                        }
+                        for stock in [*leaders[:2], *middle[:2], *followers[:2]]
+                        if isinstance(stock, dict)
+                    ],
+                }
+            )
+        items.sort(key=lambda item: float(item.get("heat_score") or 0.0), reverse=True)
+        return items
+
+    def _build_lowfreq_workbench_tracking_list(
+        self,
+        *,
+        target_date: str,
+        sectors_payload: list[dict[str, Any]],
+        queue_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        queue_by_code: dict[str, dict[str, Any]] = {}
+        for item in queue_items:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            if code:
+                queue_by_code[code] = item
+        tracking_map: dict[str, dict[str, Any]] = {}
+        for sector in sectors_payload:
+            if not isinstance(sector, dict):
+                continue
+            stocks = []
+            for key in ("leaders", "middle", "followers"):
+                values = sector.get(key)
+                if isinstance(values, list):
+                    stocks.extend(values)
+            for stock in stocks:
+                if not isinstance(stock, dict):
+                    continue
+                code = str(stock.get("code") or "").strip()
+                if not code:
+                    continue
+                manual = stock.get("manual") if isinstance(stock.get("manual"), dict) else {}
+                queue_item = queue_by_code.get(code) if isinstance(queue_by_code.get(code), dict) else {}
+                tracking_stage = "entry_ready" if bool(stock.get("buy_signal")) or bool(manual.get("buy_intent_pending")) else "candidate"
+                tracking_stage_text = "建仓层" if tracking_stage == "entry_ready" else "跟踪层"
+                tracking_status = "watch"
+                tracking_status_text = "持续跟踪"
+                if bool(manual.get("abandoned")):
+                    tracking_status = "abandoned"
+                    tracking_status_text = "已放弃"
+                elif bool(manual.get("buy_intent_pending")):
+                    tracking_status = "queued"
+                    tracking_status_text = "已排队"
+                elif bool(stock.get("buy_signal")):
+                    tracking_status = "entry_ready"
+                    tracking_status_text = "可建仓"
+                elif str(stock.get("risk_level") or "").strip().lower() == "exit":
+                    tracking_status = "blocked"
+                    tracking_status_text = "暂不参与"
+                elif str(stock.get("role") or "").strip() == "跟随":
+                    tracking_status = "watch_follower"
+                    tracking_status_text = "跟随观察"
+                certainty_score = None
+                if isinstance(stock.get("certainty_prob"), (int, float)):
+                    certainty_score = round(float(stock.get("certainty_prob")) * 100.0, 1)
+                elif isinstance(stock.get("buy_score"), (int, float)):
+                    certainty_score = round(float(stock.get("buy_score")), 1)
+                first_seen_at = self._workbench_summary_or_none(
+                    queue_item.get("source_date"),
+                    manual.get("buy_execute_date"),
+                )
+                last_changed_at = self._workbench_summary_or_none(
+                    queue_item.get("created_at"),
+                    queue_item.get("requested_date"),
+                    manual.get("buy_execute_date"),
+                )
+                is_new_today = bool(
+                    (isinstance(first_seen_at, str) and first_seen_at.startswith(target_date))
+                    or (isinstance(last_changed_at, str) and last_changed_at.startswith(target_date))
+                )
+                tracking_map[code] = {
+                    "code": code,
+                    "name": str(stock.get("name") or "").strip(),
+                    "sector": str(stock.get("sector") or sector.get("name") or "").strip(),
+                    "role": str(stock.get("role") or "").strip(),
+                    "role_text": str(stock.get("role") or "").strip() or "--",
+                    "certainty_score": certainty_score,
+                    "tracking_stage": tracking_stage,
+                    "tracking_stage_text": tracking_stage_text,
+                    "tracking_status": tracking_status,
+                    "tracking_status_text": tracking_status_text,
+                    "summary_text": (
+                        self._workbench_summary_or_none(
+                            self._workbench_reason_text(stock.get("reasons")),
+                            stock.get("risk_reason"),
+                            queue_item.get("blocked_reason"),
+                        )
+                        or "--"
+                    ),
+                    "first_seen_at": first_seen_at,
+                    "last_changed_at": last_changed_at,
+                    "is_new_today": is_new_today,
+                }
+        items = list(tracking_map.values())
+        items.sort(
+            key=lambda item: (
+                self._workbench_tracking_status_priority(item.get("tracking_status", "")),
+                -(float(item.get("certainty_score") or 0.0)),
+                self._workbench_role_rank(item.get("role", "")),
+                str(item.get("code") or ""),
+            )
+        )
+        return items
+
+    def _build_lowfreq_workbench_positions(
+        self,
+        *,
+        positions_payload: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for position in positions_payload:
+            if not isinstance(position, dict):
+                continue
+            hold_state = str(position.get("hold_state") or "").strip()
+            exit_ready = bool(position.get("exit_ready"))
+            position_status = "stable"
+            position_status_text = "稳定"
+            if exit_ready:
+                position_status = "exit_ready"
+                position_status_text = "离场"
+            elif hold_state in {"review_watch", "observe_watch", "noise_watch", "grace_hold"}:
+                position_status = "pullback"
+                position_status_text = "震荡/回调"
+            near_top_flag = bool(
+                exit_ready or hold_state in {"review_watch", "observe_watch", "grace_hold"}
+            )
+            near_top_text = "接近高位" if near_top_flag else "未见顶"
+            if exit_ready:
+                exit_risk = "high"
+                exit_risk_text = "高"
+            elif hold_state in {"review_watch", "observe_watch", "noise_watch", "grace_hold"}:
+                exit_risk = "medium"
+                exit_risk_text = "中"
+            else:
+                exit_risk = "low"
+                exit_risk_text = "低"
+            items.append(
+                {
+                    "code": str(position.get("code") or "").strip(),
+                    "name": str(position.get("name") or "").strip(),
+                    "sector": str(position.get("sector") or "").strip(),
+                    "role": str(position.get("role") or "").strip(),
+                    "role_text": str(position.get("role") or "").strip() or "--",
+                    "position_status": position_status,
+                    "position_status_text": position_status_text,
+                    "buy_price": position.get("buy_price"),
+                    "current_price": position.get("current_price"),
+                    "pnl_pct": position.get("unrealized_pnl_pct"),
+                    "near_top_flag": near_top_flag,
+                    "near_top_text": near_top_text,
+                    "buy_date": str(position.get("buy_date") or "").strip() or None,
+                    "holding_days": position.get("hold_days"),
+                    "exit_risk": exit_risk,
+                    "exit_risk_text": exit_risk_text,
+                    "summary_text": (
+                        self._workbench_summary_or_none(
+                            self._workbench_reason_text(position.get("not_exit_reasons")),
+                            position.get("sell_reason"),
+                            self._workbench_reason_text(position.get("warning_flags")),
+                        )
+                        or "--"
+                    ),
+                }
+            )
+        items.sort(key=lambda item: float(item.get("pnl_pct") or 0.0), reverse=True)
+        return items
+
+    def _build_lowfreq_workbench_trade_ledger(
+        self,
+        *,
+        portfolio_payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        ledger: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        manual_intents = (
+            portfolio_payload.get("manual_intents")
+            if isinstance(portfolio_payload.get("manual_intents"), list)
+            else []
+        )
+        for item in manual_intents:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("status") or "").strip() != "executed":
+                continue
+            intent_type = str(item.get("intent_type") or "").strip()
+            if intent_type not in {"buy_intent", "sell_intent"}:
+                continue
+            action = "buy" if intent_type == "buy_intent" else "sell"
+            trade_date = str(item.get("executed_date") or item.get("execute_date") or "").strip()
+            code = str(item.get("code") or "").strip()
+            if not code or not trade_date:
+                continue
+            key = (action, code, trade_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            source = "manual" if str(item.get("source") or "").strip() == "manual" else "auto"
+            reason_tag = (
+                str(item.get("source") or "entry_signal").strip()
+                if action == "buy"
+                else str(item.get("sell_signal") or "sell_signal").strip()
+            )
+            reason_text = (
+                self._workbench_summary_or_none(
+                    item.get("sell_reason") if action == "sell" else "",
+                    item.get("wave_phase") if action == "buy" else "",
+                    f"buy_score={float(item.get('buy_score')):.1f}" if action == "buy" and isinstance(item.get("buy_score"), (int, float)) else "",
+                )
+                or "--"
+            )
+            ledger.append(
+                {
+                    "trade_date": trade_date,
+                    "action": action,
+                    "action_text": "买入" if action == "buy" else "卖出",
+                    "code": code,
+                    "name": str(item.get("name") or "").strip(),
+                    "sector": str(item.get("sector") or "").strip(),
+                    "price": item.get("executed_price"),
+                    "size_or_weight": item.get("executed_shares"),
+                    "reason_tag": reason_tag or "--",
+                    "reason_text": reason_text,
+                    "source": source,
+                    "source_text": "人工" if source == "manual" else "自动",
+                    "signal_date": (
+                        str(item.get("source_date") or item.get("requested_date") or "").strip() or None
+                    ),
+                }
+            )
+        closed_trades = (
+            portfolio_payload.get("closed_trades")
+            if isinstance(portfolio_payload.get("closed_trades"), list)
+            else []
+        )
+        for trade in closed_trades:
+            if not isinstance(trade, dict):
+                continue
+            trade_date = str(trade.get("sell_date") or "").strip()
+            code = str(trade.get("code") or "").strip()
+            if not code or not trade_date:
+                continue
+            key = ("sell", code, trade_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            ledger.append(
+                {
+                    "trade_date": trade_date,
+                    "action": "sell",
+                    "action_text": "卖出",
+                    "code": code,
+                    "name": str(trade.get("name") or "").strip(),
+                    "sector": str(trade.get("sector") or "").strip(),
+                    "price": trade.get("sell_price"),
+                    "size_or_weight": trade.get("shares"),
+                    "reason_tag": str(trade.get("exit_reason_type") or "sell_signal").strip() or "sell_signal",
+                    "reason_text": self._workbench_summary_or_none(trade.get("sell_reason"), trade.get("summary_text")) or "--",
+                    "source": "auto",
+                    "source_text": "自动",
+                    "signal_date": str(trade.get("buy_date") or "").strip() or None,
+                }
+            )
+        open_positions = (
+            portfolio_payload.get("open_positions")
+            if isinstance(portfolio_payload.get("open_positions"), list)
+            else []
+        )
+        for position in open_positions:
+            if not isinstance(position, dict):
+                continue
+            trade_date = str(position.get("buy_date") or "").strip()
+            code = str(position.get("code") or "").strip()
+            if not code or not trade_date:
+                continue
+            key = ("buy", code, trade_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            ledger.append(
+                {
+                    "trade_date": trade_date,
+                    "action": "buy",
+                    "action_text": "买入",
+                    "code": code,
+                    "name": str(position.get("name") or "").strip(),
+                    "sector": str(position.get("sector") or "").strip(),
+                    "price": position.get("buy_price"),
+                    "size_or_weight": position.get("shares"),
+                    "reason_tag": "entry_signal",
+                    "reason_text": self._workbench_summary_or_none(position.get("buy_progress_label"), position.get("wave_phase")) or "--",
+                    "source": "auto",
+                    "source_text": "自动",
+                    "signal_date": trade_date,
+                }
+            )
+        ledger.sort(
+            key=lambda item: (
+                str(item.get("trade_date") or ""),
+                str(item.get("code") or ""),
+                str(item.get("action") or ""),
+            ),
+            reverse=True,
+        )
+        return ledger[:200]
+
+    @staticmethod
+    def _workbench_daily_step_label(step_id: str) -> str:
+        mapping = {
+            "trading_day_check": "交易日校验",
+            "yesterday_closeout": "昨日收口",
+            "authoritative_update": "权威行情更新",
+            "tushare_health": "Tushare 健康检查",
+            "team_theme_snapshot": "主题快照",
+            "ths_concept_mainline": "同花顺主线",
+            "screeners_bulk_run": "筛选器批跑",
+            "lowfreq_sim_daily": "低频日运行",
+            "confidence_daily": "置信度日更新",
+            "lowfreq_backtest_roll60": "滚动回测",
+            "auto_optimize": "自动优化",
+        }
+        return mapping.get(str(step_id or "").strip(), str(step_id or "").strip() or "--")
+
+    @staticmethod
+    def _workbench_daily_status_meta(status: str) -> dict[str, str]:
+        normalized = str(status or "").strip().lower()
+        if normalized == "ok":
+            return {"kind": "active", "label": "正常"}
+        if normalized in {"failed", "error"}:
+            return {"kind": "avoid", "label": "失败"}
+        if normalized in {"running", "accepted"}:
+            return {"kind": "queued", "label": "运行中"}
+        if normalized in {"skipped", "partial"}:
+            return {"kind": "blocked", "label": "部分完成"}
+        return {"kind": "watch", "label": normalized or "--"}
+
+    def _build_lowfreq_workbench_daily_ops(
+        self,
+        *,
+        latest_trade_date: str,
+    ) -> dict[str, Any]:
+        ledger_dir = self._daily_runs_dir
+        latest_file: Optional[Path] = None
+        if ledger_dir.exists():
+            candidates = sorted(
+                [
+                    path
+                    for path in ledger_dir.glob("*.json")
+                    if path.is_file() and path.stem
+                ]
+            )
+            if candidates:
+                latest_file = candidates[-1]
+
+        if latest_file is None:
+            return {
+                "available": False,
+                "status": "missing",
+                "status_text": "未找到日任务账本",
+                "status_kind": "blocked",
+                "latest_trade_date": str(latest_trade_date or ""),
+                "latest_data_synced": False,
+                "latest_data_synced_text": "未确认",
+                "steps": [],
+                "summary_text": "尚未发现每日运行账本，无法确认自动更新链是否正常。",
+            }
+
+        payload = self._read_json(latest_file)
+        steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
+        step_map = {}
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            step_id = str(step.get("step_id") or "").strip()
+            if not step_id:
+                continue
+            step_map[step_id] = step
+
+        key_step_ids = [
+            "authoritative_update",
+            "screeners_bulk_run",
+            "lowfreq_sim_daily",
+            "confidence_daily",
+            "auto_optimize",
+        ]
+        key_steps: list[dict[str, Any]] = []
+        overall_status = "ok"
+        for step_id in key_step_ids:
+            raw = step_map.get(step_id) or {}
+            status = str(raw.get("status") or "missing").strip().lower()
+            meta = self._workbench_daily_status_meta(status)
+            key_steps.append(
+                {
+                    "step_id": step_id,
+                    "step_label": self._workbench_daily_step_label(step_id),
+                    "status": status,
+                    "status_text": meta["label"],
+                    "status_kind": meta["kind"],
+                }
+            )
+            if status in {"failed", "error", "missing"}:
+                overall_status = "failed"
+            elif overall_status == "ok" and status in {"skipped", "partial"}:
+                overall_status = "partial"
+
+        closeout_outputs = (
+            (step_map.get("yesterday_closeout") or {}).get("outputs")
+            if isinstance((step_map.get("yesterday_closeout") or {}).get("outputs"), dict)
+            else {}
+        )
+        closeout_summary = (
+            closeout_outputs.get("summary")
+            if isinstance(closeout_outputs.get("summary"), dict)
+            else {}
+        )
+        authoritative_outputs = (
+            (step_map.get("authoritative_update") or {}).get("outputs")
+            if isinstance((step_map.get("authoritative_update") or {}).get("outputs"), dict)
+            else {}
+        )
+        latest_run_date = (
+            str(payload.get("trade_date") or "").strip()
+            or str(payload.get("target_date") or "").strip()
+            or latest_file.stem
+        )
+        authoritative_ok = str((step_map.get("authoritative_update") or {}).get("status") or "") == "ok"
+        latest_data_synced = bool(
+            latest_run_date
+            and latest_trade_date
+            and latest_run_date >= str(latest_trade_date)
+            and authoritative_ok
+        )
+        overdue_shifted_count = int(closeout_summary.get("overdue_shifted_count") or 0)
+        inconsistency_count = int(closeout_summary.get("inconsistency_count") or 0)
+        pending_intents_after = int(
+            (
+                ((step_map.get("lowfreq_sim_daily") or {}).get("outputs") or {})
+                if isinstance((step_map.get("lowfreq_sim_daily") or {}).get("outputs"), dict)
+                else {}
+            ).get("pending_intents_after")
+            or 0
+        )
+        overall_meta = self._workbench_daily_status_meta(overall_status)
+        if latest_data_synced and overdue_shifted_count == 0 and inconsistency_count == 0:
+            summary_text = "最近一轮每日任务成功，数据已追平到最新交易日，关键链路正常。"
+        elif latest_data_synced:
+            summary_text = (
+                f"最近一轮每日任务完成，数据已追平到最新交易日，但有 {overdue_shifted_count} 条顺延、"
+                f"{inconsistency_count} 条收口异常需关注。"
+            )
+        else:
+            summary_text = "最近一轮每日任务未确认追平到最新交易日，需要检查权威更新或调度链。"
+
+        return {
+            "available": True,
+            "ledger_path": str(latest_file),
+            "run_date": latest_run_date,
+            "target_date": str(payload.get("target_date") or ""),
+            "trade_date": str(payload.get("trade_date") or ""),
+            "started_at": str(payload.get("started_at") or ""),
+            "finished_at": str(payload.get("finished_at") or ""),
+            "status": overall_status,
+            "status_text": overall_meta["label"],
+            "status_kind": overall_meta["kind"],
+            "latest_trade_date": str(latest_trade_date or ""),
+            "latest_data_synced": latest_data_synced,
+            "latest_data_synced_text": "已追平" if latest_data_synced else "未追平",
+            "provider": str(authoritative_outputs.get("provider") or "") or "--",
+            "overdue_shifted_count": overdue_shifted_count,
+            "inconsistency_count": inconsistency_count,
+            "pending_intents_after": pending_intents_after,
+            "steps": key_steps,
+            "summary_text": summary_text,
+        }
+
+    def _load_daily_run_ledger(
+        self,
+        *,
+        target_date: Optional[str] = None,
+    ) -> tuple[Optional[Path], dict[str, Any]]:
+        ledger_dir = self._daily_runs_dir
+        if not ledger_dir.exists():
+            return None, {}
+        if target_date:
+            candidate = ledger_dir / f"{str(target_date).strip()}.json"
+            if not candidate.exists() or not candidate.is_file():
+                return None, {}
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return candidate, {}
+            return candidate, payload if isinstance(payload, dict) else {}
+        candidates = sorted(
+            [
+                path
+                for path in ledger_dir.glob("*.json")
+                if path.is_file() and path.stem
+            ]
+        )
+        if not candidates:
+            return None, {}
+        latest_file = candidates[-1]
+        try:
+            payload = json.loads(latest_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return latest_file, {}
+        return latest_file, payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _ops_center_risk_meta(risk_level: str) -> dict[str, Any]:
+        normalized = str(risk_level or "").strip().lower()
+        mapping = {
+            "severe": {"text": "严重风险", "kind": "avoid", "rank": 4},
+            "high": {"text": "高风险", "kind": "avoid", "rank": 3},
+            "medium": {"text": "中风险", "kind": "queued", "rank": 2},
+            "low": {"text": "低风险", "kind": "watch", "rank": 1},
+        }
+        return mapping.get(normalized, {"text": "未确认", "kind": "blocked", "rank": 0})
+
+    @staticmethod
+    def _ops_center_severity_meta(severity: str) -> dict[str, Any]:
+        normalized = str(severity or "").strip().lower()
+        mapping = {
+            "severe": {"text": "严重", "kind": "avoid", "rank": 4},
+            "high": {"text": "高", "kind": "avoid", "rank": 3},
+            "medium": {"text": "中", "kind": "queued", "rank": 2},
+            "low": {"text": "低", "kind": "watch", "rank": 1},
+        }
+        return mapping.get(normalized, {"text": "未确认", "kind": "blocked", "rank": 0})
+
+    def ops_center_summary_view(
+        self,
+        *,
+        target_date: Optional[str] = None,
+    ) -> dict[str, Any]:
+        latest_trade_date = self._lowfreq_latest_trade_date()
+        as_of_date = str(target_date or latest_trade_date).strip() or latest_trade_date
+        requested_file, requested_daily_run = self._load_daily_run_ledger(target_date=as_of_date)
+        latest_file, latest_daily_run = self._load_daily_run_ledger()
+
+        latest_run_date = ""
+        if latest_file is not None:
+            latest_run_date = (
+                str(latest_daily_run.get("trade_date") or "").strip()
+                or str(latest_daily_run.get("target_date") or "").strip()
+                or latest_file.stem
+            )
+
+        daily_run = requested_daily_run if requested_file is not None else {}
+        step_items = daily_run.get("steps") if isinstance(daily_run.get("steps"), list) else []
+        step_map: dict[str, dict[str, Any]] = {}
+        for item in step_items:
+            if not isinstance(item, dict):
+                continue
+            step_id = str(item.get("step_id") or "").strip()
+            if not step_id:
+                continue
+            step_map[step_id] = item
+
+        authoritative_step = step_map.get("authoritative_update") or {}
+        authoritative_outputs = (
+            authoritative_step.get("outputs")
+            if isinstance(authoritative_step.get("outputs"), dict)
+            else {}
+        )
+        closeout_step = step_map.get("yesterday_closeout") or {}
+        closeout_outputs = (
+            closeout_step.get("outputs")
+            if isinstance(closeout_step.get("outputs"), dict)
+            else {}
+        )
+        closeout_summary = (
+            closeout_outputs.get("summary")
+            if isinstance(closeout_outputs.get("summary"), dict)
+            else {}
+        )
+        lowfreq_step = step_map.get("lowfreq_sim_daily") or {}
+        lowfreq_outputs = (
+            lowfreq_step.get("outputs")
+            if isinstance(lowfreq_step.get("outputs"), dict)
+            else {}
+        )
+        confidence_step = step_map.get("confidence_daily") or {}
+        confidence_outputs = (
+            confidence_step.get("outputs")
+            if isinstance(confidence_step.get("outputs"), dict)
+            else {}
+        )
+        auto_optimize_step = step_map.get("auto_optimize") or {}
+        bulk_ledger = read_bulk_run_ledger(project_root=self.project_root, target_date=as_of_date) or {}
+
+        expected_trade_date = as_of_date
+        if str(expected_trade_date) > str(latest_trade_date):
+            expected_trade_date = str(latest_trade_date)
+        run_trade_date = (
+            str(daily_run.get("trade_date") or "").strip()
+            or str(authoritative_outputs.get("trade_date") or "").strip()
+            or str(daily_run.get("target_date") or "").strip()
+        )
+        authoritative_status = str(authoritative_step.get("status") or "missing").strip().lower()
+        authoritative_ok = authoritative_status == "ok"
+        latest_data_date = str(latest_trade_date or "")
+        latest_data_synced = bool(
+            requested_file is not None
+            and authoritative_ok
+            and latest_data_date
+            and expected_trade_date
+            and latest_data_date >= expected_trade_date
+            and run_trade_date >= expected_trade_date
+        )
+        overdue_shifted_count = int(closeout_summary.get("overdue_shifted_count") or 0)
+        inconsistency_count = int(closeout_summary.get("inconsistency_count") or 0)
+        pending_intents_after = int(lowfreq_outputs.get("pending_intents_after") or 0)
+
+        def step_status(step_id: str, *, fallback_status: Optional[str] = None) -> str:
+            raw = step_map.get(step_id) or {}
+            status = str(raw.get("status") or "").strip().lower()
+            if status:
+                return status
+            if fallback_status:
+                return str(fallback_status).strip().lower()
+            return "missing"
+
+        screeners_status = step_status(
+            "screeners_bulk_run",
+            fallback_status=bulk_ledger.get("status") if isinstance(bulk_ledger, dict) else None,
+        )
+        screeners_run_count = int(bulk_ledger.get("run_count") or 0) if isinstance(bulk_ledger, dict) else 0
+        screeners_finished_at = (
+            str(bulk_ledger.get("finished_at") or "").strip()
+            if isinstance(bulk_ledger, dict)
+            else ""
+        )
+        lowfreq_status = step_status("lowfreq_sim_daily")
+        confidence_status = step_status("confidence_daily")
+        auto_optimize_status = step_status("auto_optimize")
+
+        pipeline_steps = []
+        for step_id, fallback_status, finished_at in [
+            ("authoritative_update", None, ""),
+            ("screeners_bulk_run", bulk_ledger.get("status") if isinstance(bulk_ledger, dict) else None, screeners_finished_at),
+            ("lowfreq_sim_daily", None, ""),
+            ("confidence_daily", None, ""),
+            ("auto_optimize", None, ""),
+        ]:
+            status = step_status(step_id, fallback_status=fallback_status)
+            meta = self._workbench_daily_status_meta(status)
+            pipeline_steps.append(
+                {
+                    "step_id": step_id,
+                    "step_label": self._workbench_daily_step_label(step_id),
+                    "status": status,
+                    "status_text": meta["label"],
+                    "status_kind": meta["kind"],
+                    "finished_at": str(finished_at or ""),
+                }
+            )
+
+        checklist = [
+            {
+                "item_id": "data_freshness",
+                "item_label": "数据追平",
+                "status": "ok" if latest_data_synced else "failed",
+                "status_text": "正常" if latest_data_synced else "未追平",
+                "status_kind": "active" if latest_data_synced else "avoid",
+                "summary": (
+                    f"最新数据日 {latest_data_date}，目标交易日 {expected_trade_date}。"
+                    if latest_data_synced
+                    else f"最新数据日 {latest_data_date or '--'}，尚未确认追平到目标交易日 {expected_trade_date or '--'}。"
+                ),
+            },
+            {
+                "item_id": "daily_pipeline",
+                "item_label": "每日任务账本",
+                "status": "ok" if requested_file is not None else "missing",
+                "status_text": "正常" if requested_file is not None else "未确认",
+                "status_kind": "active" if requested_file is not None else "blocked",
+                "summary": (
+                    f"已找到 {as_of_date} 日任务账本，完成时间 {str(daily_run.get('finished_at') or '--')}。"
+                    if requested_file is not None
+                    else f"未找到 {as_of_date} 的每日任务账本，最近账本日期为 {latest_run_date or '--'}。"
+                ),
+            },
+            {
+                "item_id": "model_daily_run",
+                "item_label": "低频日运行",
+                "status": lowfreq_status,
+                "status_text": self._workbench_daily_status_meta(lowfreq_status)["label"],
+                "status_kind": self._workbench_daily_status_meta(lowfreq_status)["kind"],
+                "summary": (
+                    f"待执行意图 {pending_intents_after} 条。"
+                    if lowfreq_status == "ok"
+                    else "未确认低频日运行成功。"
+                ),
+            },
+            {
+                "item_id": "screeners_bulk_run",
+                "item_label": "筛选器批跑",
+                "status": screeners_status,
+                "status_text": self._workbench_daily_status_meta(screeners_status)["label"],
+                "status_kind": self._workbench_daily_status_meta(screeners_status)["kind"],
+                "summary": (
+                    f"批跑状态 {screeners_status or '--'}，记录数 {screeners_run_count}。"
+                    if screeners_status != "missing"
+                    else "未确认筛选器批跑状态。"
+                ),
+            },
+            {
+                "item_id": "confidence_daily",
+                "item_label": "置信度日更新",
+                "status": confidence_status,
+                "status_text": self._workbench_daily_status_meta(confidence_status)["label"],
+                "status_kind": self._workbench_daily_status_meta(confidence_status)["kind"],
+                "summary": (
+                    f"labels_updated={int(confidence_outputs.get('labels_updated') or 0)}，"
+                    f"buckets_written={int(confidence_outputs.get('buckets_written') or 0)}。"
+                    if confidence_status == "ok"
+                    else "未确认置信度日更新成功。"
+                ),
+            },
+        ]
+
+        exceptions: list[dict[str, Any]] = []
+
+        def add_exception(
+            *,
+            exception_id: str,
+            severity: str,
+            title: str,
+            impact_scope: str,
+            summary: str,
+            next_action: str,
+        ) -> None:
+            meta = self._ops_center_severity_meta(severity)
+            exceptions.append(
+                {
+                    "exception_id": exception_id,
+                    "title": title,
+                    "severity": str(severity),
+                    "severity_text": meta["text"],
+                    "severity_kind": meta["kind"],
+                    "impact_scope": impact_scope,
+                    "summary": summary,
+                    "next_action": next_action,
+                }
+            )
+
+        if requested_file is None:
+            add_exception(
+                exception_id="daily_pipeline_missing",
+                severity="high",
+                title="缺少每日任务账本",
+                impact_scope="巡检链路",
+                summary=f"{as_of_date} 未找到 daily pipeline 账本，无法完成当日巡检闭环。",
+                next_action="先确认调度器是否执行，并补查该日期的 daily_runs 账本是否落盘。",
+            )
+        if requested_file is not None and not latest_data_synced:
+            add_exception(
+                exception_id="latest_data_not_synced",
+                severity="severe",
+                title="最新数据未追平",
+                impact_scope="数据新鲜度",
+                summary=(
+                    f"目标交易日 {expected_trade_date or '--'}，当前最新数据日 {latest_data_date or '--'}，"
+                    "尚未确认权威行情已追平。"
+                ),
+                next_action="优先检查权威行情更新结果与每日调度执行状态。",
+            )
+        if authoritative_status in {"failed", "error"}:
+            add_exception(
+                exception_id="authoritative_update_failed",
+                severity="severe",
+                title="权威行情更新失败",
+                impact_scope="权威行情",
+                summary="当日权威行情更新步骤返回失败，主链数据更新不可视为完成。",
+                next_action="检查权威更新步骤输出与数据源可用性。",
+            )
+        if lowfreq_status in {"failed", "error"}:
+            add_exception(
+                exception_id="lowfreq_daily_run_failed",
+                severity="severe",
+                title="低频日运行失败",
+                impact_scope="模型日运行",
+                summary="低频交易得分系统日运行失败，当日持仓与意图状态可能未完成更新。",
+                next_action="检查 lowfreq 日运行步骤输出并确认状态是否已写回。",
+            )
+        if screeners_status in {"failed", "error"}:
+            add_exception(
+                exception_id="screeners_bulk_run_failed",
+                severity="high",
+                title="筛选器批跑失败",
+                impact_scope="筛选器",
+                summary=f"筛选器批跑状态为 {screeners_status}，当日筛选结果不可直接视为完整。",
+                next_action="检查当日筛选器批跑账本与失败的筛选器子任务。",
+            )
+        if inconsistency_count > 0:
+            add_exception(
+                exception_id="trade_closeout_inconsistency",
+                severity="high",
+                title="昨日收口存在异常",
+                impact_scope="收口链路",
+                summary=f"昨日收口报告到 {inconsistency_count} 条异常，需确认状态回填是否完整。",
+                next_action="检查昨日收口摘要并核对异常记录是否已处理。",
+            )
+
+        missing_step_ids = [
+            step["step_id"]
+            for step in pipeline_steps
+            if str(step.get("status") or "") in {"missing", "unknown", ""}
+        ]
+        if missing_step_ids:
+            add_exception(
+                exception_id="pipeline_steps_missing",
+                severity="high",
+                title="关键步骤状态缺失",
+                impact_scope="巡检链路",
+                summary=f"以下关键步骤状态未确认：{', '.join(missing_step_ids)}。",
+                next_action="检查 daily pipeline 账本结构与对应步骤是否已正常写入。",
+            )
+
+        highest_rank = 0
+        highest_level = "low"
+        for item in exceptions:
+            meta = self._ops_center_severity_meta(item.get("severity", "low"))
+            if int(meta["rank"]) > highest_rank:
+                highest_rank = int(meta["rank"])
+                highest_level = str(item.get("severity") or "low")
+
+        if highest_rank >= 4:
+            overall_status = "critical"
+            overall_status_text = "严重异常"
+            overall_status_kind = "avoid"
+        elif highest_rank >= 2:
+            overall_status = "warning"
+            overall_status_text = "需处理"
+            overall_status_kind = "queued" if highest_rank == 2 else "avoid"
+        elif highest_rank == 1:
+            overall_status = "watch"
+            overall_status_text = "观察中"
+            overall_status_kind = "watch"
+        else:
+            overall_status = "ok"
+            overall_status_text = "正常"
+            overall_status_kind = "active"
+
+        risk_level = highest_level if exceptions else "low"
+        risk_meta = self._ops_center_risk_meta(risk_level)
+        if not exceptions:
+            summary_text = (
+                f"{as_of_date} 巡检正常，数据已追平到目标交易日，关键链路未发现摘要层异常。"
+            )
+        else:
+            summary_text = (
+                f"{as_of_date} 巡检发现 {len(exceptions)} 条异常摘要，当前风险等级为 {risk_meta['text']}。"
+            )
+
+        return {
+            "_meta": {"status": "ok"},
+            "meta": {
+                "as_of_date": as_of_date,
+                "latest_trade_date": str(latest_trade_date or ""),
+                "latest_data_date": latest_data_date,
+                "snapshot_generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            "inspection": {
+                "overall_status": overall_status,
+                "overall_status_text": overall_status_text,
+                "overall_status_kind": overall_status_kind,
+                "risk_level": risk_level,
+                "risk_level_text": risk_meta["text"],
+                "risk_level_kind": risk_meta["kind"],
+                "summary_text": summary_text,
+            },
+            "checklist": checklist,
+            "pipeline_steps": pipeline_steps,
+            "exceptions": exceptions,
+            "evidence": {
+                "latest_run_date": latest_run_date,
+                "latest_data_date": latest_data_date,
+                "expected_trade_date": expected_trade_date,
+                "overdue_shifted_count": overdue_shifted_count,
+                "inconsistency_count": inconsistency_count,
+                "pending_intents_after": pending_intents_after,
+            },
+        }
+
+    def lowfreq_workbench_view(
+        self,
+        *,
+        target_date: Optional[str] = None,
+        requested_by: str = "api",
+        ensure_generated: bool = True,
+    ) -> dict[str, Any]:
+        if target_date:
+            target_dt = date.fromisoformat(str(target_date))
+        else:
+            target_dt = date.fromisoformat(self._lowfreq_latest_trade_date())
+        target_key = target_dt.isoformat()
+        latest_trade_date = self._lowfreq_latest_trade_date()
+        engine = self._lowfreq_engine_v16()
+        hot_snapshot = self.lowfreq_hot_sectors_view(
+            target_date=target_key,
+            mode="ths_concept",
+            include_portfolio=True,
+            include_sell_signal=True,
+        )
+        queue_snapshot = self.lowfreq_execution_queue_view(
+            target_date=target_key,
+            requested_by=requested_by,
+            ensure_generated=ensure_generated,
+        )
+        market_phase_payload = self.market_phase_view(target_date=target_dt)
+        decision_summary_payload = self._market_intelligence_decision_summary_cached_brief(
+            trade_date=target_key,
+            top_n=10,
+        )
+        state = self._load_lowfreq_sim_state()
+        settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
+        autopilot_enabled = bool(settings.get("autopilot_enabled"))
+        sectors_payload = hot_snapshot.get("sectors") if isinstance(hot_snapshot.get("sectors"), list) else []
+        portfolio_payload = (
+            hot_snapshot.get("portfolio") if isinstance(hot_snapshot.get("portfolio"), dict) else {}
+        )
+        queue_items = (
+            queue_snapshot.get("queue") if isinstance(queue_snapshot.get("queue"), list) else []
+        )
+        hot_sectors = self._build_lowfreq_workbench_hot_sectors(sectors_payload=sectors_payload)
+        tracking_list = self._build_lowfreq_workbench_tracking_list(
+            target_date=target_key,
+            sectors_payload=sectors_payload,
+            queue_items=queue_items,
+        )
+        positions = self._build_lowfreq_workbench_positions(
+            positions_payload=(
+                portfolio_payload.get("open_positions")
+                if isinstance(portfolio_payload.get("open_positions"), list)
+                else []
+            ),
+        )
+        trade_ledger = self._build_lowfreq_workbench_trade_ledger(
+            portfolio_payload=portfolio_payload,
+        )
+        daily_ops = self._build_lowfreq_workbench_daily_ops(
+            latest_trade_date=latest_trade_date,
+        )
+        market_summary = self._build_lowfreq_workbench_market_summary(
+            target_date=target_key,
+            market_phase_payload=market_phase_payload,
+            decision_summary_payload=decision_summary_payload,
+            hot_sectors=hot_sectors,
+            autopilot_enabled=autopilot_enabled,
+        )
+        return {
+            "_meta": {"status": "ok", "requested_by": requested_by},
+            "meta": {
+                "as_of_date": target_key,
+                "latest_data_date": latest_trade_date,
+                "execution_mode": str(engine._resolve_execution_mode()),
+                "autopilot_enabled": autopilot_enabled,
+                "summary_text": market_summary.get("summary_text"),
+                "daily_ops_status": daily_ops.get("status"),
+                "daily_ops_status_text": daily_ops.get("status_text"),
+                "latest_data_synced": daily_ops.get("latest_data_synced"),
+            },
+            "market_summary": market_summary,
+            "daily_ops": daily_ops,
+            "hot_sectors": hot_sectors,
+            "tracking_list": tracking_list,
+            "positions": positions,
+            "trade_ledger": trade_ledger,
+            "ui_contract": {
+                "hot_sector_status": {
+                    "active": "主升",
+                    "watch": "观察",
+                    "avoid": "回避",
+                },
+                "tracking_status": {
+                    "entry_ready": "可建仓",
+                    "queued": "已排队",
+                    "watch": "持续跟踪",
+                    "watch_follower": "跟随观察",
+                    "blocked": "暂不参与",
+                    "abandoned": "已放弃",
+                },
+                "position_status": {
+                    "stable": "稳定",
+                    "pullback": "震荡/回调",
+                    "exit_ready": "离场",
+                },
+                "trade_source": {
+                    "auto": "自动",
+                    "manual": "人工",
+                },
+            },
+        }
 
     def lowfreq_sim_run_view(
         self, *, target_date: Optional[str] = None, requested_by: str = "api"
@@ -19504,12 +22480,22 @@ class BootstrapApiService:
             except (OSError, json.JSONDecodeError):
                 payload = None
             if isinstance(payload, dict):
+                config_snapshot = payload.get("config_snapshot") if isinstance(payload, dict) else {}
                 return {
                     "_meta": {"status": "ok", "requested_by": requested_by},
                     "report_id": effective_report_id,
                     "start_date": start_key,
                     "end_date": end_key,
                     "summary": payload.get("summary") or {},
+                    "execution_mode": (
+                        str(config_snapshot.get("execution_mode") or "").strip()
+                        if isinstance(config_snapshot, dict)
+                        else ""
+                    )
+                    or "unbounded_opportunity",
+                    "execution_action_summary": payload.get("execution_action_summary")
+                    or (payload.get("summary") or {}).get("execution_action_summary")
+                    or {},
                     "buy_dates": payload.get("buy_dates") or [],
                     "next_session": payload.get("next_session") or {},
                     "overrides": overrides or {},
@@ -19638,6 +22624,12 @@ class BootstrapApiService:
         metrics, trades = self._lowfreq_backtest_with_trades(
             engine=engine, start_date=start_dt, end_date=end_dt, initial_capital=1_000_000.0
         )
+        config_snapshot = metrics.get("config_snapshot") if isinstance(metrics, dict) else {}
+        execution_mode = (
+            str(config_snapshot.get("execution_mode") or "").strip()
+            if isinstance(config_snapshot, dict)
+            else ""
+        ) or str(getattr(engine, "EXECUTION_MODE", "unbounded_opportunity") or "unbounded_opportunity")
 
         buy_dates: dict[str, int] = {}
         for t in trades:
@@ -19650,6 +22642,7 @@ class BootstrapApiService:
 
         next_trading_day: Optional[str] = None
         next_candidates: list[dict[str, Any]] = []
+        next_signal_summary: dict[str, Any] = {}
         try:
             db_path = Path(
                 os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
@@ -19670,7 +22663,14 @@ class BootstrapApiService:
 
         try:
             signals = engine.generate_buy_signals(end_dt)
-            raw = signals.get("buy_signals", []) if isinstance(signals, dict) else []
+            raw = []
+            if isinstance(signals, dict):
+                if isinstance(signals.get("signal_summary"), dict):
+                    next_signal_summary = dict(signals.get("signal_summary") or {})
+                if "entry_signals" in signals and isinstance(signals.get("entry_signals"), list):
+                    raw = signals.get("entry_signals", [])
+                else:
+                    raw = signals.get("buy_signals", [])
             for item in raw:
                 if not isinstance(item, dict):
                     continue
@@ -19690,6 +22690,7 @@ class BootstrapApiService:
             next_candidates = next_candidates[:10]
         except Exception:
             next_candidates = []
+            next_signal_summary = {}
 
         exit_quality_payload: dict[str, Any] = {"lookahead_trading_days": 10, "count": 0}
         try:
@@ -19785,7 +22786,11 @@ class BootstrapApiService:
                 "report_id": effective_report_id,
                 "overrides": overrides or {},
             },
+            "execution_mode": execution_mode,
             "summary": metrics,
+            "execution_action_summary": (
+                metrics.get("execution_action_summary") if isinstance(metrics, dict) else {}
+            ),
             "net_summary": (metrics.get("net_metrics") if isinstance(metrics, dict) else {}),
             "trade_blocks": (metrics.get("trade_blocks") if isinstance(metrics, dict) else {}),
             "config_snapshot": (metrics.get("config_snapshot") if isinstance(metrics, dict) else {}),
@@ -19795,6 +22800,7 @@ class BootstrapApiService:
             "next_session": {
                 "next_trading_day": next_trading_day,
                 "candidates": next_candidates,
+                "signal_summary": next_signal_summary,
                 "generated_from_trade_date": end_key,
             },
             "trades": [asdict(t) for t in trades],
@@ -19844,6 +22850,10 @@ class BootstrapApiService:
             "start_date": start_key,
             "end_date": end_key,
             "summary": metrics,
+            "execution_mode": execution_mode,
+            "execution_action_summary": (
+                metrics.get("execution_action_summary") if isinstance(metrics, dict) else {}
+            ),
             "buy_dates": buy_dates_summary,
             "next_session": json_payload["next_session"],
             "overrides": overrides or {},
@@ -19884,6 +22894,115 @@ class BootstrapApiService:
             ) from exc
         return effective_report_id, report_dir
 
+    def _read_lowfreq_backtest_json_payload(
+        self, *, report_dir: Path, report_id: str
+    ) -> dict[str, Any]:
+        json_path = report_dir / "trades.json"
+        if not json_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="report_not_found",
+                message="report not found",
+                details={"report_id": report_id},
+            )
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise ApiError(
+                status_code=HTTPStatus.CONFLICT,
+                code="report_corrupted",
+                message="report corrupted",
+                details={"report_id": report_id},
+            )
+        if not isinstance(payload, dict):
+            raise ApiError(
+                status_code=HTTPStatus.CONFLICT,
+                code="report_corrupted",
+                message="report corrupted",
+                details={"report_id": report_id},
+            )
+        return payload
+
+    @staticmethod
+    def _lowfreq_backtest_recent_trades(
+        payload: dict[str, Any], *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        trades_payload = payload.get("trades")
+        if not isinstance(trades_payload, list):
+            return []
+        recent: list[dict[str, Any]] = []
+        for item in trades_payload[-max(1, int(limit)) :]:
+            if not isinstance(item, dict):
+                continue
+            recent.append(
+                {
+                    "code": item.get("code"),
+                    "name": item.get("name"),
+                    "sector": item.get("sector"),
+                    "buy_date": item.get("buy_date"),
+                    "sell_date": item.get("sell_date"),
+                    "buy_price": item.get("buy_price"),
+                    "sell_price": item.get("sell_price"),
+                    "return_pct": item.get("return_pct"),
+                    "hold_days": item.get("hold_days"),
+                    "role": item.get("role"),
+                    "status": item.get("status"),
+                    "sell_reason": item.get("sell_reason"),
+                }
+            )
+        recent.reverse()
+        return recent
+
+    @staticmethod
+    def _lowfreq_backtest_detail_summary(
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_summary = payload.get("summary")
+        if not isinstance(raw_summary, dict):
+            return {}
+        allowed_keys = [
+            "strategy",
+            "start_date",
+            "end_date",
+            "trading_days",
+            "initial_capital",
+            "final_value",
+            "total_return_pct",
+            "annual_return_pct",
+            "annualized_return_pct",
+            "max_drawdown_pct",
+            "sharpe_ratio",
+            "total_trades",
+            "win_rate_pct",
+            "avg_return_pct",
+            "profit_loss_ratio",
+            "target_hit_rate_30_pct",
+            "target_hits_30",
+            "target_hit_rate_50_pct",
+            "target_hits_50",
+        ]
+        return {
+            key: raw_summary.get(key)
+            for key in allowed_keys
+            if key in raw_summary
+        }
+
+    @staticmethod
+    def _lowfreq_backtest_detail_exit_quality(
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raw_exit_quality = payload.get("exit_quality")
+        if not isinstance(raw_exit_quality, dict):
+            return {}
+        result: dict[str, Any] = {
+            "lookahead_trading_days": raw_exit_quality.get("lookahead_trading_days"),
+            "count": raw_exit_quality.get("count"),
+        }
+        post_exit_runup_pct = raw_exit_quality.get("post_exit_runup_pct")
+        if isinstance(post_exit_runup_pct, dict):
+            result["post_exit_runup_pct"] = post_exit_runup_pct
+        return result
+
     def lowfreq_backtest_status_view(self, *, report_id: str) -> dict[str, Any]:
         report_id, report_dir = self._resolve_lowfreq_backtest_report_dir(
             report_id=report_id
@@ -19907,6 +23026,13 @@ class BootstrapApiService:
             except (OSError, json.JSONDecodeError):
                 raw = None
             status_payload = raw if isinstance(raw, dict) else None
+        summary_payload: Optional[dict[str, Any]] = None
+        if json_path.exists():
+            try:
+                raw = json.loads(json_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raw = None
+            summary_payload = raw if isinstance(raw, dict) else None
 
         job = status_payload or {"status": "unknown", "reason": "status_file_missing"}
 
@@ -19918,6 +23044,82 @@ class BootstrapApiService:
             "has_json": json_path.exists(),
             "pdf_url": f"/api/lowfreq/backtest/reports/{report_id}.pdf" if pdf_path.exists() else None,
             "json_url": f"/api/lowfreq/backtest/reports/{report_id}.json" if json_path.exists() else None,
+            "execution_mode": summary_payload.get("execution_mode")
+            if isinstance(summary_payload, dict)
+            else None,
+            "summary": summary_payload.get("summary")
+            if isinstance(summary_payload, dict)
+            and isinstance(summary_payload.get("summary"), dict)
+            else None,
+        }
+
+    def lowfreq_backtest_report_detail_view(self, *, report_id: str) -> dict[str, Any]:
+        report_id, report_dir = self._resolve_lowfreq_backtest_report_dir(
+            report_id=report_id
+        )
+        if not report_dir.exists() or not report_dir.is_dir():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="report_not_found",
+                message="report not found",
+                details={"report_id": report_id},
+            )
+
+        payload = self._read_lowfreq_backtest_json_payload(
+            report_dir=report_dir, report_id=report_id
+        )
+        pdf_path = report_dir / "trades.pdf"
+        summary = self._lowfreq_backtest_detail_summary(payload)
+        config_snapshot = (
+            payload.get("config_snapshot")
+            if isinstance(payload.get("config_snapshot"), dict)
+            else {}
+        )
+        execution_action_summary = (
+            payload.get("execution_action_summary")
+            if isinstance(payload.get("execution_action_summary"), dict)
+            else {}
+        )
+        trade_blocks = (
+            payload.get("trade_blocks")
+            if isinstance(payload.get("trade_blocks"), dict)
+            else {}
+        )
+        coverage_gaps = (
+            payload.get("coverage_gaps")
+            if isinstance(payload.get("coverage_gaps"), dict)
+            else {}
+        )
+        exit_quality = self._lowfreq_backtest_detail_exit_quality(payload)
+        next_session = (
+            payload.get("next_session")
+            if isinstance(payload.get("next_session"), dict)
+            else {}
+        )
+        buy_dates = payload.get("buy_dates") if isinstance(payload.get("buy_dates"), list) else []
+        execution_mode = str(payload.get("execution_mode") or "").strip()
+        if not execution_mode and isinstance(config_snapshot, dict):
+            execution_mode = str(config_snapshot.get("execution_mode") or "").strip()
+
+        return {
+            "_meta": {"status": "ok"},
+            "report_id": report_id,
+            "summary": summary,
+            "execution_mode": execution_mode or "unbounded_opportunity",
+            "execution_action_summary": execution_action_summary,
+            "trade_blocks": trade_blocks,
+            "config_snapshot": config_snapshot,
+            "coverage_gaps": coverage_gaps,
+            "exit_quality": exit_quality,
+            "next_session": next_session,
+            "buy_dates": buy_dates,
+            "recent_trades": self._lowfreq_backtest_recent_trades(payload),
+            "pdf_url": (
+                f"/api/lowfreq/backtest/reports/{report_id}.pdf"
+                if pdf_path.exists()
+                else None
+            ),
+            "json_url": f"/api/lowfreq/backtest/reports/{report_id}.json",
         }
 
     def _team_theme_defs(self) -> list[dict[str, Any]]:
@@ -20970,7 +24172,12 @@ class BootstrapApiService:
         model_buy_codes: set[str] = set()
         try:
             model_signals = engine.generate_buy_signals(target_date)
-            raw_model = model_signals.get("buy_signals", []) if isinstance(model_signals, dict) else []
+            raw_model = []
+            if isinstance(model_signals, dict):
+                if "entry_signals" in model_signals and isinstance(model_signals.get("entry_signals"), list):
+                    raw_model = model_signals.get("entry_signals", [])
+                else:
+                    raw_model = model_signals.get("buy_signals", [])
             for s in raw_model:
                 if not isinstance(s, dict):
                     continue
@@ -21446,11 +24653,12 @@ class BootstrapApiService:
         model_buy_codes: set[str] = set()
         try:
             model_signals = engine.generate_buy_signals(target_date)
-            raw_model = (
-                model_signals.get("buy_signals", [])
-                if isinstance(model_signals, dict)
-                else []
-            )
+            raw_model = []
+            if isinstance(model_signals, dict):
+                if "entry_signals" in model_signals and isinstance(model_signals.get("entry_signals"), list):
+                    raw_model = model_signals.get("entry_signals", [])
+                else:
+                    raw_model = model_signals.get("buy_signals", [])
             for s in raw_model:
                 if not isinstance(s, dict):
                     continue
@@ -22993,10 +26201,20 @@ class BootstrapApiService:
                 dry_run=False,
                 async_run=False,
             )
+            bulk_run = bulk.get("bulk_run") if isinstance(bulk, dict) else {}
+            bulk_status = str(
+                (bulk_run.get("status") if isinstance(bulk_run, dict) else "")
+                or bulk.get("status")
+                or (bulk.get("_meta") or {}).get("status")
+                or "failed"
+            ).strip().lower()
             add_step(
                 "screeners_bulk_run",
-                "ok",
-                outputs={"status": (bulk.get("_meta") or {}).get("status")},
+                bulk_status or "failed",
+                outputs={
+                    "status": bulk_status or "failed",
+                    "run_count": bulk_run.get("run_count") if isinstance(bulk_run, dict) else None,
+                },
                 elapsed_ms=(time.perf_counter() - t3) * 1000.0,
             )
         except Exception as exc:
@@ -24318,28 +27536,16 @@ class BootstrapApiService:
                 )
             content = pdf_path.read_bytes()
             return ApiBinaryResponse(
-                content=content,
+                body=content,
                 content_type="application/pdf",
-                filename=f"{report_id}.pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{report_id}.pdf"'
+                },
             )
         if format == "json":
-            json_path = report_dir / "trades.json"
-            if not json_path.exists():
-                raise ApiError(
-                    status_code=HTTPStatus.NOT_FOUND,
-                    code="report_not_found",
-                    message="report not found",
-                    details={"report_id": report_id},
-                )
-            try:
-                return json.loads(json_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                raise ApiError(
-                    status_code=HTTPStatus.CONFLICT,
-                    code="report_corrupted",
-                    message="report corrupted",
-                    details={"report_id": report_id},
-                )
+            return self._read_lowfreq_backtest_json_payload(
+                report_dir=report_dir, report_id=report_id
+            )
         raise ApiError(
             status_code=HTTPStatus.BAD_REQUEST,
             code="invalid_format",
@@ -24428,7 +27634,11 @@ class BootstrapApiService:
                     "finished_at": finished_at,
                     "summary": {"total_return_pct": total_return_pct},
                     "pdf_url": f"/api/lowfreq/backtest/reports/{report_id}.pdf",
-                    "json_url": f"/api/lowfreq/backtest/reports/{report_id}.json",
+                    "json_url": (
+                        f"/api/lowfreq/backtest/reports/{report_id}.json"
+                        if json_path.exists()
+                        else None
+                    ),
                     "_sort": {"finished_at": finished_at, "requested_at": requested_at, "mtime": mtime},
                 }
             )

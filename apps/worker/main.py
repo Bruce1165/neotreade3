@@ -7,6 +7,7 @@ import json
 import sys
 from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime
+from datetime import timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
@@ -15,6 +16,7 @@ from neotrade3.common.python_runtime import log_python_runtime, require_python_3
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
+from neotrade3.labs.contracts import materialize_lab_runtime_artifacts
 from neotrade3.labs.runtime import LabRuntimeAdapter
 from neotrade3.orchestration import (
     DailyMasterOrchestrator,
@@ -119,6 +121,10 @@ class BootstrapWorkerApp:
         def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
             adapter = self._get_lab_adapter()
             target_date = context.get("target_date", date.today())
+            requested_by = str(
+                context.get("requested_by", f"worker.{task.task_id}")
+            )
+            dry_run = bool(context.get("dry_run", False))
             try:
                 result = adapter.run_job(
                     task_id=task.task_id,
@@ -135,13 +141,39 @@ class BootstrapWorkerApp:
                     task_status = RunStatus.PENDING_IMPLEMENTATION
                 else:
                     task_status = RunStatus.FAILED
+                runtime_artifact_refs = (
+                    [str(item) for item in result.get("artifacts", []) if str(item).strip()]
+                    if isinstance(result.get("artifacts", []), list)
+                    else []
+                )
+                artifact_refs = list(runtime_artifact_refs)
+                if task.lab_id and not dry_run:
+                    _, _, contract_artifact_refs = materialize_lab_runtime_artifacts(
+                        project_root=self.project_root,
+                        labs_registry_path=self.paths["labs_config"],
+                        lab_id=task.lab_id,
+                        runtime_result=result,
+                        target_date=(
+                            target_date.isoformat()
+                            if hasattr(target_date, "isoformat")
+                            else str(target_date)
+                        ),
+                        requested_by=requested_by,
+                        requested_at=datetime.now(timezone.utc).strftime(
+                            "%Y-%m-%dT%H:%M:%SZ"
+                        ),
+                        run_status=raw_status or "failed",
+                    )
+                    for ref in contract_artifact_refs:
+                        if ref not in artifact_refs:
+                            artifact_refs.append(ref)
                 return TaskResult(
                     task_id=task.task_id,
                     phase=task.phase,
                     status=task_status,
                     lab_id=task.lab_id,
                     message=result.get("message", ""),
-                    artifact_refs=result.get("artifacts", []),
+                    artifact_refs=artifact_refs,
                     details={
                         "picks_count": result.get("picks_count", 0),
                         "lab_status": raw_status,
@@ -366,7 +398,12 @@ class BootstrapWorkerApp:
             execution_run_plan=execution_run_plan,
             task_results=task_results,
         )
-        issue_snapshot = issue_center.collect(target_date, task_results, task_entries)
+        issue_snapshot = issue_center.collect(
+            target_date,
+            task_results,
+            task_entries,
+            data_control_stage_summary=data_stage_summary,
+        )
         learning_snapshot = learning.build_snapshot(
             target_date,
             task_results,
@@ -375,6 +412,7 @@ class BootstrapWorkerApp:
         )
 
         snapshot = {
+            "status": run_entry.status.value,
             "target_date": target_date.isoformat(),
             "publish_succeeded": effective_publish_succeeded,
             "requested_publish_succeeded": publish_succeeded,
@@ -511,6 +549,11 @@ class BootstrapWorkerApp:
                 candidates = payload.get("candidate_universe")
                 if isinstance(candidates, list):
                     item["candidate_count"] = len(candidates)
+            m1_formal_artifacts = payload.get("m1_formal_artifacts")
+            if isinstance(m1_formal_artifacts, dict):
+                summary_payload = m1_formal_artifacts.get("summary")
+                if isinstance(summary_payload, dict):
+                    item["m1_formal_artifacts"] = summary_payload
             stages[stage] = item
         summary["stages"] = stages
         return summary
@@ -617,7 +660,13 @@ def main() -> int:
         publish_succeeded=args.publish_succeeded,
         write_outputs=not args.dry_run,
     )
-    status = str(snapshot.get("status") or "ok").strip().lower()
+    orchestration = snapshot.get("orchestration", {})
+    run_ledger_status = None
+    if isinstance(orchestration, dict):
+        run_ledger = orchestration.get("run_ledger", {})
+        if isinstance(run_ledger, dict):
+            run_ledger_status = run_ledger.get("status")
+    status = str(snapshot.get("status") or run_ledger_status or "ok").strip().lower()
     print(
         json.dumps(
             {

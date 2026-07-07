@@ -80,6 +80,127 @@ class DataControlPipeline:
         }
         return self.ledger_builder.build_plan_entries(plan, stage_sources)
 
+    @staticmethod
+    def _normalize_formal_codes(codes: list[str] | None, *, limit: int) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in list(codes or []):
+            code = str(raw or "").strip().split(".", 1)[0].strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            out.append(code)
+            if len(out) >= int(limit):
+                break
+        return out
+
+    @staticmethod
+    def _formal_object_summary(payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            return {
+                "status": "unavailable",
+                "count": 0,
+                "attention_count": 0,
+                "freshness_verdict": "unknown",
+            }
+        attention_items = payload.get("attention_items")
+        freshness_proof = payload.get("freshness_proof")
+        return {
+            "status": str(payload.get("_meta", {}).get("status", "ok"))
+            if isinstance(payload.get("_meta"), dict)
+            else "ok",
+            "count": int(payload.get("count") or 0) if isinstance(payload.get("count"), int) else 0,
+            "attention_count": len(attention_items) if isinstance(attention_items, list) else 0,
+            "freshness_verdict": (
+                str(freshness_proof.get("verdict", "unknown"))
+                if isinstance(freshness_proof, dict)
+                else "unknown"
+            ),
+        }
+
+    def _build_m1_formal_artifacts(
+        self,
+        *,
+        target_date: date,
+        preferred_codes: list[str] | None = None,
+        sample_limit: int = 5,
+    ) -> dict[str, object]:
+        try:
+            from apps.api.main import BootstrapApiService
+
+            service = BootstrapApiService(project_root=self._project_root())
+            normalized_codes = self._normalize_formal_codes(
+                preferred_codes, limit=int(sample_limit)
+            )
+            d1_payload = cast(
+                dict[str, object],
+                service.m1_d1_daily_price_facts_view(
+                    target_date=target_date.isoformat(),
+                    stock_codes=normalized_codes or None,
+                    limit=sample_limit,
+                ),
+            )
+            sample_codes = normalized_codes or self._normalize_formal_codes(
+                [
+                    str(item.get("stock_code") or "").strip()
+                    for item in list(d1_payload.get("items") or [])
+                    if isinstance(item, dict)
+                ],
+                limit=int(sample_limit),
+            )
+            d7_security_payload = cast(
+                dict[str, object],
+                service.m1_d7_security_master_view(
+                    stock_codes=sample_codes or None,
+                    limit=sample_limit,
+                ),
+            )
+            d7_trading_day_payload = cast(
+                dict[str, object],
+                service.m1_d7_trading_day_status_view(
+                    target_date=target_date.isoformat()
+                ),
+            )
+            d8_payload = cast(
+                dict[str, object],
+                service.m1_d8_trading_profiles_view(
+                    target_date=target_date.isoformat(),
+                    stock_codes=sample_codes or None,
+                    limit=sample_limit,
+                ),
+            )
+            return {
+                "status": "ok",
+                "target_date": target_date.isoformat(),
+                "sample_codes": sample_codes,
+                "catalog": service._m1_formal_contract_catalog(),
+                "objects": {
+                    "d1_daily_price_fact": d1_payload,
+                    "d7_security_master_minimal": d7_security_payload,
+                    "d7_trading_day_status": d7_trading_day_payload,
+                    "pf1_trading_profile": d8_payload,
+                },
+                "summary": {
+                    "d1_daily_price_fact": self._formal_object_summary(d1_payload),
+                    "d7_security_master_minimal": self._formal_object_summary(
+                        d7_security_payload
+                    ),
+                    "d7_trading_day_status": self._formal_object_summary(
+                        d7_trading_day_payload
+                    ),
+                    "pf1_trading_profile": self._formal_object_summary(d8_payload),
+                },
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "target_date": target_date.isoformat(),
+                "error": str(exc),
+                "sample_codes": self._normalize_formal_codes(
+                    preferred_codes, limit=int(sample_limit)
+                ),
+            }
+
     def capture(
         self,
         *,
@@ -197,6 +318,7 @@ class DataControlPipeline:
             "units_validation_before": validation_before,
             "normalization": normalization,
             "outputs": {"trading_calendar_generated": True},
+            "m1_formal_artifacts": self._build_m1_formal_artifacts(target_date=target_date),
         }
         if not dry_run:
             ledger_path, artifact_path = self._stage_paths(
@@ -325,6 +447,14 @@ class DataControlPipeline:
             "candidate_universe": candidates,
             "sector_top5_by_amount": sector_top5,
             "warnings": warnings,
+            "m1_formal_artifacts": self._build_m1_formal_artifacts(
+                target_date=target_date,
+                preferred_codes=[
+                    str(item.get("stock_code") or "").strip()
+                    for item in candidates[:5]
+                    if isinstance(item, dict)
+                ],
+            ),
         }
         if not dry_run:
             ledger_path, artifact_path = self._stage_paths(
@@ -384,6 +514,21 @@ class DataControlPipeline:
                 status = "failed"
                 message = "publish 失败：单位校验未通过（禁止发布）。"
 
+        compose_sample_codes: list[str] = []
+        if compose_artifact_path.exists():
+            try:
+                compose_payload = json.loads(
+                    compose_artifact_path.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                compose_payload = None
+            if isinstance(compose_payload, dict):
+                compose_sample_codes = [
+                    str(item.get("stock_code") or "").strip()
+                    for item in list(compose_payload.get("candidate_universe") or [])[:5]
+                    if isinstance(item, dict)
+                ]
+
         payload = {
             "version": 1,
             "target_date": target_date.isoformat(),
@@ -397,6 +542,10 @@ class DataControlPipeline:
                 "target_date": target_date.isoformat(),
                 "compose_artifact_available": compose_artifact_path.exists(),
             },
+            "m1_formal_artifacts": self._build_m1_formal_artifacts(
+                target_date=target_date,
+                preferred_codes=compose_sample_codes,
+            ),
         }
         if not dry_run:
             ledger_path, artifact_path = self._stage_paths(

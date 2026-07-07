@@ -34,6 +34,7 @@ class IssueCenterCollector:
         target_date: date,
         task_results: list[TaskResult],
         task_entries: list[OrchestratorTaskLedgerEntry],
+        data_control_stage_summary: dict[str, Any] | None = None,
     ) -> IssueCenterSnapshot:
         """Collect issues and perform deep analysis."""
         # Step 1: Build basic events and cases
@@ -60,6 +61,12 @@ class IssueCenterCollector:
                 dependency_refs=entry_by_task.get(result.task_id, None).dependency_refs if entry_by_task.get(result.task_id) else [],
             )
             issues_by_task[result.task_id] = issue
+
+        for event in self._build_m1_formal_events(
+            target_date=target_date,
+            data_control_stage_summary=data_control_stage_summary,
+        ):
+            issues_by_task[event.task_id] = event
 
         events = list(issues_by_task.values())
         cases = [
@@ -104,6 +111,66 @@ class IssueCenterCollector:
             degradations=degradations,
             recommendations=recommendations,
         )
+
+    def _build_m1_formal_events(
+        self,
+        *,
+        target_date: date,
+        data_control_stage_summary: dict[str, Any] | None,
+    ) -> list[IssueEvent]:
+        if not isinstance(data_control_stage_summary, dict):
+            return []
+        stages = data_control_stage_summary.get("stages")
+        if not isinstance(stages, dict):
+            return []
+
+        events: list[IssueEvent] = []
+        for stage, stage_payload in stages.items():
+            if not isinstance(stage_payload, dict):
+                continue
+            formal_summary = stage_payload.get("m1_formal_artifacts")
+            if not isinstance(formal_summary, dict):
+                continue
+            for object_family, object_payload in formal_summary.items():
+                if not isinstance(object_payload, dict):
+                    continue
+                verdict = str(object_payload.get("freshness_verdict") or "unknown").strip().lower()
+                attention_count = int(object_payload.get("attention_count") or 0)
+                if verdict not in {"partial", "not_ready", "unknown"} and attention_count <= 0:
+                    continue
+
+                if verdict == "not_ready":
+                    severity = IssueSeverity.ERROR
+                    status = "failed"
+                elif verdict == "partial":
+                    severity = IssueSeverity.WARNING
+                    status = "warning"
+                elif verdict == "unknown":
+                    severity = IssueSeverity.ERROR
+                    status = "failed"
+                else:
+                    severity = IssueSeverity.WARNING
+                    status = "warning"
+
+                summary = (
+                    f"M1 formal object degraded: stage={stage}, object={object_family}, "
+                    f"freshness_verdict={verdict}, attention_count={attention_count}"
+                )
+                events.append(
+                    IssueEvent(
+                        event_id=f"m1_formal:{stage}:{object_family}:{verdict}",
+                        target_date=target_date,
+                        source="data_control.m1_formal_artifacts",
+                        task_id=f"data_control.{stage}.m1_formal.{object_family}",
+                        phase="data_pipeline",
+                        severity=severity,
+                        status=status,
+                        summary=summary,
+                        lab_id=None,
+                        dependency_refs=[f"data_control.{stage}"],
+                    )
+                )
+        return events
 
     def _analyze_root_cause(
         self,

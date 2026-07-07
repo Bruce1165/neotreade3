@@ -38,6 +38,10 @@ class PreflightRunner:
                 check_id="duplicate_run_check",
                 description="Confirm the target date has not already been fully processed.",
             ),
+            PreflightCheck(
+                check_id="m1_formal_contract_check",
+                description="Confirm existing M1 formal object evidence is not degraded when same-day data-control artifacts already exist.",
+            ),
         ]
 
     @staticmethod
@@ -188,11 +192,92 @@ class PreflightRunner:
                 duplicate_run_check.status = PreflightStatus.PASSED
                 duplicate_run_check.details = "no prior bootstrap summary detected"
 
+        m1_formal_contract_check = checks_by_id.get("m1_formal_contract_check")
+        if m1_formal_contract_check is not None:
+            stage_summary = self._load_data_control_stage_summary(target_date)
+            stages = stage_summary.get("stages") if isinstance(stage_summary, dict) else None
+            if not isinstance(stages, dict) or not stages:
+                m1_formal_contract_check.status = PreflightStatus.PASSED
+                m1_formal_contract_check.details = (
+                    "no same-day data_control artifacts found; skip M1 formal readiness gating"
+                )
+            else:
+                degraded: list[str] = []
+                partials: list[str] = []
+                for stage, stage_payload in stages.items():
+                    if not isinstance(stage_payload, dict):
+                        continue
+                    formal_summary = stage_payload.get("m1_formal_artifacts")
+                    if not isinstance(formal_summary, dict):
+                        continue
+                    for object_family, object_payload in formal_summary.items():
+                        if not isinstance(object_payload, dict):
+                            continue
+                        verdict = str(
+                            object_payload.get("freshness_verdict") or "unknown"
+                        ).strip().lower()
+                        if verdict in {"not_ready", "unknown"}:
+                            degraded.append(f"{stage}.{object_family}={verdict}")
+                        elif verdict == "partial":
+                            partials.append(f"{stage}.{object_family}=partial")
+                if degraded:
+                    m1_formal_contract_check.status = PreflightStatus.FAILED
+                    m1_formal_contract_check.details = (
+                        "existing same-day M1 formal artifacts are not ready: "
+                        + ", ".join(degraded)
+                    )
+                    overall = PreflightStatus.FAILED
+                elif partials:
+                    m1_formal_contract_check.status = PreflightStatus.WARNING
+                    m1_formal_contract_check.details = (
+                        "existing same-day M1 formal artifacts are partial: "
+                        + ", ".join(partials)
+                    )
+                    if overall is PreflightStatus.PASSED:
+                        overall = PreflightStatus.WARNING
+                else:
+                    m1_formal_contract_check.status = PreflightStatus.PASSED
+                    m1_formal_contract_check.details = (
+                        "existing same-day M1 formal artifacts are ready"
+                    )
+
         return PreflightReport(
             target_date=target_date,
             checks=list(checks_by_id.values()),
             overall_status=overall,
         )
+
+    def _load_data_control_stage_summary(self, target_date: date) -> dict[str, object]:
+        date_key = target_date.isoformat()
+        summary: dict[str, object] = {"target_date": date_key, "stages": {}}
+        stages: dict[str, object] = {}
+        for stage in ("capture", "compose", "publish"):
+            ledger_path = (
+                self._project_root()
+                / "var/ledgers/data_control"
+                / date_key
+                / f"data_control_{stage}_ledger.json"
+            )
+            if not ledger_path.exists():
+                continue
+            try:
+                payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            item: dict[str, object] = {
+                "status": str(payload.get("status", "")),
+                "message": str(payload.get("message", "")),
+            }
+            m1_formal_artifacts = payload.get("m1_formal_artifacts")
+            if isinstance(m1_formal_artifacts, dict):
+                summary_payload = m1_formal_artifacts.get("summary")
+                if isinstance(summary_payload, dict):
+                    item["m1_formal_artifacts"] = summary_payload
+            stages[stage] = item
+        summary["stages"] = stages
+        return summary
 
     # ------------------------------------------------------------------
     # 运行锁管理（供 Worker 调用）

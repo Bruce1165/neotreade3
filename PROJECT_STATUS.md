@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-06-16
+**Last Updated**: 2026-07-07
 
 ---
 
@@ -116,6 +116,8 @@
 - NeoTrade3 的 handoff 只记录 3.0 项目本身，不把 NeoTrade2 的运行细节整段复制进来。
 - 每次会话结束前更新一次；如果 3.0 的边界、目录、接口、迁移策略发生变化，应即时更新。
 - 新会话开始时，优先按本文档和 `docs/handoffs/2026-05-19_session_resume_handoff.md` 恢复上下文。
+- 新会话开始时，若任务与 `M1 Phase 1` 首批正式对象实现相关，优先再阅读：
+  - `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
 
 **Current Handoff**
 - 会话主题：NeoTrade3 已开始首批 3.0 Python 骨架实现
@@ -262,15 +264,70 @@
   - 概念主线计算：API 已具备 `GET /api/concepts/mainline` 与 `GET /api/concepts/mainline/detail`（同样支持 `/api/v1/...`），对概念板块给出热度评分与主线排序所需字段（heat / MA20/60/90 / mainline_score 等）。
   - 低频研究报告交付（LaTeX）：已在 `var/tmp/lowfreq_research_report/latex/main.tex` 固化研究报告排版源文件，并可用 `tectonic` 编译为 `main.pdf`（同目录产出）。
   - 环境约束（重要）：当前执行环境对 `~/Downloads` 写入受限，报告交付建议以项目内路径为准（例如 `var/tmp/lowfreq_research_report/latex/main.pdf`），再由本机终端或 Finder 手工拷贝到 Downloads。
+- 2026-07-07（M1 Phase 1 首批正式对象已进入实现态）：
+  - 已完成 `Phase 0` 仓库现实审计，并固化为文档：
+    - `docs/superpowers/specs/2026-07-07-m1-phase0-repo-audit.md`
+  - 已完成 `D1 / D7 / D8` 首批正式契约定义：
+    - `docs/superpowers/specs/2026-07-07-m1-phase1-d1-d7-d8-contract-definition.md`
+  - 已完成 `Phase 1` 实施计划与任务清单：
+    - `docs/superpowers/specs/2026-07-07-m1-phase1-d1-d7-d8-implementation-plan.md`
+    - `docs/superpowers/specs/2026-07-07-m1-phase1-d1-d7-d8-task-list.md`
+  - 已新增 `M1` 首批正式对象定义与投影/质量层：
+    - `neotrade3/data_control/contracts.py`
+    - `neotrade3/data_control/projections.py`
+    - `neotrade3/data_control/quality.py`
+  - 已在 `neotrade3/data_control/__init__.py` 导出首批正式对象、投影函数、`quality_status` / `freshness_proof` / `attention_item` 构造器。
+  - 已在 API 暴露首批正式对象独立读取入口：
+    - `GET /api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD`
+    - `GET /api/data-control/m1/d7/security-master?codes=...`
+    - `GET /api/data-control/m1/d7/trading-day-status?date=YYYY-MM-DD`
+    - `GET /api/data-control/m1/d8/trading-profiles?date=YYYY-MM-DD`
+  - 上述四个正式入口当前统一返回：
+    - `quality_status`
+    - `freshness_proof`
+    - `attention_items`
+    - `_meta.formal_object`
+  - `D8` 当前已按正式契约收紧窗口语义：
+    - 5 日窗口不足返回 `null`
+    - 20 日窗口不足返回 `null`
+    - `return_20d` 只在完整 20 日窗口时输出
+  - 当前已明确把以下对象留在 `M1` 正式契约之外：
+    - `theme_momentum`
+    - `market_phase`
+    - `sector_rotation`
+    - `stock_tiering`
+    - `factor_matrix`
+    - `config_leader_candidate`
+    - `institutional_attention_candidate`
+    - `trading_leader_candidate`
+  - `/api/data-control` 总览当前已显式暴露：
+    - `m1_formal_contracts`
+    - `compatibility_boundaries`
+    - 正式入口与兼容旧入口边界
+  - `DataControlPipeline.capture/compose/publish` 当前写出的 ledger / artifact 已包含：
+    - `m1_formal_artifacts.catalog`
+    - `m1_formal_artifacts.objects`
+    - `m1_formal_artifacts.summary`
+  - `BootstrapWorkerApp._load_data_control_stage_summary()` 当前已把 `m1_formal_artifacts.summary` 带入 `snapshot["data_control"]["stage_summary"]`。
+  - `IssueCenterCollector.collect()` 当前已可消费 `data_control.stage_summary`，并为 `freshness_verdict in {"partial", "not_ready", "unknown"}` 或 `attention_count > 0` 的正式对象追加 issue 事件。
+  - `PreflightRunner.build_report()` 当前已新增 `m1_formal_contract_check`：
+    - 若同日尚无 `data_control` 产物，则不阻塞首次运行
+    - 若同日已有 `data_control` 产物且正式对象证据为 `not_ready / unknown`，则明确 fail
+    - 若仅为 `partial`，则给 warning
+  - 已新增并通过聚焦单元测试：
+    - `tests/unit/test_m1_phase1_formal_objects.py`
+  - 本轮代码级最小验证结果：
+    - `python3 -m pytest -q tests/unit/test_m1_phase1_formal_objects.py` -> `8 passed`
+    - `python3 -m py_compile ...` 已通过本轮涉及文件的语法校验
 
 ## 文档一致性说明
 
 - 本仓库存在 [NeoTrade3实施交接文档.md](file:///Users/mac/NeoTrade3/NeoTrade3实施交接文档.md) 作为历史交接材料，其中部分描述可能来自较早阶段或不同实现路径，未必与当前代码完全一致。
 - 新会话续接以本文件为准：只记录“已经存在且可运行”的入口、约束与验收口径；其它文档仅作为背景参考，使用前需按代码现状核对。
 - 进行中：
-  - 基于 NeoTrade2 代码继续从“功能拆解”进入“3.0 归口与迁移落点映射”，准备后续逐项迁移确认
+  - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
 - 下一步第一件事：
-  - 在 `v3` 基线之上，为已识别条目补充 NeoTrade3 对应归口模块与迁移状态字段，并继续考虑把迁移台账接入 dashboard 展示
+  - 将 `M1` 首批正式对象的质量信号继续向后推进到真正的 `M2/M3` 最小消费切换，避免后续新逻辑继续绕过 `/api/data-control/m1/...` 正式入口
 
 
 ---
@@ -296,8 +353,9 @@
 
 1. `CLAUDE.md`
 2. `PROJECT_STATUS.md`
-3. `docs/handoffs/2026-05-19_session_resume_handoff.md`
-4. `docs/architecture/neotrade3_master_architecture_and_migration_plan_v1.md`
-5. `NeoTrade3实施交接文档.md`（背景参考；以代码现状核对）
-6. `config/orchestrator/daily_master_orchestrator.json`
-7. `config/labs/labs_registry.json`
+3. `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
+4. `docs/handoffs/2026-05-19_session_resume_handoff.md`
+5. `docs/architecture/neotrade3_master_architecture_and_migration_plan_v1.md`
+6. `NeoTrade3实施交接文档.md`（背景参考；以代码现状核对）
+7. `config/orchestrator/daily_master_orchestrator.json`
+8. `config/labs/labs_registry.json`

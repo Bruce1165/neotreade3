@@ -18,6 +18,42 @@ class BootstrapApiRouter:
     def __init__(self, service: Any) -> None:
         self.service = service
 
+    @staticmethod
+    def _parse_codes_csv(raw_codes: object) -> list[str]:
+        if raw_codes is None:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for part in str(raw_codes).split(","):
+            code = part.strip().split(".", 1)[0].strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            out.append(code)
+        return out
+
+    @staticmethod
+    def _parse_positive_limit(raw_limit: object, *, default: int = 100, max_limit: int = 500) -> int:
+        if raw_limit is None:
+            return int(default)
+        try:
+            limit = int(str(raw_limit))
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be an integer",
+                details={"limit": raw_limit},
+            ) from exc
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        return min(limit, int(max_limit))
+
     def _normalize_path(self, raw_path: str) -> str:
         """Normalize path: support both /api/... and /api/v1/..."""
         parsed = urlparse(raw_path)
@@ -54,12 +90,22 @@ class BootstrapApiRouter:
                         "/api/sector-rotation?date=YYYY-MM-DD — 板块轮动",
                         "/api/stock-tiering?date=YYYY-MM-DD — 个股分层",
                         "/api/signals?codes=xxx&date=YYYY-MM-DD — 交易信号",
+                        "/api/lowfreq/workbench?date=YYYY-MM-DD — 低频自动操盘工作台",
+                        "/api/ops-center/summary?date=YYYY-MM-DD — 运维中心摘要",
+                        "/api/lowfreq-score/pool?state=跟踪 — 低频交易得分系统股票池",
+                        "/api/lowfreq-score/pool/<code> — 低频交易得分系统单股详情",
+                        "/api/lowfreq-score/events?code=xxx — 低频交易得分系统事件流",
+                        "/api/lowfreq-score/summary?period_type=month — 低频交易得分系统阶段汇总",
                         "/api/screeners — 筛选器列表",
                         "/api/screeners/runs?date=YYYY-MM-DD — 筛选器运行记录",
                         "/api/screeners/config/<id> — 筛选器配置",
                         "/api/labs/runs/<date>/<lab_id> — 实验室结果",
                         "/api/orchestration/runs — 编排运行记录",
                         "/api/data-control — 数据控制状态",
+                        "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
+                        "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
+                        "/api/data-control/m1/d7/trading-day-status?date=YYYY-MM-DD — M1 D7 交易日状态投影",
+                        "/api/data-control/m1/d8/trading-profiles?date=YYYY-MM-DD — M1 D8 交易画像投影",
                         "/api/issue-center?date=YYYY-MM-DD — 问题中心",
                         "/api/stocks/lookup?code=xxx — 股票查询",
                         "/api/stocks/coverage — 数据覆盖统计",
@@ -71,6 +117,8 @@ class BootstrapApiRouter:
                         "/api/labs/run — 运行实验室",
                         "/api/orchestration/run — 运行编排",
                         "/api/screeners/run — 运行筛选器",
+                        "/api/lowfreq-score/manual/buy-intent — 低频交易得分系统手工买入意图",
+                        "/api/lowfreq-score/manual/abandon — 低频交易得分系统手工放弃记录",
                         "/api/screeners/config/<id> — 更新筛选器配置",
                         "/api/data-control/seed-stock-db — 初始化数据库",
                         "/api/data-control/sync-daily-prices — 同步行情",
@@ -231,6 +279,21 @@ class BootstrapApiRouter:
                 self.service.lowfreq_backtest_status_view(report_id=str(raw_report_id)),
             )
 
+        if report_path == "/api/lowfreq/backtest/report-detail":
+            raw_report_id = query.get("report_id", [None])[0]
+            if raw_report_id is None:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="missing_report_id",
+                    message="report_id query parameter is required",
+                )
+            return (
+                HTTPStatus.OK,
+                self.service.lowfreq_backtest_report_detail_view(
+                    report_id=str(raw_report_id)
+                ),
+            )
+
         if report_path.startswith("/api/lowfreq/backtest/reports/"):
             tail = report_path.split("/api/lowfreq/backtest/reports/", 1)[-1]
             if not tail or "/" in tail:
@@ -266,6 +329,100 @@ class BootstrapApiRouter:
         if report_path == "/api/lowfreq/portfolio":
             target_date = query.get("date", [None])[0]
             return HTTPStatus.OK, self.service.lowfreq_portfolio_view(target_date=target_date)
+
+        if report_path == "/api/lowfreq/workbench":
+            target_date = query.get("date", [None])[0]
+            raw_ensure = query.get("ensure_generated", ["true"])[0]
+            ensure_generated = self._parse_bool(raw_ensure)
+            return HTTPStatus.OK, self.service.lowfreq_workbench_view(
+                target_date=target_date,
+                requested_by="api",
+                ensure_generated=ensure_generated,
+            )
+
+        if report_path == "/api/ops-center/summary":
+            target_date = query.get("date", [None])[0]
+            return HTTPStatus.OK, self.service.ops_center_summary_view(target_date=target_date)
+
+        if report_path == "/api/lowfreq-score/pool":
+            state = query.get("state", [None])[0]
+            target_date = query.get("date", [None])[0]
+            raw_limit = query.get("limit", ["500"])[0]
+            try:
+                limit = int(str(raw_limit))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_limit",
+                    message="limit must be an integer",
+                    details={"limit": raw_limit},
+                )
+            return HTTPStatus.OK, self.service.lowfreq_score_pool_view(
+                state=state,
+                limit=limit,
+                target_date=target_date,
+                requested_by="api",
+            )
+
+        if report_path.startswith("/api/lowfreq-score/pool/"):
+            code = report_path.removeprefix("/api/lowfreq-score/pool/")
+            target_date = query.get("date", [None])[0]
+            raw_limit = query.get("event_limit", ["100"])[0]
+            try:
+                event_limit = int(str(raw_limit))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_event_limit",
+                    message="event_limit must be an integer",
+                    details={"event_limit": raw_limit},
+                )
+            return HTTPStatus.OK, self.service.lowfreq_score_pool_item_view(
+                code=code,
+                event_limit=event_limit,
+                target_date=target_date,
+                requested_by="api",
+            )
+
+        if report_path == "/api/lowfreq-score/events":
+            code = query.get("code", [None])[0]
+            target_date = query.get("date", [None])[0]
+            raw_limit = query.get("limit", ["200"])[0]
+            try:
+                limit = int(str(raw_limit))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_limit",
+                    message="limit must be an integer",
+                    details={"limit": raw_limit},
+                )
+            return HTTPStatus.OK, self.service.lowfreq_score_events_view(
+                code=code,
+                limit=limit,
+                target_date=target_date,
+                requested_by="api",
+            )
+
+        if report_path == "/api/lowfreq-score/summary":
+            period_type = query.get("period_type", [None])[0]
+            target_date = query.get("date", [None])[0]
+            raw_limit = query.get("limit", ["120"])[0]
+            try:
+                limit = int(str(raw_limit))
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_limit",
+                    message="limit must be an integer",
+                    details={"limit": raw_limit},
+                )
+            return HTTPStatus.OK, self.service.lowfreq_score_summary_view(
+                period_type=period_type,
+                limit=limit,
+                target_date=target_date,
+                requested_by="api",
+            )
 
         if report_path == "/api/lowfreq/confidence/overview":
             target_date = query.get("date", [None])[0]
@@ -925,6 +1082,88 @@ class BootstrapApiRouter:
             return HTTPStatus.OK, self.service.data_control_view(
                 target_date=target_date,
                 publish_succeeded=publish_succeeded,
+            )
+
+        if parsed.path == "/api/data-control/m1/d1/daily-price-facts":
+            raw_date = query.get("date", [None])[0]
+            if raw_date is None:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message="date query parameter is required",
+                )
+            raw_date = str(raw_date).strip()
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            limit = self._parse_positive_limit(query.get("limit", [None])[0], default=100)
+            codes = self._parse_codes_csv(query.get("codes", [None])[0])
+            return HTTPStatus.OK, self.service.m1_d1_daily_price_facts_view(
+                target_date=raw_date,
+                stock_codes=codes or None,
+                limit=limit,
+            )
+
+        if parsed.path == "/api/data-control/m1/d7/security-master":
+            limit = self._parse_positive_limit(query.get("limit", [None])[0], default=100)
+            codes = self._parse_codes_csv(query.get("codes", [None])[0])
+            return HTTPStatus.OK, self.service.m1_d7_security_master_view(
+                stock_codes=codes or None,
+                limit=limit,
+            )
+
+        if parsed.path == "/api/data-control/m1/d7/trading-day-status":
+            raw_date = query.get("date", [None])[0]
+            if raw_date is None:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message="date query parameter is required",
+                )
+            raw_date = str(raw_date).strip()
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            return HTTPStatus.OK, self.service.m1_d7_trading_day_status_view(
+                target_date=raw_date
+            )
+
+        if parsed.path == "/api/data-control/m1/d8/trading-profiles":
+            raw_date = query.get("date", [None])[0]
+            if raw_date is None:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message="date query parameter is required",
+                )
+            raw_date = str(raw_date).strip()
+            try:
+                date.fromisoformat(raw_date)
+            except ValueError:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_date",
+                    message=f"invalid date: {raw_date}",
+                    details={"date": raw_date},
+                )
+            limit = self._parse_positive_limit(query.get("limit", [None])[0], default=100)
+            codes = self._parse_codes_csv(query.get("codes", [None])[0])
+            return HTTPStatus.OK, self.service.m1_d8_trading_profiles_view(
+                target_date=raw_date,
+                stock_codes=codes or None,
+                limit=limit,
             )
 
         if parsed.path == "/api/data-control/runs":
@@ -1608,7 +1847,7 @@ class BootstrapApiRouter:
                 return HTTPStatus.ACCEPTED, payload
             return HTTPStatus.OK, payload
 
-        if path == "/api/lowfreq/manual/buy-intent":
+        if path in {"/api/lowfreq/manual/buy-intent", "/api/lowfreq-score/manual/buy-intent"}:
             requested_by = body.get("requested_by", "api")
             if not isinstance(requested_by, str) or not requested_by.strip():
                 raise ApiError(
@@ -1678,7 +1917,12 @@ class BootstrapApiRouter:
                     details={"buy_score": buy_score},
                 )
 
-            return HTTPStatus.OK, self.service.lowfreq_manual_buy_intent_view(
+            service_method = (
+                self.service.lowfreq_score_manual_buy_intent_view
+                if path == "/api/lowfreq-score/manual/buy-intent"
+                else self.service.lowfreq_manual_buy_intent_view
+            )
+            return HTTPStatus.OK, service_method(
                 code=code.strip(),
                 requested_date=requested_date.strip(),
                 name=(str(name) if isinstance(name, str) else ""),
@@ -1688,7 +1932,7 @@ class BootstrapApiRouter:
                 requested_by=requested_by.strip(),
             )
 
-        if path == "/api/lowfreq/manual/abandon":
+        if path in {"/api/lowfreq/manual/abandon", "/api/lowfreq-score/manual/abandon"}:
             requested_by = body.get("requested_by", "api")
             if not isinstance(requested_by, str) or not requested_by.strip():
                 raise ApiError(
@@ -1725,7 +1969,12 @@ class BootstrapApiRouter:
                     details={"requested_date": requested_date},
                 )
 
-            return HTTPStatus.OK, self.service.lowfreq_manual_abandon_view(
+            service_method = (
+                self.service.lowfreq_score_manual_abandon_view
+                if path == "/api/lowfreq-score/manual/abandon"
+                else self.service.lowfreq_manual_abandon_view
+            )
+            return HTTPStatus.OK, service_method(
                 code=code.strip(),
                 requested_date=requested_date.strip(),
                 requested_by=requested_by.strip(),
