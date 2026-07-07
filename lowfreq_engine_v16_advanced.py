@@ -115,6 +115,34 @@ class SellSignal:
 
 
 @dataclass
+class LayerContract:
+    """统一的分层契约输出。"""
+    current_stage: str = ""
+    decision: str = ""
+    score: Optional[float] = None
+    reasons: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+    source_layer: str = ""
+    next_action: str = ""
+    last_transition: str = ""
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = {
+            "current_stage": str(self.current_stage or ""),
+            "decision": str(self.decision or ""),
+            "reasons": [str(x) for x in list(self.reasons or []) if str(x or "").strip()],
+            "evidence": [str(x) for x in list(self.evidence or []) if str(x or "").strip()],
+            "flags": [str(x) for x in list(self.flags or []) if str(x or "").strip()],
+            "source_layer": str(self.source_layer or ""),
+            "next_action": str(self.next_action or ""),
+            "last_transition": str(self.last_transition or ""),
+        }
+        if self.score is not None:
+            payload["score"] = float(self.score)
+        return payload
+
+@dataclass
 class TradeRecord:
     """交易记录"""
     code: str
@@ -777,6 +805,232 @@ class LowFreqTradingEngineV16:
                     keywords.append(keyword)
         self._penetration_keywords_cache = tuple(dict.fromkeys(keywords))
         return tuple(self._penetration_keywords_cache)
+
+    @staticmethod
+    def _layer_contract_payload(
+        *,
+        current_stage: str,
+        decision: str,
+        score: Optional[float] = None,
+        reasons: Optional[list[str]] = None,
+        evidence: Optional[list[str]] = None,
+        flags: Optional[list[str]] = None,
+        source_layer: str,
+        next_action: str,
+        last_transition: str = "",
+    ) -> dict[str, Any]:
+        contract = LayerContract(
+            current_stage=str(current_stage or ""),
+            decision=str(decision or ""),
+            score=float(score) if score is not None else None,
+            reasons=list(reasons or []),
+            evidence=list(evidence or []),
+            flags=list(flags or []),
+            source_layer=str(source_layer or ""),
+            next_action=str(next_action or ""),
+            last_transition=str(last_transition or ""),
+        )
+        return contract.to_payload()
+
+    @classmethod
+    def _normalize_execution_block_reason(cls, raw_reason: Optional[str]) -> str:
+        reason = str(raw_reason or "").strip()
+        if reason in {
+            "reserved_due_to_full_book",
+            "reservation_created",
+            "no_slots",
+            "buy_reserved_due_to_full_book",
+        }:
+            return "positions_full"
+        if reason in {"no_cash", "buy_insufficient_cash"}:
+            return "cash_insufficient"
+        if reason in {"reservation_expired", "buy_reserved_expired"}:
+            return "entry_window_missed"
+        if reason in {"pending_conflict_older_intent_wins"}:
+            return "conflict_with_exit"
+        if reason in {
+            "execution_signal_gate_blocked",
+            "chase_entry_blocked",
+            "elite_execution_candidate_rejected",
+            "limit_up",
+            "limit_down",
+            "min_amount",
+            "participation_rate",
+            "missing_price_bar",
+        }:
+            return "execution_rule_blocked"
+        return reason
+
+    @classmethod
+    def _candidate_tier_from_signal(cls, sig: dict[str, Any]) -> str:
+        soft_flags = [str(x or "").strip() for x in list(sig.get("soft_flags") or []) if str(x or "").strip()]
+        if soft_flags:
+            return "soft_retained"
+        return "execution_eligible"
+
+    @classmethod
+    def _execution_action_fields(
+        cls,
+        *,
+        event_type: str,
+        snapshot: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        snap = snapshot if isinstance(snapshot, dict) else {}
+        event = str(event_type or "").strip()
+        if event in {"tracking_started", "tracking_promoted_to_entry", "tracking_dropped"}:
+            return {
+                "action_type": "",
+                "order_action": "",
+                "reserve_action": "",
+                "execution_status": "tracking",
+            }
+        if event == "reservation_created":
+            return {
+                "action_type": "reserve",
+                "order_action": "block",
+                "reserve_action": "reserve",
+                "execution_status": "reserved",
+            }
+        if event == "reservation_released_into_buy":
+            return {
+                "action_type": "buy",
+                "order_action": "buy",
+                "reserve_action": "release",
+                "execution_status": "executed",
+            }
+        if event == "buy_executed":
+            reserve_action = "release" if str(snap.get("queue_name") or "") == "reserved" else ""
+            return {
+                "action_type": "buy",
+                "order_action": "buy",
+                "reserve_action": reserve_action,
+                "execution_status": "executed",
+            }
+        if event == "reservation_expired":
+            return {
+                "action_type": "block",
+                "order_action": "block",
+                "reserve_action": "expire",
+                "execution_status": "expired",
+            }
+        return {
+            "action_type": "block",
+            "order_action": "block",
+            "reserve_action": "",
+            "execution_status": "blocked",
+        }
+
+    def _tracking_snapshot_from_signal(self, sig: dict[str, Any]) -> dict[str, Any]:
+        reasons = [str(x or "").strip() for x in list(sig.get("reasons") or []) if str(x or "").strip()]
+        evidence = [str(x or "").strip() for x in list(sig.get("entry_reasons") or reasons) if str(x or "").strip()]
+        flags = [str(x or "").strip() for x in list(sig.get("soft_flags") or []) if str(x or "").strip()]
+        candidate_tier = str(sig.get("candidate_tier") or self._candidate_tier_from_signal(sig))
+        entry_ready = bool(sig.get("entry_ready")) if "entry_ready" in sig else candidate_tier != "soft_retained"
+        tracking_state = str(
+            sig.get("tracking_state")
+            or ("tracking_mature" if entry_ready else "tracking_observe")
+        ).strip()
+        tracking_days = max(int(sig.get("tracking_days") or 1), 1)
+        transition_reason = str(
+            sig.get("tracking_transition_reason")
+            or ("candidate_meets_current_entry_contract" if entry_ready else "candidate_retained_for_tracking")
+        ).strip()
+        decision = "tracking_ready_for_entry" if entry_ready else "tracking_continue"
+        next_action = "promote_to_entry" if entry_ready else "continue_tracking"
+        current_stage = "entry_ready" if entry_ready else "candidate_detected"
+        details = (
+            "tracking 晋升：候选当前满足 entry 条件"
+            if entry_ready
+            else "tracking 继续：候选保留观察，尚未进入正式 entry"
+        )
+        return {
+            "tracking_ready": bool(entry_ready),
+            "tracking_state": tracking_state,
+            "tracking_days": int(tracking_days),
+            "tracking_transition_reason": transition_reason,
+            "tracking_evidence_bundle": list(evidence or reasons),
+            "tracking_flags": list(flags),
+            "tracking_decision": decision,
+            "tracking_next_action": next_action,
+            "tracking_current_stage": current_stage,
+            "tracking_details": details,
+        }
+
+    def _decorate_signal_with_phase1_contracts(self, sig: dict[str, Any]) -> dict[str, Any]:
+        out = dict(sig)
+        buy_score = float(out.get("buy_score") or 0.0)
+        reasons = [str(x or "").strip() for x in list(out.get("reasons") or []) if str(x or "").strip()]
+        soft_flags = [str(x or "").strip() for x in list(out.get("soft_flags") or []) if str(x or "").strip()]
+        wave_phase = str(out.get("wave_phase") or "").strip()
+        if bool(getattr(self, "WAVE1_TRACKING_ONLY_ENABLED", True)) and wave_phase == WavePhase.WAVE_1.value:
+            if "wave1_tracking_only" not in soft_flags:
+                soft_flags.append("wave1_tracking_only")
+            if "capture-first: 1浪仅保留 tracking，不进入正式建仓" not in reasons:
+                reasons.append("capture-first: 1浪仅保留 tracking，不进入正式建仓")
+            out["soft_flags"] = list(soft_flags)
+            out["reasons"] = list(reasons)
+        signal_source = str(out.get("signal_source") or "buy_signal")
+        candidate_tier = self._candidate_tier_from_signal(out)
+        entry_ready = candidate_tier != "soft_retained"
+        tracking_snapshot = self._tracking_snapshot_from_signal(
+            {
+                **out,
+                "candidate_tier": candidate_tier,
+                "entry_ready": entry_ready,
+            }
+        )
+        candidate_contract = self._layer_contract_payload(
+            current_stage="candidate_detected",
+            decision="candidate_detected",
+            score=buy_score,
+            reasons=reasons,
+            evidence=reasons,
+            flags=soft_flags,
+            source_layer="discovery",
+            next_action="evaluate_entry",
+        )
+        tracking_contract = self._layer_contract_payload(
+            current_stage=str(tracking_snapshot.get("tracking_current_stage") or "candidate_detected"),
+            decision=str(tracking_snapshot.get("tracking_decision") or "tracking_continue"),
+            score=buy_score,
+            reasons=list(tracking_snapshot.get("tracking_evidence_bundle") or reasons),
+            evidence=list(tracking_snapshot.get("tracking_evidence_bundle") or reasons),
+            flags=list(tracking_snapshot.get("tracking_flags") or soft_flags),
+            source_layer="tracking",
+            next_action=str(tracking_snapshot.get("tracking_next_action") or "continue_tracking"),
+        )
+        entry_contract = self._layer_contract_payload(
+            current_stage="entry_ready" if entry_ready else "candidate_detected",
+            decision="entry_ready" if entry_ready else "candidate_only",
+            score=buy_score,
+            reasons=reasons,
+            evidence=reasons,
+            flags=soft_flags,
+            source_layer="entry",
+            next_action="queue_for_execution" if entry_ready else "observe_candidate",
+        )
+        out.update(
+            {
+                "candidate_detected": True,
+                "candidate_score": buy_score,
+                "candidate_reasons": list(reasons),
+                "candidate_tier": str(candidate_tier),
+                "entry_ready": bool(entry_ready),
+                "tracking_ready": bool(tracking_snapshot.get("tracking_ready")),
+                "tracking_state": str(tracking_snapshot.get("tracking_state") or ""),
+                "tracking_days": int(tracking_snapshot.get("tracking_days") or 0),
+                "tracking_transition_reason": str(tracking_snapshot.get("tracking_transition_reason") or ""),
+                "tracking_evidence_bundle": list(tracking_snapshot.get("tracking_evidence_bundle") or []),
+                "entry_signal_type": signal_source,
+                "entry_confidence": buy_score,
+                "entry_reasons": list(reasons),
+                "entry_risk_flags": list(soft_flags),
+                "candidate_contract": candidate_contract,
+                "tracking_contract": tracking_contract,
+                "entry_contract": entry_contract,
+            }
+        )
+        return out
 
     def _market_focus_snapshot(
         self,
@@ -3373,6 +3627,35 @@ class LowFreqTradingEngineV16:
         candidates.sort(key=lambda x: x.buy_score, reverse=True)
         return candidates[: int(top_n)]
 
+    def _build_signal_structure_payload(
+        self,
+        *,
+        deduped_signals: dict[str, dict[str, Any]],
+        target_date: date,
+        market_filter_note: Optional[str],
+    ) -> dict[str, Any]:
+        candidate_signals = sorted(
+            deduped_signals.values(),
+            key=lambda x: (float(x.get("buy_score") or 0.0), float(x.get("resonance") or 0.0)),
+            reverse=True,
+        )
+        entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
+        return {
+            "buy_signals": list(entry_signals),
+            "candidate_signals": candidate_signals,
+            "entry_signals": entry_signals,
+            "signal_summary": {
+                "candidate_count": len(candidate_signals),
+                "entry_count": len(entry_signals),
+                "soft_retained_count": sum(
+                    1 for sig in candidate_signals if str(sig.get("candidate_tier") or "") == "soft_retained"
+                ),
+            },
+            "date": target_date.isoformat(),
+            "capture_first_mode": True,
+            "market_filter_note": market_filter_note,
+        }
+
     def generate_buy_signals(self, target_date: date) -> dict:
         """生成买入信号 - capture-first: 仅执行安全保持硬性。"""
         market_filter_note: Optional[str] = None
@@ -3405,22 +3688,24 @@ class LowFreqTradingEngineV16:
                         if market_filter_note:
                             reasons.append(market_filter_note)
                         raw_signals.append(
-                            {
-                                "code": c.code,
-                                "name": c.name,
-                                "sector": c.sector,
-                                "buy_score": float(c.buy_score),
-                                "market_cap_yi": c.market_cap_yi,
-                                "wave_phase": c.wave_phase,
-                                "role": c.role,
-                                "reasons": reasons,
-                                "pe": c.pe_ttm,
-                                "profit_growth": c.profit_growth,
-                                "resonance": c.sector_resonance,
-                                "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
-                                "signal_source": str(getattr(c, "signal_source", "") or "hot_sector"),
-                                "soft_flags": list(getattr(c, "soft_flags", []) or []),
-                            }
+                            self._decorate_signal_with_phase1_contracts(
+                                {
+                                    "code": c.code,
+                                    "name": c.name,
+                                    "sector": c.sector,
+                                    "buy_score": float(c.buy_score),
+                                    "market_cap_yi": c.market_cap_yi,
+                                    "wave_phase": c.wave_phase,
+                                    "role": c.role,
+                                    "reasons": reasons,
+                                    "pe": c.pe_ttm,
+                                    "profit_growth": c.profit_growth,
+                                    "resonance": c.sector_resonance,
+                                    "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
+                                    "signal_source": str(getattr(c, "signal_source", "") or "hot_sector"),
+                                    "soft_flags": list(getattr(c, "soft_flags", []) or []),
+                                }
+                            )
                         )
                 except Exception as e:
                     logger.warning(f"板块 {sh.sector} 信号生成失败: {e}")
@@ -3442,28 +3727,32 @@ class LowFreqTradingEngineV16:
                     allowed_waves.add(WavePhase.WAVE_1.value)
                 for c in global_candidates:
                     reasons = ["跨板块扫描"] + list(c.buy_reasons)
+                    soft_flags = list(getattr(c, "soft_flags", []) or [])
                     if self.CROSS_SECTOR_WAVE3_ONLY and str(c.wave_phase) not in allowed_waves:
                         reasons.append("capture-first: 波段不符，降权保留")
+                        soft_flags.append("wave_uncertain")
                     if market_filter_note:
                         reasons.append(market_filter_note)
                     raw_signals.append(
-                        {
-                            "code": c.code,
-                            "name": c.name,
-                            "sector": c.sector,
-                            "buy_score": float(c.buy_score),
-                            "market_cap_yi": c.market_cap_yi,
-                            "wave_phase": c.wave_phase,
-                            "role": c.role,
-                            "reasons": reasons,
-                            "pe": c.pe_ttm,
-                            "profit_growth": c.profit_growth,
-                            "resonance": c.sector_resonance,
-                            "cross_sector": True,
-                            "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
-                            "signal_source": str(getattr(c, "signal_source", "") or "cross_sector"),
-                            "soft_flags": list(getattr(c, "soft_flags", []) or []),
-                        }
+                        self._decorate_signal_with_phase1_contracts(
+                            {
+                                "code": c.code,
+                                "name": c.name,
+                                "sector": c.sector,
+                                "buy_score": float(c.buy_score),
+                                "market_cap_yi": c.market_cap_yi,
+                                "wave_phase": c.wave_phase,
+                                "role": c.role,
+                                "reasons": reasons,
+                                "pe": c.pe_ttm,
+                                "profit_growth": c.profit_growth,
+                                "resonance": c.sector_resonance,
+                                "cross_sector": True,
+                                "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
+                                "signal_source": str(getattr(c, "signal_source", "") or "cross_sector"),
+                                "soft_flags": soft_flags,
+                            }
+                        )
                     )
             except Exception as e:
                 logger.warning(f"跨板块扫描失败: {e}")
@@ -3477,17 +3766,12 @@ class LowFreqTradingEngineV16:
             if current is None or float(sig.get("buy_score") or 0.0) > float(current.get("buy_score") or 0.0):
                 deduped[code] = dict(sig)
 
-        buy_signals = sorted(
-            deduped.values(),
-            key=lambda x: (float(x.get("buy_score") or 0.0), float(x.get("resonance") or 0.0)),
-            reverse=True,
+        signal_payload = self._build_signal_structure_payload(
+            deduped_signals=deduped,
+            target_date=target_date,
+            market_filter_note=market_filter_note,
         )
-        return {
-            "buy_signals": buy_signals,
-            "date": target_date.isoformat(),
-            "capture_first_mode": True,
-            "market_filter_note": market_filter_note,
-        }
+        return signal_payload
 
     def _system_exit_attr_names(self, scope: str) -> dict[str, str]:
         base = "market_exit" if str(scope) == "market" else "sector_exit"
@@ -4053,18 +4337,59 @@ class LowFreqTradingEngineV16:
             return
         snap = snapshot if isinstance(snapshot, dict) else {}
         source_payload = payload if isinstance(payload, dict) else {}
+        event = str(event_type or "").strip()
+        tracking_event = event in {"tracking_started", "tracking_promoted_to_entry", "tracking_dropped"}
+        action_fields = self._execution_action_fields(event_type=str(event_type), snapshot=snap)
         audit_log.append(
             {
                 "date": current_date.isoformat(),
-                "event": str(event_type),
+                "event": event,
                 "code": str(code),
+                "source_layer": "tracking" if tracking_event else "execution",
+                **action_fields,
+                "funnel_stage": (
+                    "candidate_detected"
+                    if event == "tracking_started"
+                    else (
+                        "entry_ready"
+                        if event == "tracking_promoted_to_entry"
+                        else (
+                            "expired"
+                            if event == "tracking_dropped"
+                            else (
+                                "reserved"
+                                if event == "reservation_created"
+                                else (
+                                    "expired"
+                                    if event == "reservation_expired"
+                                    else (
+                                        "released"
+                                        if event == "reservation_released_into_buy"
+                                        else "blocked"
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ),
                 "name": str(sig.get("name") or ""),
                 "sector": str(sig.get("sector") or ""),
                 "buy_score": float(sig.get("buy_score") or 0.0),
                 "wave_phase": str(sig.get("wave_phase") or ""),
                 "role": str(sig.get("role") or ""),
                 "signal_date": str(source_payload.get("first_date") or current_date.isoformat()),
-                "blocked_reason": str(snap.get("blocked_reason") or str(event_type)),
+                "blocked_reason": "" if tracking_event else str(snap.get("blocked_reason") or event),
+                "execution_block_reason": (
+                    ""
+                    if tracking_event
+                    else (
+                        self._normalize_execution_block_reason(
+                            str(snap.get("blocked_reason") or event)
+                        )
+                    )
+                ),
+                "queue_name": str(snap.get("queue_name") or ""),
+                "position_delta": int(snap.get("position_delta") or 0),
                 "near_high_flag": bool(snap.get("near_high_flag")),
                 "recent_runup_flag": bool(snap.get("recent_runup_flag")),
                 "near_5d_high": bool(snap.get("near_5d_high")),
@@ -4074,9 +4399,157 @@ class LowFreqTradingEngineV16:
                 "min_score_required": snap.get("min_score_required"),
                 "soft_role_blocked": bool(snap.get("soft_role_blocked")),
                 "soft_wave_blocked": bool(snap.get("soft_wave_blocked")),
+                "tracking_state": str(snap.get("tracking_state") or ""),
+                "tracking_days": int(snap.get("tracking_days") or 0),
+                "tracking_transition_reason": str(snap.get("tracking_transition_reason") or ""),
+                "tracking_ready": bool(snap.get("tracking_ready")),
+                "tracking_evidence_bundle": list(snap.get("tracking_evidence_bundle") or []),
                 "details": str(snap.get("details") or ""),
             }
         )
+
+    def _record_tracking_candidate_events(
+        self,
+        *,
+        current_date: date,
+        signals: Optional[dict[str, Any]],
+        tracking_runtime_state: dict[str, dict[str, Any]],
+        positions: Optional[dict[str, TradeRecord]] = None,
+    ) -> list[dict[str, Any]]:
+        signal_payload = signals if isinstance(signals, dict) else {}
+        candidate_signals = signal_payload.get("candidate_signals")
+        if not isinstance(candidate_signals, list):
+            raw_buy_signals = signal_payload.get("buy_signals")
+            return [dict(sig) for sig in raw_buy_signals] if isinstance(raw_buy_signals, list) else []
+        active_positions = positions if isinstance(positions, dict) else {}
+        current_tracking_codes: set[str] = set()
+        promoted_entry_signals: list[dict[str, Any]] = []
+        tracking_min_days = max(int(getattr(self, "TRACKING_MIN_DAYS", 2) or 0), 1)
+        for raw_sig in candidate_signals:
+            if not isinstance(raw_sig, dict):
+                continue
+            sig = dict(raw_sig)
+            code = str(sig.get("code") or "").strip()
+            if not code or code in active_positions:
+                tracking_runtime_state.pop(code, None)
+                continue
+            tracking_snapshot = self._tracking_snapshot_from_signal(sig)
+            prev = tracking_runtime_state.get(code)
+            tracking_days = 1 if prev is None else int(prev.get("tracking_days") or 0) + 1
+            raw_tracking_ready = bool(tracking_snapshot.get("tracking_ready"))
+            tracking_ready = bool(raw_tracking_ready and tracking_days >= tracking_min_days)
+            tracking_state = str(
+                "tracking_mature"
+                if tracking_ready
+                else (
+                    "tracking_observe"
+                    if raw_tracking_ready
+                    else (tracking_snapshot.get("tracking_state") or "tracking_observe")
+                )
+            )
+            transition_reason = str(
+                "tracking_min_days_satisfied"
+                if tracking_ready
+                else (
+                    "tracking_wait_min_days"
+                    if raw_tracking_ready
+                    else (tracking_snapshot.get("tracking_transition_reason") or "candidate_retained_for_tracking")
+                )
+            )
+            tracking_details = (
+                f"tracking 晋升：连续观察 {tracking_days} 天，达到最小观察门槛 {tracking_min_days} 天"
+                if tracking_ready
+                else (
+                    f"tracking 继续：连续观察 {tracking_days} 天，尚未达到最小观察门槛 {tracking_min_days} 天"
+                    if raw_tracking_ready
+                    else "tracking 继续：候选保留观察，当前未满足正式 entry 条件"
+                )
+            )
+            first_date = str(
+                (prev or {}).get("first_date") or current_date.isoformat()
+            )
+            event_snapshot = {
+                **tracking_snapshot,
+                "tracking_ready": tracking_ready,
+                "tracking_state": tracking_state,
+                "tracking_days": int(tracking_days),
+                "tracking_transition_reason": transition_reason,
+                "details": tracking_details,
+            }
+            event_payload = {
+                "first_date": first_date,
+                "tracking_days": int(tracking_days),
+            }
+            if prev is None:
+                self._record_buy_signal_audit_event(
+                    event_type="tracking_started",
+                    current_date=current_date,
+                    code=code,
+                    sig=sig,
+                    payload=event_payload,
+                    snapshot=event_snapshot,
+                )
+            previously_promoted = bool((prev or {}).get("promoted"))
+            if tracking_ready and not previously_promoted:
+                self._record_buy_signal_audit_event(
+                    event_type="tracking_promoted_to_entry",
+                    current_date=current_date,
+                    code=code,
+                    sig=sig,
+                    payload=event_payload,
+                    snapshot=event_snapshot,
+                )
+            current_tracking_codes.add(code)
+            promoted_sig = {
+                **sig,
+                "tracking_ready": tracking_ready,
+                "tracking_state": tracking_state,
+                "tracking_days": int(tracking_days),
+                "tracking_transition_reason": transition_reason,
+                "tracking_evidence_bundle": list(
+                    event_snapshot.get("tracking_evidence_bundle") or sig.get("tracking_evidence_bundle") or []
+                ),
+            }
+            tracking_runtime_state[code] = {
+                "first_date": first_date,
+                "tracking_days": int(tracking_days),
+                "tracking_state": tracking_state,
+                "tracking_ready": tracking_ready,
+                "promoted": bool(tracking_ready),
+                "sig": dict(promoted_sig),
+            }
+            if tracking_ready:
+                promoted_entry_signals.append(promoted_sig)
+        dropped_codes = [
+            str(code)
+            for code in list(tracking_runtime_state.keys())
+            if str(code) not in current_tracking_codes and str(code) not in active_positions
+        ]
+        for code in dropped_codes:
+            prev = tracking_runtime_state.pop(code, None)
+            if not isinstance(prev, dict):
+                continue
+            sig = dict(prev.get("sig") or {})
+            tracking_days = int(prev.get("tracking_days") or 0)
+            self._record_buy_signal_audit_event(
+                event_type="tracking_dropped",
+                current_date=current_date,
+                code=str(code),
+                sig=sig,
+                payload={
+                    "first_date": str(prev.get("first_date") or current_date.isoformat()),
+                    "tracking_days": tracking_days,
+                },
+                snapshot={
+                    "tracking_state": "tracking_dropped",
+                    "tracking_days": tracking_days,
+                    "tracking_transition_reason": "candidate_missing_from_current_tracking_set",
+                    "tracking_ready": False,
+                    "tracking_evidence_bundle": list(sig.get("tracking_evidence_bundle") or sig.get("reasons") or []),
+                    "details": "tracking 终止：候选已不在当前跟踪集合中",
+                },
+            )
+        return promoted_entry_signals
 
     def _execution_signal_gate_snapshot(self, *, sig: dict[str, Any]) -> dict[str, Any]:
         if not bool(getattr(self, "EXECUTION_SIGNAL_GATE_ENABLED", True)):
@@ -4488,6 +4961,7 @@ class LowFreqTradingEngineV16:
         daily_values_net: list[dict[str, Any]] = []
         pending_buy_attempts: dict[str, dict[str, Any]] = {}
         pending_reserved_attempts: dict[str, dict[str, Any]] = {}
+        tracking_runtime_state: dict[str, dict[str, Any]] = {}
         rotation_cache: dict[tuple[str, str], dict[str, Any]] = {}
         peak_gross = float(initial_capital)
         peak_net = float(initial_capital)
@@ -4820,8 +5294,14 @@ class LowFreqTradingEngineV16:
                 if buy_signal_memory_days > 0:
                     try:
                         signals = self.generate_buy_signals(current_date)
+                        effective_entry_signals = self._record_tracking_candidate_events(
+                            current_date=current_date,
+                            signals=signals,
+                            tracking_runtime_state=tracking_runtime_state,
+                            positions=positions,
+                        )
                         expire_idx = min(len(trading_dates) - 1, i + buy_signal_memory_days)
-                        for sig in signals.get("buy_signals", []):
+                        for sig in effective_entry_signals:
                             if not isinstance(sig, dict):
                                 continue
                             code = str(sig.get("code") or "").strip()
@@ -4876,8 +5356,14 @@ class LowFreqTradingEngineV16:
                 elif i % self.REBALANCE_DAYS == 0 and len(positions) < self.MAX_POSITIONS:
                     try:
                         signals = self.generate_buy_signals(current_date)
+                        effective_entry_signals = self._record_tracking_candidate_events(
+                            current_date=current_date,
+                            signals=signals,
+                            tracking_runtime_state=tracking_runtime_state,
+                            positions=positions,
+                        )
                         expire_idx = i
-                        for sig in signals.get("buy_signals", []):
+                        for sig in effective_entry_signals:
                             if not isinstance(sig, dict):
                                 continue
                             code = str(sig.get("code") or "").strip()
