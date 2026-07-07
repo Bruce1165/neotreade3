@@ -58,6 +58,7 @@ from neotrade3.lowfreq_score import LOWFREQ_SCORE_STATES, LowfreqScoreStore
 from neotrade3.orchestration import load_orchestrator_config
 from neotrade3.orchestration.daily_master_orchestrator import DailyMasterOrchestrator
 from neotrade3.orchestration.models import DailyRunRequest, RunStatus
+from neotrade3.decision_engine import project_lowfreq_formal_front
 from neotrade3.screeners.registry import load_screener_registry
 from neotrade3.screeners.storage import (
     list_bulk_runs,
@@ -17215,6 +17216,10 @@ class BootstrapApiService:
                 "abandoned": len(abandoned_codes),
             },
         }
+
+    @staticmethod
+    def _lowfreq_formal_front_projection(signal_payload: object) -> dict[str, Any] | None:
+        return project_lowfreq_formal_front(signal_payload)
 
     def lowfreq_manual_buy_intent_view(
         self,

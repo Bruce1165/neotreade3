@@ -18,6 +18,7 @@ from .contracts import (
     IdentifyState,
     TrackingState,
 )
+from .projections import project_lowfreq_formal_front
 
 __all__ = [
     "build_entry_state",
@@ -34,4 +35,5 @@ __all__ = [
     "EntryState",
     "IdentifyState",
     "TrackingState",
+    "project_lowfreq_formal_front",
 ]

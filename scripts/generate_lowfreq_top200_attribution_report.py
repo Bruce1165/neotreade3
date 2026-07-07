@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
+from neotrade3.decision_engine import project_lowfreq_formal_front
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -241,12 +242,89 @@ def _compute_wave_segment(
     }
 
 
+def _signal_layer_snapshot(raw: Any) -> dict[str, Any]:
+    def _formal_front(signal_payload: dict[str, Any]) -> dict[str, Any] | None:
+        return project_lowfreq_formal_front(signal_payload)
+
+    def _signal_with_formal_priority(signal_payload: dict[str, Any]) -> dict[str, Any]:
+        item = dict(signal_payload)
+        formal_front = _formal_front(item)
+        if isinstance(formal_front, dict):
+            item["formal_front"] = dict(formal_front)
+        if not isinstance(formal_front, dict) or str(formal_front.get("status") or "") != "ok":
+            return item
+
+        entry_state = formal_front.get("entry_state") if isinstance(formal_front.get("entry_state"), dict) else {}
+        tracking_state = (
+            formal_front.get("tracking_state") if isinstance(formal_front.get("tracking_state"), dict) else {}
+        )
+        identify_state = (
+            formal_front.get("identify_state") if isinstance(formal_front.get("identify_state"), dict) else {}
+        )
+        entry_ready = bool(entry_state.get("actionable")) or str(entry_state.get("status") or "") == "ready"
+        candidate_tier = str(item.get("candidate_tier") or "").strip()
+        if entry_ready:
+            candidate_tier = "entry_ready"
+        elif (
+            str(tracking_state.get("status") or "") == "tracking"
+            or str(identify_state.get("status") or "") == "identified"
+        ):
+            candidate_tier = "soft_retained"
+        item["entry_ready"] = entry_ready
+        if candidate_tier:
+            item["candidate_tier"] = candidate_tier
+        return item
+
+    candidate_signals: dict[str, dict[str, Any]] = {}
+    entry_signals: dict[str, dict[str, Any]] = {}
+    signal_summary: dict[str, Any] = {}
+
+    if isinstance(raw, dict):
+        summary = raw.get("signal_summary")
+        if isinstance(summary, dict):
+            signal_summary = dict(summary)
+
+        raw_entry = raw.get("entry_signals")
+        if not isinstance(raw_entry, list):
+            raw_entry = []
+
+        raw_candidate = raw.get("candidate_signals")
+        if not isinstance(raw_candidate, list):
+            raw_candidate = raw_entry
+
+        for item in raw_candidate:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            if code:
+                candidate_signals[code] = _signal_with_formal_priority(item)
+
+        for item in raw_entry:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            if code:
+                entry_signals[code] = _signal_with_formal_priority(item)
+
+    signal_summary.setdefault("candidate_count", len(candidate_signals))
+    signal_summary.setdefault("entry_count", len(entry_signals))
+    signal_summary.setdefault(
+        "soft_retained_count",
+        sum(1 for item in candidate_signals.values() if str(item.get("candidate_tier") or "") == "soft_retained"),
+    )
+    return {
+        "candidate_signals": candidate_signals,
+        "entry_signals": entry_signals,
+        "signal_summary": signal_summary,
+    }
+
+
 class AuditContext:
     def __init__(self, *, engine: LowFreqTradingEngineV16, conn: sqlite3.Connection) -> None:
         self.engine = engine
         self.conn = conn
         self.hot_sectors_cache: dict[str, list[str]] = {}
-        self.signals_cache: dict[str, dict[str, dict[str, Any]]] = {}
+        self.signal_layers_cache: dict[str, dict[str, Any]] = {}
         self.global_seed_cache: dict[str, set[str]] = {}
         self.global_candidate_cache: dict[str, dict[str, StockCandidate]] = {}
         self.sector_seed_cache: dict[tuple[str, str], set[str]] = {}
@@ -277,21 +355,38 @@ class AuditContext:
         self.hot_sectors_cache[key] = list(out)
         return out
 
-    def signals(self, target_date: date) -> dict[str, dict[str, Any]]:
+    def signal_snapshot(self, target_date: date) -> dict[str, Any]:
         key = target_date.isoformat()
-        cached = self.signals_cache.get(key)
+        cached = self.signal_layers_cache.get(key)
         if cached is not None:
-            return {k: dict(v) for k, v in cached.items()}
-        out: dict[str, dict[str, Any]] = {}
+            return {
+                "candidate_signals": {k: dict(v) for k, v in cached.get("candidate_signals", {}).items()},
+                "entry_signals": {k: dict(v) for k, v in cached.get("entry_signals", {}).items()},
+                "signal_summary": dict(cached.get("signal_summary", {})),
+            }
         raw = self.engine.generate_buy_signals(target_date)
-        for item in raw.get("buy_signals", []) if isinstance(raw, dict) else []:
-            if not isinstance(item, dict):
-                continue
-            code = str(item.get("code") or "").strip()
-            if code:
-                out[code] = dict(item)
-        self.signals_cache[key] = {k: dict(v) for k, v in out.items()}
-        return out
+        snapshot = _signal_layer_snapshot(raw)
+        self.signal_layers_cache[key] = {
+            "candidate_signals": {k: dict(v) for k, v in snapshot["candidate_signals"].items()},
+            "entry_signals": {k: dict(v) for k, v in snapshot["entry_signals"].items()},
+            "signal_summary": dict(snapshot["signal_summary"]),
+        }
+        return snapshot
+
+    def signals(self, target_date: date) -> dict[str, dict[str, Any]]:
+        return self.entry_signals(target_date)
+
+    def candidate_signals(self, target_date: date) -> dict[str, dict[str, Any]]:
+        snapshot = self.signal_snapshot(target_date)
+        return {k: dict(v) for k, v in snapshot.get("candidate_signals", {}).items()}
+
+    def entry_signals(self, target_date: date) -> dict[str, dict[str, Any]]:
+        snapshot = self.signal_snapshot(target_date)
+        return {k: dict(v) for k, v in snapshot.get("entry_signals", {}).items()}
+
+    def signal_summary(self, target_date: date) -> dict[str, Any]:
+        snapshot = self.signal_snapshot(target_date)
+        return dict(snapshot.get("signal_summary", {}))
 
     def sector_seed_codes(self, sector: str, target_date: date) -> set[str]:
         key = (str(sector), target_date.isoformat())
