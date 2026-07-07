@@ -328,6 +328,29 @@ class LowFreqV16Config:
 class LowFreqTradingEngineV16:
     """低频量化交易引擎 v16 - 高级优化版"""
 
+    LAYER_CONTRACT_VERSION = "2026-07-01.phase1"
+    FUNNEL_STAGE_KEYS = (
+        "candidate_detected",
+        "entry_ready",
+        "reserved",
+        "released",
+        "bought",
+        "hold_confirmed",
+        "exit_ready",
+        "exited",
+        "blocked",
+        "expired",
+    )
+    EXECUTION_BLOCK_REASON_KEYS = (
+        "positions_full",
+        "cash_insufficient",
+        "candidate_priority_lower",
+        "entry_window_missed",
+        "conflict_with_exit",
+        "execution_rule_blocked",
+    )
+    EXECUTION_ACTION_KEYS = ("buy", "reserve", "release", "hold", "exit", "block")
+
     # ===== 参数配置 =====
     COMMISSION_RATE = 0.0
     STAMP_TAX_RATE = 0.0
@@ -491,6 +514,10 @@ class LowFreqTradingEngineV16:
         cfg = self.config if isinstance(self.config, LowFreqV16Config) else LowFreqV16Config()
         out = {
             "version": str(getattr(cfg, "version", "low_freq_v16_advanced")),
+            "layer_contract_version": str(getattr(self, "LAYER_CONTRACT_VERSION", "2026-07-01.phase1")),
+            "funnel_stage_keys": list(getattr(self, "FUNNEL_STAGE_KEYS", ()) or ()),
+            "execution_block_reason_keys": list(getattr(self, "EXECUTION_BLOCK_REASON_KEYS", ()) or ()),
+            "execution_action_keys": list(getattr(self, "EXECUTION_ACTION_KEYS", ()) or ()),
             "execution_mode": self._resolve_execution_mode(),
         }
         cm = getattr(cfg, "cost_model", None)
