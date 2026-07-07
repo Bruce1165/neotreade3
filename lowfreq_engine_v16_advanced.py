@@ -253,6 +253,9 @@ class LowFreqV16Config:
     EXECUTION_MODE: str = "unbounded_opportunity"
     REBALANCE_DAYS: int = 15
     BUY_SIGNAL_MEMORY_DAYS: int = 5
+    TRACKING_MIN_DAYS: int = 2
+    WAVE1_TRACKING_ONLY_ENABLED: bool = True
+    STRONG_LEADER_SOFT_RELEASE_ENABLED: bool = False
     MARKET_TOP_WATCH_WINDOW: int = 3
     MARKET_TOP_CONFIRM_HITS: int = 2
     MARKET_EXIT_CONFIRM_WINDOW: int = 5
@@ -383,6 +386,9 @@ class LowFreqTradingEngineV16:
     MAX_POSITIONS = 3
     REBALANCE_DAYS = 15              # v16opt: 调仓周期延长到15天
     BUY_SIGNAL_MEMORY_DAYS = 5
+    TRACKING_MIN_DAYS = 2
+    WAVE1_TRACKING_ONLY_ENABLED = True
+    STRONG_LEADER_SOFT_RELEASE_ENABLED = False
     MARKET_TOP_WATCH_WINDOW = 3
     MARKET_TOP_CONFIRM_HITS = 2
     MARKET_EXIT_CONFIRM_WINDOW = 5
@@ -560,6 +566,9 @@ class LowFreqTradingEngineV16:
             "EXECUTION_MODE",
             "REBALANCE_DAYS",
             "BUY_SIGNAL_MEMORY_DAYS",
+            "TRACKING_MIN_DAYS",
+            "WAVE1_TRACKING_ONLY_ENABLED",
+            "STRONG_LEADER_SOFT_RELEASE_ENABLED",
             "MARKET_TOP_WATCH_WINDOW",
             "MARKET_TOP_CONFIRM_HITS",
             "MARKET_EXIT_CONFIRM_WINDOW",
