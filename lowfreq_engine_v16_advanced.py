@@ -250,6 +250,7 @@ class LowFreqV16Config:
     HOT_SECTOR_COUNT: int = 5
     HOT_SECTOR_CANDIDATE_LIMIT: int = 12
     MAX_POSITIONS: int = 3
+    EXECUTION_MODE: str = "unbounded_opportunity"
     REBALANCE_DAYS: int = 15
     BUY_SIGNAL_MEMORY_DAYS: int = 5
     MARKET_TOP_WATCH_WINDOW: int = 3
@@ -488,7 +489,10 @@ class LowFreqTradingEngineV16:
 
     def get_config_snapshot(self) -> dict[str, Any]:
         cfg = self.config if isinstance(self.config, LowFreqV16Config) else LowFreqV16Config()
-        out = {"version": str(getattr(cfg, "version", "low_freq_v16_advanced"))}
+        out = {
+            "version": str(getattr(cfg, "version", "low_freq_v16_advanced")),
+            "execution_mode": self._resolve_execution_mode(),
+        }
         cm = getattr(cfg, "cost_model", None)
         ex = getattr(cfg, "execution", None)
         base_cm = cm if isinstance(cm, TradeCostModel) else TradeCostModel()
@@ -526,6 +530,7 @@ class LowFreqTradingEngineV16:
             "STOP_LOSS_PCT",
             "HOT_SECTOR_CANDIDATE_LIMIT",
             "MAX_POSITIONS",
+            "EXECUTION_MODE",
             "REBALANCE_DAYS",
             "BUY_SIGNAL_MEMORY_DAYS",
             "MARKET_TOP_WATCH_WINDOW",
@@ -994,6 +999,19 @@ class LowFreqTradingEngineV16:
                     keywords.append(keyword)
         self._penetration_keywords_cache = tuple(dict.fromkeys(keywords))
         return tuple(self._penetration_keywords_cache)
+
+    def _resolve_execution_mode(self) -> str:
+        raw = str(getattr(self, "EXECUTION_MODE", "unbounded_opportunity") or "unbounded_opportunity").strip().lower()
+        if raw in {"bounded", "unbounded_opportunity"}:
+            return raw
+        return "unbounded_opportunity"
+
+    def _is_unbounded_opportunity_mode(self) -> bool:
+        return self._resolve_execution_mode() == "unbounded_opportunity"
+
+    def _opportunity_unit_budget(self, initial_capital: float) -> float:
+        base_slots = max(int(getattr(self, "MAX_POSITIONS", 0) or 0), 1)
+        return float(initial_capital) / float(base_slots)
 
     @staticmethod
     def _layer_contract_payload(
@@ -5629,6 +5647,7 @@ class LowFreqTradingEngineV16:
         trading_dates = self._get_trading_dates(start_date, end_date)
         logger.info(f"交易日: {len(trading_dates)}")
 
+        unbounded_mode = self._is_unbounded_opportunity_mode()
         capital_gross = float(initial_capital)
         capital_net = float(initial_capital)
         positions: dict[str, TradeRecord] = {}
@@ -5840,7 +5859,7 @@ class LowFreqTradingEngineV16:
                             )
                             continue
                         slots = int(self.MAX_POSITIONS) - len(positions)
-                        if slots <= 0:
+                        if not unbounded_mode and slots <= 0:
                             if queue_name == "pending" and bool(getattr(self, "EXECUTION_RESERVATION_ENABLED", True)):
                                 elite_snapshot = self._elite_execution_candidate_snapshot(sig=sig)
                                 if bool(elite_snapshot.get("eligible")):
@@ -5898,8 +5917,12 @@ class LowFreqTradingEngineV16:
                             )
                             continue
 
-                        per_slot_gross = capital_gross / max(slots, 1)
-                        per_slot_net = capital_net / max(slots, 1)
+                        if unbounded_mode:
+                            per_slot_gross = self._opportunity_unit_budget(float(initial_capital))
+                            per_slot_net = self._opportunity_unit_budget(float(initial_capital))
+                        else:
+                            per_slot_gross = capital_gross / max(slots, 1)
+                            per_slot_net = capital_net / max(slots, 1)
                         lot = int(
                             getattr(getattr(self.config, "execution", ExecutionConstraints()), "lot_size", 100) or 100
                         )
@@ -5924,7 +5947,7 @@ class LowFreqTradingEngineV16:
                         fee = self._calc_trade_fee(trade_value=trade_value, side="buy")
                         gross_cost = float(ref_price) * int(shares)
                         net_cost = float(trade_value) + float(fee)
-                        if gross_cost > capital_gross or net_cost > capital_net:
+                        if (not unbounded_mode) and (gross_cost > capital_gross or net_cost > capital_net):
                             trade_blocks["buy_insufficient_cash"] += 1
                             continue
                         capital_gross -= float(gross_cost)
@@ -6029,7 +6052,7 @@ class LowFreqTradingEngineV16:
                             pending_buy_attempts[code] = payload
                     except Exception as e:
                         logger.warning(f"信号生成失败 {current_date}: {e}")
-                elif i % self.REBALANCE_DAYS == 0 and len(positions) < self.MAX_POSITIONS:
+                elif i % self.REBALANCE_DAYS == 0 and (unbounded_mode or len(positions) < self.MAX_POSITIONS):
                     try:
                         signals = self.generate_buy_signals(current_date)
                         effective_entry_signals = self._record_tracking_candidate_events(
