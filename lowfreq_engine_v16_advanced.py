@@ -5878,6 +5878,7 @@ class LowFreqTradingEngineV16:
                                     payload=payload,
                                     snapshot={
                                         "blocked_reason": "reservation_expired",
+                                        "queue_name": queue_name,
                                         "details": "elite reservation expired before a slot opened",
                                     },
                                 )
@@ -5924,6 +5925,7 @@ class LowFreqTradingEngineV16:
                                         payload=reserve_payload,
                                         snapshot={
                                             "blocked_reason": "reserved_due_to_full_book",
+                                            "queue_name": queue_name,
                                             "min_score_required": elite_snapshot.get("min_score_required"),
                                             "details": (
                                                 f"elite candidate reserved because book is full | "
@@ -5951,7 +5953,7 @@ class LowFreqTradingEngineV16:
                                 code=str(code),
                                 sig=sig,
                                 payload=payload,
-                                snapshot=chase_snapshot,
+                                snapshot={**chase_snapshot, "queue_name": queue_name},
                             )
                             continue
 
@@ -6017,7 +6019,23 @@ class LowFreqTradingEngineV16:
                                 payload=payload,
                                 snapshot={
                                     "blocked_reason": "reservation_released_into_buy",
+                                    "queue_name": queue_name,
+                                    "position_delta": int(shares),
                                     "details": "reserved elite candidate converted into a real position",
+                                },
+                            )
+                        else:
+                            self._record_buy_signal_audit_event(
+                                event_type="buy_executed",
+                                current_date=current_date,
+                                code=str(code),
+                                sig=sig,
+                                payload=payload,
+                                snapshot={
+                                    "blocked_reason": "",
+                                    "queue_name": queue_name,
+                                    "position_delta": int(shares),
+                                    "details": "pending candidate executed into a real position",
                                 },
                             )
                         logger.info(
