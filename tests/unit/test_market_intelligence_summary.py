@@ -34,6 +34,25 @@ def _seed_daily_prices(conn: sqlite3.Connection, *, stock_code: str) -> None:
         ("2026-06-10", 9.30, 9.45, 9.20, 9.40, 780000.0, 100000000.0, 2.0, 9.50, -1.05),
         ("2026-06-09", 9.10, 9.30, 9.05, 9.20, 700000.0, 80000000.0, 1.5, 9.10, 1.10),
     ]
+    for idx in range(15):
+        day = 8 - idx
+        trade_date = f"2026-05-{31 - idx:02d}" if day <= 0 else f"2026-06-{day:02d}"
+        close_price = 9.0 - idx * 0.08
+        preclose = close_price - 0.05
+        rows.append(
+            (
+                trade_date,
+                close_price - 0.12,
+                close_price + 0.08,
+                close_price - 0.18,
+                close_price,
+                650000.0 - idx * 5000.0,
+                70000000.0 - idx * 1000000.0,
+                1.4 - idx * 0.02,
+                preclose,
+                ((close_price / preclose) - 1.0) * 100.0 if preclose > 0 else 0.0,
+            )
+        )
     conn.executemany(
         """
         INSERT INTO daily_prices (
@@ -305,6 +324,12 @@ def test_load_market_intelligence_for_stock_summarizes_new_tables(
     assert summary["signals"]["institutional_surveys"]["recent_180d_count"] == 1
     assert summary["signals"]["fund_portfolios"]["holder_etf_count"] == 1
     assert summary["signals"]["index_weights"]["index_count"] == 1
+    assert summary["signals"]["trading_profile"]["source_mode"] == "formal_m1"
+    assert summary["signals"]["trading_profile"]["formal_object"] == "pf1_trading_profile"
+    assert summary["m1_consumption_mode"]["trading_profile"] == "formal_m1"
+    assert summary["m1_consumption_mode"]["compatibility_only_signals"] == [
+        "theme_momentum"
+    ]
     assert summary["derived_tags"]["config_leader_candidate"]["result"] is True
     assert summary["derived_tags"]["config_leader_candidate"]["level"] == "high"
     assert summary["derived_tags"]["institutional_attention_candidate"]["result"] is True
@@ -319,6 +344,37 @@ def test_load_market_intelligence_for_stock_summarizes_new_tables(
     assert summary["thematic_tags"]["penetration_stage"]["values"] == ["1_10", "10_30"]
     assert summary["thematic_tags"]["penetration_stage"]["is_multi"] is True
     assert len(summary["concepts"]) == 2
+
+
+def test_market_intelligence_trading_candidate_no_longer_uses_theme_momentum() -> None:
+    service = BootstrapApiService(project_root=Path.cwd())
+
+    derived_tags = service._derive_market_intelligence_tags(
+        signals={
+            "trading_profile": {
+                "available": True,
+                "source_mode": "formal_m1",
+                "formal_object": "pf1_trading_profile",
+                "latest_amount": 300000000.0,
+                "avg_amount_20d": None,
+                "avg_turnover_5d": None,
+                "median_turnover_20d": None,
+                "return_20d": None,
+                "positive_days_5d": 1,
+            },
+            "theme_momentum": {
+                "available": True,
+                "compatibility_only": True,
+                "best_mainline_rank": 1,
+                "best_heat_rank": 1,
+                "best_mainline_score": 99.0,
+            },
+        }
+    )
+
+    trading_tag = derived_tags["trading_leader_candidate"]
+    assert trading_tag["result"] is False
+    assert trading_tag["score"] == 0
 
 
 def test_market_intelligence_candidates_view_returns_candidate_lists(
