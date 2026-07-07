@@ -22,6 +22,9 @@ def _make_engine(
     engine._count_trading_days = lambda start, end: (end - start).days + 1
     engine._sell_signal_audit_current_run = []
     engine.STOP_LOSS_PCT = -5.0
+    engine.TRAILING_PROFIT_LEVEL = 20.0
+    engine.TRAILING_STOP_PCT = -5.0
+    engine.MIN_HOLD_DAYS = 15
     engine.MARKET_EXIT_CONFIRM_WINDOW = 5
     engine.MARKET_EXIT_CONFIRM_HITS = 3
     engine.SECTOR_EXIT_CONFIRM_WINDOW = 4
@@ -107,12 +110,16 @@ def test_entry_stop_loss_has_highest_priority() -> None:
         sector_exit_snapshot=_sector_exit_hit_snapshot(),
     )
     trade = _make_trade(role="龙头", peak_price=120.0)
+    trade.buy_date = "2026-06-16"
 
     sell = engine.check_sell_signal_v2(trade, date(2026, 6, 18))
 
     assert sell is not None
-    assert sell.reason == "entry_stop_loss"
-    assert "跌破买入价止损" in sell.details
+    assert sell.reason == "thesis_invalidated"
+    assert sell.source_layer == "invalidation"
+    assert sell.invalidated_reason == "entry_stop_loss"
+    assert sell.invalidated_window == "early"
+    assert "硬证伪退出" in sell.details
     assert trade.market_exit_state == ""
     assert trade.sector_exit_state == ""
 
@@ -120,6 +127,30 @@ def test_entry_stop_loss_has_highest_priority() -> None:
 def test_old_stock_drawdown_no_longer_triggers_direct_sell() -> None:
     engine = _make_engine(price=100.0, market_exit_snapshot=None, sector_exit_snapshot=None)
     trade = _make_trade(peak_price=130.0)
+
+    sell = engine.check_sell_signal_v2(trade, date(2026, 6, 18))
+
+    assert sell is None
+
+
+def test_trend_exhausted_triggers_for_profitable_trade_after_peak_drawdown() -> None:
+    engine = _make_engine(price=116.0, market_exit_snapshot=None, sector_exit_snapshot=None)
+    trade = _make_trade(peak_price=130.0, hold_days=20, buy_progress_label="其它")
+
+    sell = engine.check_sell_signal_v2(trade, date(2026, 6, 18))
+
+    assert sell is not None
+    assert sell.reason == "trend_exhausted"
+    assert sell.source_layer == "exit"
+    assert sell.exit_scope == "position_only"
+    assert "距峰值回撤" in sell.details
+    events = [entry["event"] for entry in engine._sell_signal_audit_current_run]
+    assert "trend_exhausted" in events
+
+
+def test_trend_exhausted_does_not_trigger_before_min_hold_days() -> None:
+    engine = _make_engine(price=116.0, market_exit_snapshot=None, sector_exit_snapshot=None)
+    trade = _make_trade(peak_price=130.0, hold_days=8)
 
     sell = engine.check_sell_signal_v2(trade, date(2026, 6, 18))
 
@@ -357,6 +388,7 @@ def test_sector_system_exit_grace_rejects_longer_hold_even_if_profitable() -> No
 def test_entry_stop_loss_never_uses_system_exit_grace() -> None:
     engine = _make_engine(price=94.0, market_exit_snapshot=_market_exit_hit_snapshot(), sector_exit_snapshot=None)
     trade = _make_trade(role="龙头", peak_price=125.0)
+    trade.buy_date = "2026-06-19"
     trade.system_exit_grace_used = True
     trade.system_exit_grace_scope = "market"
     trade.system_exit_grace_date = "2026-06-20"
@@ -365,7 +397,9 @@ def test_entry_stop_loss_never_uses_system_exit_grace() -> None:
     sell = engine.check_sell_signal_v2(trade, date(2026, 6, 21))
 
     assert sell is not None
-    assert sell.reason == "entry_stop_loss"
+    assert sell.reason == "thesis_invalidated"
+    assert sell.source_layer == "invalidation"
+    assert sell.invalidated_reason == "entry_stop_loss"
     events = [entry["event"] for entry in engine._sell_signal_audit_current_run]
     assert "system_exit_downgraded_then_stop_loss" in events
 
@@ -408,7 +442,7 @@ def test_market_confirmation_resets_sector_state() -> None:
     assert trade.sector_exit_state == ""
 
 
-def test_market_exit_snapshot_rejects_small_drawdown_even_when_trend_and_breadth_weak() -> None:
+def test_market_exit_snapshot_allows_confirmation_without_large_drawdown() -> None:
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine._resolve_market_proxy = lambda code: "cyb"
     engine.MARKET_EXIT_MIN_DRAWDOWN_PCT = -4.0
@@ -431,10 +465,11 @@ def test_market_exit_snapshot_rejects_small_drawdown_even_when_trend_and_breadth
     assert snapshot["price_trend_weak"] is True
     assert snapshot["breadth_weak"] is True
     assert snapshot["drawdown_weak"] is False
-    assert snapshot["condition_pass"] is False
+    assert snapshot["drawdown_is_observation_only"] is True
+    assert snapshot["condition_pass"] is True
 
 
-def test_market_exit_snapshot_requires_meaningful_drawdown_to_confirm() -> None:
+def test_market_exit_snapshot_keeps_large_drawdown_as_observation_evidence() -> None:
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine._resolve_market_proxy = lambda code: "cyb"
     engine.MARKET_EXIT_MIN_DRAWDOWN_PCT = -4.0
@@ -456,6 +491,128 @@ def test_market_exit_snapshot_requires_meaningful_drawdown_to_confirm() -> None:
     assert snapshot is not None
     assert snapshot["drawdown_weak"] is True
     assert snapshot["condition_pass"] is True
+    assert snapshot["drawdown_is_observation_only"] is True
+
+
+def test_market_exit_snapshot_drawdown_only_does_not_confirm_exit() -> None:
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine._resolve_market_proxy = lambda code: "cyb"
+    engine.MARKET_EXIT_MIN_DRAWDOWN_PCT = -4.0
+    engine._market_top_snapshot = lambda trade, current_date, market_key=None: {
+        "market_key": "cyb",
+        "market_label": "创业板",
+        "break_ma20": False,
+        "ma20_weak": False,
+        "breadth_ratio": 0.58,
+    }
+    engine._market_drawdown_snapshot = lambda trade, current_date, market_key=None: {
+        "market_label": "创业板",
+        "drawdown_pct": -6.5,
+    }
+    trade = _make_trade()
+
+    snapshot = engine._market_exit_snapshot(trade, date(2026, 6, 18), market_key="cyb")
+
+    assert snapshot is not None
+    assert snapshot["price_trend_weak"] is False
+    assert snapshot["breadth_weak"] is False
+    assert snapshot["drawdown_weak"] is True
+    assert snapshot["condition_pass"] is False
+    assert snapshot["drawdown_is_observation_only"] is True
+
+
+def test_position_contract_snapshot_keeps_partial_weakness_in_hold_layer() -> None:
+    engine = _make_engine(
+        price=108.0,
+        market_exit_snapshot={
+            "scope": "market",
+            "market_key": "cyb",
+            "market_label": "创业板",
+            "condition_pass": False,
+            "evidence_count": 1,
+            "price_trend_weak": False,
+            "breadth_weak": True,
+            "drawdown_weak": False,
+            "details": "创业板见顶确认候选：趋势转弱=否 | 广度转弱=是 | 代理回撤-2.0%",
+        },
+        sector_exit_snapshot=None,
+    )
+    trade = _make_trade(role="龙头", peak_price=118.0)
+
+    snapshot = engine._position_contract_snapshot(
+        trade=trade,
+        current_date=date(2026, 6, 18),
+        sell=None,
+    )
+
+    assert snapshot["hold_state"] == "noise_watch"
+    assert snapshot["hold_attribution_bucket"] == "hold_noise_watch"
+    assert snapshot["exit_attribution_bucket"] == ""
+    assert snapshot["exit_ready"] is False
+    assert snapshot["decision"] == "hold"
+    assert "存在弱化证据，但仍属于观察态" in snapshot["not_exit_reasons"][0]
+    assert "market_breadth_weak" in snapshot["warning_flags"]
+    assert snapshot["source_layer"] == "hold"
+
+
+def test_position_contract_snapshot_marks_trend_exhausted_exit_bucket() -> None:
+    engine = _make_engine(price=116.0, market_exit_snapshot=None, sector_exit_snapshot=None)
+    trade = _make_trade(peak_price=130.0, hold_days=20, buy_progress_label="其它")
+    sell = engine.check_sell_signal_v2(trade, date(2026, 6, 18))
+
+    snapshot = engine._position_contract_snapshot(
+        trade=trade,
+        current_date=date(2026, 6, 18),
+        sell=sell,
+    )
+
+    assert snapshot["hold_state"] == "exit_ready"
+    assert snapshot["exit_reason_type"] == "trend_exhausted"
+    assert snapshot["exit_attribution_bucket"] == "trend_exhaustion_exit"
+    assert snapshot["exit_scope"] == "position_only"
+
+
+def test_sector_exit_snapshot_requires_trend_and_follower_weakness_to_confirm() -> None:
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.detect_sector_cooldown = lambda sector, current_date: {
+        "cooldown_detected": True,
+        "follower_weakness": 0.72,
+        "leader_strength": 0.49,
+        "leader_avg": 7.5,
+        "trend_state": "diverging",
+    }
+    trade = _make_trade()
+
+    snapshot = engine._sector_exit_snapshot(trade, date(2026, 6, 18))
+
+    assert snapshot is not None
+    assert snapshot["trend_deteriorating"] is True
+    assert snapshot["follower_weak"] is True
+    assert snapshot["condition_pass"] is True
+    assert snapshot["cooldown_is_observation_only"] is True
+    assert snapshot["leader_rollover_is_observation_only"] is True
+
+
+def test_sector_exit_snapshot_cooldown_and_leader_rollover_only_stay_observation() -> None:
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.detect_sector_cooldown = lambda sector, current_date: {
+        "cooldown_detected": True,
+        "follower_weakness": 0.42,
+        "leader_strength": 0.41,
+        "leader_avg": 6.8,
+        "trend_state": "sideways",
+    }
+    trade = _make_trade()
+
+    snapshot = engine._sector_exit_snapshot(trade, date(2026, 6, 18))
+
+    assert snapshot is not None
+    assert snapshot["trend_deteriorating"] is False
+    assert snapshot["follower_weak"] is False
+    assert snapshot["leader_rollover"] is True
+    assert snapshot["condition_pass"] is False
+    assert snapshot["cooldown_is_observation_only"] is True
+    assert snapshot["leader_rollover_is_observation_only"] is True
 
 
 def test_sell_signal_audit_records_observe_review_confirm() -> None:

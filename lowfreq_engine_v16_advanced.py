@@ -126,6 +126,10 @@ class SellSignal:
     reason: str
     confidence: float = 0.0
     details: str = ""
+    source_layer: str = "exit"
+    exit_scope: str = "position_only"
+    invalidated_reason: str = ""
+    invalidated_window: str = ""
 
 
 @dataclass
@@ -573,6 +577,177 @@ class LowFreqTradingEngineV16:
             except Exception:
                 continue
         return out
+
+    def _position_contract_snapshot(
+        self,
+        *,
+        trade: TradeRecord,
+        current_date: date,
+        sell: Optional[SellSignal],
+    ) -> dict[str, Any]:
+        current_price = self._get_price(trade.code, current_date)
+        market_snapshot = self._market_exit_snapshot(
+            trade,
+            current_date,
+            market_key=self._resolve_market_proxy(trade.code),
+        )
+        sector_snapshot = self._sector_exit_snapshot(trade, current_date)
+        trend_snapshot = (
+            self._trend_exhaustion_snapshot(trade, current_date, current_price=float(current_price))
+            if current_price
+            else None
+        )
+        market_state = str(getattr(trade, "market_exit_state", "") or "").strip()
+        sector_state = str(getattr(trade, "sector_exit_state", "") or "").strip()
+        market_reason = str(getattr(trade, "market_exit_last_reason", "") or "").strip()
+        sector_reason = str(getattr(trade, "sector_exit_last_reason", "") or "").strip()
+        grace_reason = str(getattr(trade, "system_exit_grace_reason", "") or "").strip()
+        evidence: list[str] = []
+        flags: list[str] = []
+        if market_state:
+            flags.append(f"market_exit_state:{market_state}")
+        if sector_state:
+            flags.append(f"sector_exit_state:{sector_state}")
+        if bool(getattr(trade, "system_exit_grace_used", False)):
+            flags.append("system_exit_grace_used")
+        if market_reason:
+            evidence.append(market_reason)
+        if sector_reason:
+            evidence.append(sector_reason)
+        if grace_reason:
+            evidence.append(grace_reason)
+        if isinstance(market_snapshot, dict):
+            market_details = str(market_snapshot.get("details") or "").strip()
+            if market_details and market_details not in evidence:
+                evidence.append(market_details)
+            if bool(market_snapshot.get("price_trend_weak")):
+                flags.append("market_price_trend_weak")
+            if bool(market_snapshot.get("breadth_weak")):
+                flags.append("market_breadth_weak")
+            if bool(market_snapshot.get("drawdown_weak")):
+                flags.append("market_drawdown_weak")
+        if isinstance(sector_snapshot, dict):
+            sector_details = str(sector_snapshot.get("details") or "").strip()
+            if sector_details and sector_details not in evidence:
+                evidence.append(sector_details)
+            if bool(sector_snapshot.get("cooldown_detected")):
+                flags.append("sector_cooldown_detected")
+            if bool(sector_snapshot.get("trend_deteriorating")):
+                flags.append("sector_trend_deteriorating")
+            if bool(sector_snapshot.get("leader_rollover")):
+                flags.append("sector_leader_rollover")
+            if bool(sector_snapshot.get("follower_weak")):
+                flags.append("sector_follower_weak")
+        if isinstance(trend_snapshot, dict):
+            trend_details = str(trend_snapshot.get("details") or "").strip()
+            if trend_details and trend_details not in evidence:
+                evidence.append(trend_details)
+            if bool(trend_snapshot.get("armed")):
+                flags.append("trend_exhaustion_armed")
+            if bool(trend_snapshot.get("drawdown_from_peak_triggered")):
+                flags.append("trend_exhaustion_triggered")
+        last_transition = ""
+        for value in (
+            str(getattr(trade, "market_exit_last_hit_date", "") or "").strip(),
+            str(getattr(trade, "sector_exit_last_hit_date", "") or "").strip(),
+            str(getattr(trade, "system_exit_grace_date", "") or "").strip(),
+        ):
+            if value and (not last_transition or value > last_transition):
+                last_transition = value
+        if sell is not None:
+            exit_scope = str(getattr(sell, "exit_scope", "") or "position_only")
+            source_layer = str(getattr(sell, "source_layer", "") or "exit")
+            exit_reason_type = str(sell.reason or "")
+            exit_contract = self._layer_contract_payload(
+                current_stage="exit_ready",
+                decision="exit",
+                score=float(getattr(sell, "confidence", 0.0) or 0.0),
+                reasons=[str(sell.details or sell.reason or "")],
+                evidence=evidence + [str(sell.details or sell.reason or "")],
+                flags=flags,
+                source_layer=source_layer,
+                next_action="exit",
+                last_transition=last_transition or current_date.isoformat(),
+            )
+            return {
+                "hold_state": "exit_ready",
+                "noise_evidence": [],
+                "not_exit_reasons": [],
+                "warning_flags": list(flags),
+                "hold_attribution_bucket": "",
+                "exit_attribution_bucket": (
+                    "invalidation_exit"
+                    if exit_reason_type == "thesis_invalidated"
+                    else (
+                        "trend_exhaustion_exit"
+                        if exit_reason_type == "trend_exhausted"
+                        else (
+                            "market_timing_exit"
+                            if exit_reason_type == "market_top_confirmed"
+                            else (
+                                "sector_timing_exit"
+                                if exit_reason_type == "sector_top_confirmed"
+                                else "exit_other"
+                            )
+                        )
+                    )
+                ),
+                "exit_ready": True,
+                "exit_scope": str(exit_scope),
+                "exit_reason_type": exit_reason_type,
+                "exit_evidence_bundle": evidence + [str(sell.details or sell.reason or "")],
+                **exit_contract,
+            }
+        hold_state = "holding"
+        if market_state == "review" or sector_state == "review":
+            hold_state = "review_watch"
+        elif market_state or sector_state:
+            hold_state = "observe_watch"
+        elif bool(
+            (isinstance(market_snapshot, dict) and int(market_snapshot.get("evidence_count") or 0) > 0)
+            or (isinstance(sector_snapshot, dict) and int(sector_snapshot.get("evidence_count") or 0) > 0)
+        ):
+            hold_state = "noise_watch"
+        elif bool(getattr(trade, "system_exit_grace_used", False)):
+            hold_state = "grace_hold"
+        not_exit_reasons: list[str] = []
+        if market_state or sector_state:
+            not_exit_reasons.append("系统退出证据尚未达到正式确认门槛")
+        elif hold_state == "noise_watch":
+            not_exit_reasons.append("存在弱化证据，但仍属于观察态，未达到正式退出确认")
+        else:
+            not_exit_reasons.append("未触发正式退出条件")
+        if isinstance(trend_snapshot, dict) and bool(trend_snapshot.get("armed")) and not bool(trend_snapshot.get("condition_pass")):
+            not_exit_reasons.append("盈利仓存在回撤，但仍未达到 trend_exhausted 正式退出条件")
+        if bool(getattr(trade, "system_exit_grace_used", False)):
+            not_exit_reasons.append("系统退出宽限仍有效，继续持有观察")
+        hold_contract = self._layer_contract_payload(
+            current_stage="hold_confirmed",
+            decision="hold",
+            reasons=not_exit_reasons,
+            evidence=evidence,
+            flags=flags,
+            source_layer="hold",
+            next_action="hold",
+            last_transition=last_transition,
+        )
+        return {
+            "hold_state": str(hold_state),
+            "noise_evidence": list(evidence),
+            "not_exit_reasons": list(not_exit_reasons),
+            "warning_flags": list(flags),
+            "hold_attribution_bucket": (
+                "hold_grace"
+                if hold_state == "grace_hold"
+                else ("hold_noise_watch" if hold_state in {"review_watch", "observe_watch", "noise_watch"} else "hold_confirmed")
+            ),
+            "exit_attribution_bucket": "",
+            "exit_ready": False,
+            "exit_scope": "",
+            "exit_reason_type": "",
+            "exit_evidence_bundle": list(evidence),
+            **hold_contract,
+        }
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -1850,6 +2025,22 @@ class LowFreqTradingEngineV16:
                 "date": current_date.isoformat(),
                 "event": str(event_type),
                 "code": str(trade.code),
+                "source_layer": "exit",
+                "current_stage": (
+                    "exit_ready"
+                    if str(event_type) in {"market_top_confirmed", "sector_top_confirmed", "trend_exhausted"}
+                    else "exit_watch"
+                ),
+                "exit_scope": (
+                    "portfolio"
+                    if str(event_type) == "market_top_confirmed"
+                    else (
+                        "sector_only"
+                        if str(event_type) == "sector_top_confirmed"
+                        else ("position_only" if str(event_type) == "trend_exhausted" else "")
+                    )
+                ),
+                "exit_reason_type": str(event_type),
                 "market_key": str(snap.get("market_key") or self._resolve_market_proxy(trade.code) or ""),
                 "market_label": str(snap.get("market_label") or ""),
                 "break_ma20": bool(snap.get("break_ma20")) if "break_ma20" in snap else None,
@@ -4340,7 +4531,7 @@ class LowFreqTradingEngineV16:
         min_drawdown_pct = float(getattr(self, "MARKET_EXIT_MIN_DRAWDOWN_PCT", -4.0) or -4.0)
         drawdown_weak = drawdown_pct is not None and float(drawdown_pct) <= float(min_drawdown_pct)
         evidence_count = int(bool(price_trend_weak)) + int(bool(breadth_weak)) + int(bool(drawdown_weak))
-        condition_pass = bool(price_trend_weak and breadth_weak and drawdown_weak)
+        condition_pass = bool(price_trend_weak and breadth_weak and int(evidence_count) >= 2)
         if not condition_pass and not any((price_trend_weak, breadth_weak, drawdown_weak)):
             return None
         details = (
@@ -4362,6 +4553,7 @@ class LowFreqTradingEngineV16:
             "price_trend_weak": bool(price_trend_weak),
             "breadth_weak": bool(breadth_weak),
             "drawdown_weak": bool(drawdown_weak),
+            "drawdown_is_observation_only": True,
             "evidence_count": int(evidence_count),
             "condition_pass": bool(condition_pass),
             "details": details,
@@ -4382,8 +4574,13 @@ class LowFreqTradingEngineV16:
         follower_weak = follower_weakness > 0.6
         trend_deteriorating = trend_state in {"diverging", "falling"}
         leader_rollover = leader_strength < 0.55 or leader_avg < 8.0
-        evidence_count = int(bool(cooldown_detected)) + int(bool(trend_deteriorating)) + int(bool(leader_rollover))
-        condition_pass = bool(trend_deteriorating and evidence_count >= 2)
+        evidence_count = (
+            int(bool(trend_deteriorating))
+            + int(bool(follower_weak))
+            + int(bool(cooldown_detected))
+            + int(bool(leader_rollover))
+        )
+        condition_pass = bool(trend_deteriorating and follower_weak)
         if not condition_pass and not any((cooldown_detected, trend_deteriorating, leader_rollover)):
             return None
         details = (
@@ -4401,6 +4598,8 @@ class LowFreqTradingEngineV16:
             "follower_weak": bool(follower_weak),
             "trend_deteriorating": bool(trend_deteriorating),
             "leader_rollover": bool(leader_rollover),
+            "cooldown_is_observation_only": True,
+            "leader_rollover_is_observation_only": True,
             "evidence_count": int(evidence_count),
             "condition_pass": bool(condition_pass),
             "details": details,
@@ -4579,10 +4778,23 @@ class LowFreqTradingEngineV16:
             )
             self._reset_system_exit_state(trade, scope)
             confirmed_details = str(snapshot.get("details") or "").replace("确认候选", "确认")
-            return SellSignal(str(signal_reason), float(signal_confidence), confirmed_details)
+            exit_scope = "portfolio" if str(scope) == "market" else "sector_only"
+            return SellSignal(
+                str(signal_reason),
+                float(signal_confidence),
+                confirmed_details,
+                source_layer="exit",
+                exit_scope=exit_scope,
+            )
         return None
 
-    def _entry_stop_loss_signal(self, trade: TradeRecord, *, sell_price: float) -> Optional[SellSignal]:
+    def _thesis_invalidation_signal(
+        self,
+        trade: TradeRecord,
+        *,
+        sell_price: float,
+        current_date: Optional[date] = None,
+    ) -> Optional[SellSignal]:
         buy_price = float(getattr(trade, "buy_price", 0.0) or 0.0)
         if buy_price <= 0:
             return None
@@ -4590,8 +4802,98 @@ class LowFreqTradingEngineV16:
         stop_loss_pct = float(getattr(self, "STOP_LOSS_PCT", -5.0) or -5.0)
         if current_return > stop_loss_pct:
             return None
-        details = f"跌破买入价止损{current_return:.1f}%（阈值{stop_loss_pct:.1f}%）"
-        return SellSignal("entry_stop_loss", 0.99, details)
+        hold_days = int(getattr(trade, "hold_days", 0) or 0)
+        if hold_days <= 0:
+            try:
+                target_day = current_date if isinstance(current_date, date) else date.today()
+                hold_days = self._count_trading_days(date.fromisoformat(trade.buy_date), target_day)
+            except Exception:
+                hold_days = 0
+        invalidated_window = "early" if int(hold_days) < 12 else "late"
+        window_label = "建仓早期" if invalidated_window == "early" else "持仓期"
+        details = f"{window_label}硬证伪退出：跌破买入价{current_return:.1f}%（阈值{stop_loss_pct:.1f}%）"
+        return SellSignal(
+            "thesis_invalidated",
+            0.99,
+            details,
+            source_layer="invalidation",
+            exit_scope="position_only",
+            invalidated_reason="entry_stop_loss",
+            invalidated_window=invalidated_window,
+        )
+
+    def _entry_stop_loss_signal(
+        self,
+        trade: TradeRecord,
+        *,
+        sell_price: float,
+        current_date: Optional[date] = None,
+    ) -> Optional[SellSignal]:
+        return self._thesis_invalidation_signal(trade, sell_price=sell_price, current_date=current_date)
+
+    def _trend_exhaustion_snapshot(
+        self,
+        trade: TradeRecord,
+        current_date: date,
+        *,
+        current_price: float,
+    ) -> Optional[dict[str, Any]]:
+        buy_price = float(getattr(trade, "buy_price", 0.0) or 0.0)
+        peak_price = float(getattr(trade, "peak_price", 0.0) or 0.0)
+        if buy_price <= 0 or current_price <= 0:
+            return None
+        if peak_price <= 0:
+            peak_price = float(buy_price)
+        try:
+            hold_days = int(getattr(trade, "hold_days", 0) or 0)
+            if hold_days <= 0:
+                hold_days = self._count_trading_days(date.fromisoformat(trade.buy_date), current_date)
+        except Exception:
+            hold_days = int(getattr(trade, "hold_days", 0) or 0)
+        peak_return_pct = (float(peak_price) - float(buy_price)) / max(float(buy_price), 1e-9) * 100.0
+        current_return_pct = (float(current_price) - float(buy_price)) / max(float(buy_price), 1e-9) * 100.0
+        drawdown_from_peak_pct = float(current_return_pct) - float(peak_return_pct)
+        armed_level = max(
+            float(getattr(self, "TRAILING_PROFIT_LEVEL", 20.0) or 20.0),
+            float(getattr(self, "PARTIAL_PROFIT_LEVEL", 25.0) or 25.0),
+        )
+        drawdown_trigger = float(getattr(self, "TRAILING_STOP_PCT", -5.0) or -5.0)
+        min_hold_days = max(int(getattr(self, "MIN_HOLD_DAYS", 15) or 0), 0)
+        buy_progress_label = str(getattr(trade, "buy_progress_label", "") or "").strip()
+        armed = float(peak_return_pct) > float(armed_level)
+        drawdown_triggered = float(drawdown_from_peak_pct) <= float(drawdown_trigger)
+        hold_ready = int(hold_days) >= int(min_hold_days)
+        current_profit_positive = float(current_return_pct) > 0.0
+        early_quality_entry = buy_progress_label in {"早窗", "前置布局"}
+        condition_pass = bool(armed and drawdown_triggered and hold_ready and current_profit_positive and not early_quality_entry)
+        details = (
+            f"趋势衰竭候选：峰值收益{peak_return_pct:.1f}% | 当前收益{current_return_pct:.1f}% | "
+            f"距峰值回撤{drawdown_from_peak_pct:.1f}pct | 最小持有{hold_days}天"
+        )
+        return {
+            "armed": bool(armed),
+            "hold_ready": bool(hold_ready),
+            "current_profit_positive": bool(current_profit_positive),
+            "early_quality_entry": bool(early_quality_entry),
+            "drawdown_from_peak_triggered": bool(drawdown_triggered),
+            "condition_pass": bool(condition_pass),
+            "peak_return_pct": round(float(peak_return_pct), 2),
+            "current_return_pct": round(float(current_return_pct), 2),
+            "drawdown_from_peak_pct": round(float(drawdown_from_peak_pct), 2),
+            "details": details,
+        }
+
+    def _trend_exhaustion_signal(self, trade: TradeRecord, current_date: date, *, sell_price: float) -> Optional[SellSignal]:
+        snapshot = self._trend_exhaustion_snapshot(trade, current_date, current_price=float(sell_price))
+        if not isinstance(snapshot, dict) or not bool(snapshot.get("condition_pass")):
+            return None
+        return SellSignal(
+            "trend_exhausted",
+            0.88,
+            str(snapshot.get("details") or "趋势衰竭退出"),
+            source_layer="exit",
+            exit_scope="position_only",
+        )
 
     def _recent_closes_before_date(
         self,
@@ -5133,7 +5435,7 @@ class LowFreqTradingEngineV16:
         return best_code, best_snapshot
 
     def check_sell_signal_v2(self, trade: TradeRecord, current_date: date) -> Optional[SellSignal]:
-        """正式离场主链只保留入场止损、大盘见顶确认、板块见顶确认。"""
+        """正式离场主链只保留硬证伪退出、趋势衰竭退出、大盘见顶确认、板块见顶确认。"""
         sell_price = self._get_price(trade.code, current_date)
         if not sell_price:
             return None
@@ -5143,7 +5445,11 @@ class LowFreqTradingEngineV16:
         if sell_price > float(trade.peak_price):
             trade.peak_price = float(sell_price)
 
-        hard_stop = self._entry_stop_loss_signal(trade, sell_price=float(sell_price))
+        hard_stop = self._thesis_invalidation_signal(
+            trade,
+            sell_price=float(sell_price),
+            current_date=current_date,
+        )
         if hard_stop is not None:
             if bool(getattr(trade, "system_exit_grace_used", False)):
                 self._record_system_exit_grace_audit_event(
@@ -5157,6 +5463,21 @@ class LowFreqTradingEngineV16:
                 )
             self._reset_all_system_exit_states(trade)
             return hard_stop
+
+        trend_sell = self._trend_exhaustion_signal(
+            trade,
+            current_date,
+            sell_price=float(sell_price),
+        )
+        if trend_sell is not None:
+            self._record_sell_signal_audit_event(
+                event_type="trend_exhausted",
+                trade=trade,
+                current_date=current_date,
+                snapshot=self._trend_exhaustion_snapshot(trade, current_date, current_price=float(sell_price)),
+            )
+            self._reset_all_system_exit_states(trade)
+            return trend_sell
 
         market_key = self._resolve_market_proxy(trade.code)
         market_snapshot = self._market_exit_snapshot(trade, current_date, market_key=market_key)
