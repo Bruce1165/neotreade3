@@ -6347,6 +6347,20 @@ class LowFreqTradingEngineV16:
         net_metrics = self._calc_metrics(daily_values_net, all_trades, float(initial_capital))
         gross_metrics["net_metrics"] = net_metrics
         gross_metrics["trade_blocks"] = trade_blocks
+        gross_metrics["funnel_stage_keys"] = list(getattr(self, "FUNNEL_STAGE_KEYS", ()) or ())
+        gross_metrics["execution_block_reason_keys"] = list(
+            getattr(self, "EXECUTION_BLOCK_REASON_KEYS", ()) or ()
+        )
+        gross_metrics["execution_action_keys"] = list(getattr(self, "EXECUTION_ACTION_KEYS", ()) or ())
+        execution_action_summary: dict[str, int] = {}
+        for entry in list(getattr(self, "_buy_signal_audit_current_run", []) or []):
+            if not isinstance(entry, dict):
+                continue
+            action_type = str(entry.get("action_type") or "").strip()
+            if not action_type:
+                continue
+            execution_action_summary[action_type] = execution_action_summary.get(action_type, 0) + 1
+        gross_metrics["execution_action_summary"] = execution_action_summary
         gross_metrics["config_snapshot"] = self.get_config_snapshot()
         gross_metrics["drawdown_trace_gross"] = max_dd_trace_gross
         gross_metrics["drawdown_trace_net"] = max_dd_trace_net
