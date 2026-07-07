@@ -21335,8 +21335,32 @@ class BootstrapApiService:
                             "name": str(stock.get("name") or "").strip(),
                             "role": str(stock.get("role") or "").strip(),
                             "role_text": str(stock.get("role") or "").strip() or "--",
-                            "tracking_status": "entry_ready" if bool(stock.get("buy_signal")) else "watch",
-                            "tracking_status_text": "可建仓" if bool(stock.get("buy_signal")) else "跟踪",
+                            "tracking_status": (
+                                "blocked"
+                                if self._lowfreq_formal_front_blocked(stock.get("formal_front"))
+                                else (
+                                    "entry_ready"
+                                    if self._lowfreq_formal_front_entry_ready(stock.get("formal_front"))
+                                    else (
+                                        "watch"
+                                        if self._lowfreq_formal_front_ok(stock.get("formal_front"))
+                                        else ("entry_ready" if bool(stock.get("buy_signal")) else "watch")
+                                    )
+                                )
+                            ),
+                            "tracking_status_text": (
+                                "暂不参与"
+                                if self._lowfreq_formal_front_blocked(stock.get("formal_front"))
+                                else (
+                                    "可建仓"
+                                    if self._lowfreq_formal_front_entry_ready(stock.get("formal_front"))
+                                    else (
+                                        "跟踪"
+                                        if self._lowfreq_formal_front_ok(stock.get("formal_front"))
+                                        else ("可建仓" if bool(stock.get("buy_signal")) else "跟踪")
+                                    )
+                                )
+                            ),
                             "certainty_score": (
                                 round(float(stock.get("certainty_prob")) * 100.0, 1)
                                 if isinstance(stock.get("certainty_prob"), (int, float))
@@ -21386,7 +21410,20 @@ class BootstrapApiService:
                     continue
                 manual = stock.get("manual") if isinstance(stock.get("manual"), dict) else {}
                 queue_item = queue_by_code.get(code) if isinstance(queue_by_code.get(code), dict) else {}
-                tracking_stage = "entry_ready" if bool(stock.get("buy_signal")) or bool(manual.get("buy_intent_pending")) else "candidate"
+                formal_front = stock.get("formal_front") if isinstance(stock.get("formal_front"), dict) else {}
+                formal_ok = self._lowfreq_formal_front_ok(formal_front)
+                formal_entry_ready = self._lowfreq_formal_front_entry_ready(formal_front)
+                formal_tracking_watch = self._lowfreq_formal_front_tracking_watch(formal_front)
+                formal_blocked = self._lowfreq_formal_front_blocked(formal_front)
+                tracking_stage = (
+                    "entry_ready"
+                    if (
+                        bool(manual.get("buy_intent_pending"))
+                        or formal_entry_ready
+                        or (not formal_ok and bool(stock.get("buy_signal")))
+                    )
+                    else "candidate"
+                )
                 tracking_stage_text = "建仓层" if tracking_stage == "entry_ready" else "跟踪层"
                 tracking_status = "watch"
                 tracking_status_text = "持续跟踪"
@@ -21396,6 +21433,15 @@ class BootstrapApiService:
                 elif bool(manual.get("buy_intent_pending")):
                     tracking_status = "queued"
                     tracking_status_text = "已排队"
+                elif formal_entry_ready:
+                    tracking_status = "entry_ready"
+                    tracking_status_text = "可建仓"
+                elif formal_blocked:
+                    tracking_status = "blocked"
+                    tracking_status_text = "暂不参与"
+                elif formal_tracking_watch or formal_ok:
+                    tracking_status = "watch"
+                    tracking_status_text = "持续跟踪"
                 elif bool(stock.get("buy_signal")):
                     tracking_status = "entry_ready"
                     tracking_status_text = "可建仓"
