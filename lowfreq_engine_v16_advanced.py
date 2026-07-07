@@ -22,6 +22,20 @@ from dataclasses import dataclass, field
 from typing import Optional, Any
 from enum import Enum
 
+from neotrade3.cycle_intelligence import build_small_cycle_from_m1
+from neotrade3.data_control import (
+    D7TradingDayStatus,
+    project_d1_daily_price_fact,
+    project_d7_security_master_minimal,
+    project_pf1_trading_profile,
+)
+from neotrade3.decision_engine import (
+    build_entry_state_from_formal_inputs,
+    build_identify_state_from_formal_inputs,
+    build_m1_constraints_ref,
+    build_tracking_state_from_formal_inputs,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -2553,6 +2567,334 @@ class LowFreqTradingEngineV16:
             )
         return out
 
+    def _get_recent_price_history_for_formal_m1_batch(
+        self,
+        cursor: sqlite3.Cursor,
+        codes: list[str],
+        *,
+        target_date: date,
+        limit: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        codes = [str(c or "").strip() for c in (codes or []) if str(c or "").strip()]
+        if not codes or int(limit) <= 0:
+            return {}
+
+        placeholders = ",".join(["?"] * len(codes))
+        cursor.execute(
+            f"""
+            SELECT code, trade_date, open, high, low, close, volume, amount, turnover, preclose, pct_change
+            FROM (
+                SELECT
+                    code,
+                    trade_date,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    amount,
+                    turnover,
+                    preclose,
+                    pct_change,
+                    row_number() OVER (PARTITION BY code ORDER BY trade_date DESC) AS rn
+                FROM daily_prices
+                WHERE code IN ({placeholders})
+                  AND trade_date <= ?
+            )
+            WHERE rn <= ?
+            ORDER BY code ASC, trade_date DESC
+            """,
+            (*codes, target_date.isoformat(), int(limit)),
+        )
+        rows = cursor.fetchall()
+
+        out: dict[str, list[dict[str, Any]]] = {}
+        for code, trade_date, open_, high, low, close, volume, amount, turnover, preclose, pct_change in rows:
+            code_s = str(code or "").strip()
+            if not code_s:
+                continue
+            out.setdefault(code_s, []).append(
+                {
+                    "trade_date": str(trade_date or ""),
+                    "open": float(open_) if open_ is not None else None,
+                    "high": float(high) if high is not None else None,
+                    "low": float(low) if low is not None else None,
+                    "close": float(close) if close is not None else None,
+                    "volume": float(volume) if volume is not None else None,
+                    "amount": float(amount) if amount is not None else None,
+                    "turnover": float(turnover) if turnover is not None else None,
+                    "preclose": float(preclose) if preclose is not None else None,
+                    "pct_change": float(pct_change) if pct_change is not None else None,
+                }
+            )
+        return out
+
+    def _get_formal_d1_facts_batch(
+        self,
+        cursor: sqlite3.Cursor,
+        codes: list[str],
+        *,
+        target_date: date,
+    ) -> dict[str, Any]:
+        codes = [str(c or "").strip() for c in (codes or []) if str(c or "").strip()]
+        if not codes:
+            return {}
+
+        placeholders = ",".join(["?"] * len(codes))
+        cursor.execute(
+            f"""
+            SELECT code, trade_date, open, high, low, close, volume, amount, turnover, preclose, pct_change, updated_at
+            FROM daily_prices
+            WHERE code IN ({placeholders})
+              AND trade_date = ?
+            """,
+            (*codes, target_date.isoformat()),
+        )
+        rows = cursor.fetchall()
+        out: dict[str, Any] = {}
+        for row in rows:
+            payload = {
+                "code": row[0],
+                "trade_date": row[1],
+                "open": row[2],
+                "high": row[3],
+                "low": row[4],
+                "close": row[5],
+                "volume": row[6],
+                "amount": row[7],
+                "turnover": row[8],
+                "preclose": row[9],
+                "pct_change": row[10],
+                "updated_at": row[11],
+            }
+            item = project_d1_daily_price_fact(payload)
+            out[item.stock_code] = item
+        return out
+
+    def _get_formal_security_master_batch(
+        self,
+        cursor: sqlite3.Cursor,
+        codes: list[str],
+    ) -> dict[str, Any]:
+        codes = [str(c or "").strip() for c in (codes or []) if str(c or "").strip()]
+        if not codes:
+            return {}
+
+        placeholders = ",".join(["?"] * len(codes))
+        cursor.execute(
+            f"""
+            SELECT code, name, asset_type, is_delisted, sector_lv1, sector_lv2, last_trade_date
+            FROM stocks
+            WHERE code IN ({placeholders})
+            """,
+            (*codes,),
+        )
+        rows = cursor.fetchall()
+        out: dict[str, Any] = {}
+        for row in rows:
+            payload = {
+                "code": row[0],
+                "name": row[1],
+                "asset_type": row[2],
+                "is_delisted": row[3],
+                "sector_lv1": row[4],
+                "sector_lv2": row[5],
+                "last_trade_date": row[6],
+            }
+            item = project_d7_security_master_minimal(payload)
+            out[item.stock_code] = item
+        return out
+
+    def _build_formal_trading_day_status(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        target_date: date,
+    ) -> D7TradingDayStatus:
+        target_key = target_date.isoformat()
+        if self._table_exists(cursor, "trading_calendar_cache"):
+            cursor.execute(
+                "SELECT 1 FROM trading_calendar_cache WHERE trade_date = ? LIMIT 1",
+                (target_key,),
+            )
+            is_trading_day = bool(cursor.fetchone())
+            cursor.execute(
+                "SELECT MIN(trade_date), MAX(trade_date) FROM trading_calendar_cache"
+            )
+            row = cursor.fetchone() or (None, None)
+            min_trading_day = str(row[0] or "").strip() or None
+            max_trading_day = str(row[1] or "").strip() or None
+            covered_until = max_trading_day
+            calendar_source = "trading_calendar_cache"
+            if self._table_exists(cursor, "trading_calendar_meta"):
+                cursor.execute(
+                    "SELECT key, value FROM trading_calendar_meta WHERE key IN (?, ?)",
+                    ("calendar_source", "calendar_covered_until"),
+                )
+                for key, value in cursor.fetchall():
+                    if str(key or "") == "calendar_source" and str(value or "").strip():
+                        calendar_source = str(value).strip()
+                    if str(key or "") == "calendar_covered_until" and str(value or "").strip():
+                        covered_until = str(value).strip()
+            return D7TradingDayStatus(
+                target_date=target_key,
+                is_trading_day=is_trading_day,
+                nearest_trading_day=target_key if is_trading_day else None,
+                min_trading_day=min_trading_day,
+                max_trading_day=max_trading_day,
+                calendar_covered_until=covered_until,
+                calendar_source=calendar_source,
+            )
+
+        cursor.execute(
+            "SELECT MIN(trade_date), MAX(trade_date) FROM daily_prices"
+        )
+        row = cursor.fetchone() or (None, None)
+        min_trading_day = str(row[0] or "").strip() or None
+        max_trading_day = str(row[1] or "").strip() or None
+        cursor.execute(
+            "SELECT 1 FROM daily_prices WHERE trade_date = ? LIMIT 1",
+            (target_key,),
+        )
+        is_trading_day = bool(cursor.fetchone())
+        return D7TradingDayStatus(
+            target_date=target_key,
+            is_trading_day=is_trading_day,
+            nearest_trading_day=target_key if is_trading_day else None,
+            min_trading_day=min_trading_day,
+            max_trading_day=max_trading_day,
+            calendar_covered_until=max_trading_day,
+            calendar_source="daily_prices_fallback",
+        )
+
+    def _attach_formal_front_payloads(
+        self,
+        signals: list[dict[str, Any]],
+        *,
+        formal_by_code: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        attached: list[dict[str, Any]] = []
+        for raw_sig in signals:
+            sig = dict(raw_sig)
+            code = str(sig.get("code") or "").strip()
+            sig["formal"] = dict(formal_by_code.get(code) or {"status": "unavailable"})
+            attached.append(sig)
+        return attached
+
+    def _build_formal_front_chain_payload(
+        self,
+        *,
+        target_date: date,
+        candidate_signals: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        codes = [
+            str(sig.get("code") or "").strip()
+            for sig in candidate_signals
+            if isinstance(sig, dict) and str(sig.get("code") or "").strip()
+        ]
+        if not codes:
+            return {"status": "ok", "items_by_code": {}, "summary": {"total": 0, "ok": 0, "error": 0}}
+
+        conn = self._conn()
+        cursor = conn.cursor()
+        try:
+            d1_by_code = self._get_formal_d1_facts_batch(cursor, codes, target_date=target_date)
+            security_by_code = self._get_formal_security_master_batch(cursor, codes)
+            trading_day_status = self._build_formal_trading_day_status(cursor, target_date=target_date)
+            history_by_code = self._get_recent_price_history_for_formal_m1_batch(
+                cursor,
+                codes,
+                target_date=target_date,
+                limit=20,
+            )
+        except Exception as exc:
+            conn.close()
+            message = str(exc) or exc.__class__.__name__
+            return {
+                "status": "error",
+                "items_by_code": {
+                    code: {
+                        "status": "error",
+                        "error_type": "formal_projection_failed",
+                        "message": message,
+                    }
+                    for code in codes
+                },
+                "summary": {"total": len(codes), "ok": 0, "error": len(codes)},
+            }
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        items_by_code: dict[str, dict[str, Any]] = {}
+        ok_count = 0
+        error_count = 0
+        for code in codes:
+            d1_fact = d1_by_code.get(code)
+            security_master = security_by_code.get(code)
+            price_rows = history_by_code.get(code) or []
+            try:
+                if d1_fact is None:
+                    raise ValueError("d1_fact_missing")
+                if security_master is None:
+                    raise ValueError("security_master_missing")
+                trading_profile = project_pf1_trading_profile(
+                    stock_code=code,
+                    price_rows=price_rows,
+                )
+                constraints = build_m1_constraints_ref(
+                    d1_fact=d1_fact,
+                    security_master=security_master,
+                    trading_day_status=trading_day_status,
+                    trading_profile=trading_profile,
+                )
+                small_cycle = build_small_cycle_from_m1(
+                    d1_fact=d1_fact,
+                    security_master=security_master,
+                    trading_day_status=trading_day_status,
+                    trading_profile=trading_profile,
+                )
+                identify_state = build_identify_state_from_formal_inputs(
+                    cycle=small_cycle,
+                    m1_constraints_ref=constraints,
+                )
+                tracking_state = build_tracking_state_from_formal_inputs(
+                    cycle=small_cycle,
+                    m1_constraints_ref=constraints,
+                )
+                entry_state = build_entry_state_from_formal_inputs(
+                    cycle=small_cycle,
+                    m1_constraints_ref=constraints,
+                )
+                items_by_code[code] = {
+                    "status": "ok",
+                    "small_cycle": small_cycle.to_payload(),
+                    "identify_state": identify_state.to_payload(),
+                    "tracking_state": tracking_state.to_payload(),
+                    "entry_state": entry_state.to_payload(),
+                    "m1_constraints_ref": dict(constraints),
+                }
+                ok_count += 1
+            except Exception as exc:
+                items_by_code[code] = {
+                    "status": "error",
+                    "error_type": "formal_projection_failed",
+                    "message": str(exc) or exc.__class__.__name__,
+                }
+                error_count += 1
+
+        return {
+            "status": "ok" if error_count == 0 else "partial",
+            "items_by_code": items_by_code,
+            "summary": {
+                "total": len(codes),
+                "ok": ok_count,
+                "error": error_count,
+            },
+        }
+
     def get_fundamentals(self, code: str, target_date: date) -> dict:
         """
         获取股票基本面数据
@@ -3771,6 +4113,19 @@ class LowFreqTradingEngineV16:
             target_date=target_date,
             market_filter_note=market_filter_note,
         )
+        formal_payload = self._build_formal_front_chain_payload(
+            target_date=target_date,
+            candidate_signals=signal_payload.get("candidate_signals") or [],
+        )
+        candidate_signals = self._attach_formal_front_payloads(
+            signal_payload.get("candidate_signals") or [],
+            formal_by_code=dict(formal_payload.get("items_by_code") or {}),
+        )
+        entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
+        signal_payload["candidate_signals"] = candidate_signals
+        signal_payload["entry_signals"] = entry_signals
+        signal_payload["buy_signals"] = list(entry_signals)
+        signal_payload["formal"] = formal_payload
         return signal_payload
 
     def _system_exit_attr_names(self, scope: str) -> dict[str, str]:
