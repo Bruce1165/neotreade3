@@ -326,8 +326,41 @@
 - 新会话续接以本文件为准：只记录“已经存在且可运行”的入口、约束与验收口径；其它文档仅作为背景参考，使用前需按代码现状核对。
 - 进行中：
   - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
+  - `M2/M3` 前半段最小正式消费切换已完成代码落地与测试校验；当前正式对象/组装器骨架已提交，formal front 已继续推进到 workbench 与 top200 attribution report 的最小消费面，但引擎 / API / workbench / report 接线仍保留在 working tree，尚未形成安全窄提交
 - 下一步第一件事：
   - 将 `M1` 首批正式对象的质量信号继续向后推进到真正的 `M2/M3` 最小消费切换，避免后续新逻辑继续绕过 `/api/data-control/m1/...` 正式入口
+
+## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
+
+- 已完成范围：
+  - `M2 small_cycle`
+  - `M3 identify_state`
+  - `M3 tracking_state`
+  - `M3 entry_state`
+  - 引擎并行输出 `legacy + formal`
+  - API formal 压缩投影
+  - workbench `formal_front` 优先消费
+  - top200 attribution report 快照层 `formal` 优先、旧字段兜底
+- 已落地正式承载包：
+  - `neotrade3/cycle_intelligence/`
+  - `neotrade3/decision_engine/`
+- 已实现正式组装入口：
+  - `build_small_cycle_from_m1(...)`
+  - `build_m1_constraints_ref(...)`
+  - `build_identify_state_from_formal_inputs(...)`
+  - `build_tracking_state_from_formal_inputs(...)`
+  - `build_entry_state_from_formal_inputs(...)`
+- 已有实现态验证：
+  - `python3 -m pytest -q tests/unit/test_m2_m3_contract_skeleton.py tests/unit/test_lowfreq_engine_v16_signal_convergence.py tests/unit/test_lowfreq_intent_conflicts.py tests/unit/test_lowfreq_formal_front_projection.py tests/unit/test_lowfreq_workbench_formal_consumption.py tests/unit/test_lowfreq_phase5_projection_sync.py` -> `73 passed`
+  - `python3 -m py_compile ...` 已通过本轮涉及文件的最小语法校验
+- 当前 git 边界状态：
+  - 已提交：`8ba2f84 feat(m2-m3): add formal front contracts and assemblers`
+  - 未提交但已通过验证：`lowfreq_engine_v16_advanced.py`、`apps/api/main.py`、`scripts/generate_lowfreq_top200_attribution_report.py` 与相关测试中的 formal front 接线
+  - 已确认：`Commit B` 当前与既有未提交结构改动存在真实耦合，不能再假装切成纯净窄提交
+- 当前最重要的事实：
+  - `M2/M3` 前半段 formal 消费切换在代码层面已经可运行、可测试
+  - 但提交态仍停在 `Commit A`
+  - 后续继续工作时，必须显式区分“已提交对象层”与“工作树中的引擎/API 接线层”
 
 
 ---
@@ -353,9 +386,10 @@
 
 1. `CLAUDE.md`
 2. `PROJECT_STATUS.md`
-3. `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
-4. `docs/handoffs/2026-05-19_session_resume_handoff.md`
-5. `docs/architecture/neotrade3_master_architecture_and_migration_plan_v1.md`
-6. `NeoTrade3实施交接文档.md`（背景参考；以代码现状核对）
-7. `config/orchestrator/daily_master_orchestrator.json`
-8. `config/labs/labs_registry.json`
+3. `docs/handoffs/2026-07-07_m2_m3_minimal_consumption_switch_handoff.md`
+4. `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
+5. `docs/handoffs/2026-05-19_session_resume_handoff.md`
+6. `docs/architecture/neotrade3_master_architecture_and_migration_plan_v1.md`
+7. `NeoTrade3实施交接文档.md`（背景参考；以代码现状核对）
+8. `config/orchestrator/daily_master_orchestrator.json`
+9. `config/labs/labs_registry.json`
