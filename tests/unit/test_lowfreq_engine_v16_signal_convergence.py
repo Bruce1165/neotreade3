@@ -68,9 +68,29 @@ def _make_engine() -> LowFreqTradingEngineV16:
     engine.CROSS_SECTOR_CANDIDATE_TOP_N = 40
     engine.CROSS_SECTOR_WAVE3_ONLY = True
     engine.CROSS_SECTOR_ALLOW_WAVE1 = True
+    engine.WAVE1_TRACKING_ONLY_ENABLED = True
+    engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = False
     engine.CROSS_SECTOR_SCORE_MARGIN = 8.0
     engine._conn = lambda: _FakeConn()
     return engine
+
+def test_calc_metrics_clamps_annual_return_when_total_return_below_negative_100() -> None:
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+
+    metrics = engine._calc_metrics(
+        [
+            {"date": "2026-06-01", "total_value": 1_000_000.0},
+            {"date": "2026-06-02", "total_value": -500_000.0},
+        ],
+        [],
+        1_000_000.0,
+    )
+
+    assert metrics["final_value"] == -500000.0
+    assert metrics["total_return_pct"] == -150.0
+    assert metrics["annual_return_pct"] == -100.0
+    assert metrics["total_trades"] == 0
+    assert metrics["sell_reasons"] == {}
 
 
 def test_cup_handle_picks_prefers_local_artifact(tmp_path: Path) -> None:
@@ -142,7 +162,20 @@ def test_generate_buy_signals_uses_relaxed_convergence_settings() -> None:
 
     assert seen["sector_top_n"] == 4
     assert seen["global_top_n"] == 40
-    assert [row["code"] for row in out["buy_signals"]] == ["600460"]
+    assert out["buy_signals"] == []
+    assert [row["code"] for row in out["candidate_signals"]] == ["600460"]
+    assert out["entry_signals"] == []
+    assert out["signal_summary"]["candidate_count"] == 1
+    assert out["signal_summary"]["entry_count"] == 0
+    candidate = out["candidate_signals"][0]
+    assert candidate["tracking_ready"] is False
+    assert candidate["tracking_state"] == "tracking_observe"
+    assert candidate["tracking_days"] == 1
+    assert candidate["tracking_transition_reason"] == "candidate_retained_for_tracking"
+    assert candidate["tracking_contract"]["source_layer"] == "tracking"
+    assert candidate["tracking_contract"]["decision"] == "tracking_continue"
+    assert candidate["candidate_tier"] == "soft_retained"
+    assert "capture-first: 1浪仅保留 tracking，不进入正式建仓" in candidate["reasons"]
 
 
 def test_generate_buy_signals_keeps_wave1_as_soft_penalty_when_disabled() -> None:
@@ -166,8 +199,19 @@ def test_generate_buy_signals_keeps_wave1_as_soft_penalty_when_disabled() -> Non
 
     out = engine.generate_buy_signals(SimpleNamespace(isoformat=lambda: "2026-06-15"))
 
-    assert [row["code"] for row in out["buy_signals"]] == ["600460"]
-    assert "capture-first: 波段不符，降权保留" in out["buy_signals"][0]["reasons"]
+    assert out["buy_signals"] == []
+    assert [row["code"] for row in out["candidate_signals"]] == ["600460"]
+    assert out["entry_signals"] == []
+    assert out["candidate_signals"][0]["entry_ready"] is False
+    assert out["candidate_signals"][0]["candidate_tier"] == "soft_retained"
+    assert out["candidate_signals"][0]["tracking_ready"] is False
+    assert out["candidate_signals"][0]["tracking_state"] == "tracking_observe"
+    assert out["candidate_signals"][0]["tracking_days"] == 1
+    assert out["candidate_signals"][0]["tracking_transition_reason"] == "candidate_retained_for_tracking"
+    assert out["candidate_signals"][0]["tracking_contract"]["source_layer"] == "tracking"
+    assert out["candidate_signals"][0]["tracking_contract"]["decision"] == "tracking_continue"
+    assert "capture-first: 波段不符，降权保留" in out["candidate_signals"][0]["reasons"]
+    assert out["signal_summary"]["soft_retained_count"] == 1
 
 
 def test_generate_buy_signals_allows_two_cross_sector_signals() -> None:
@@ -201,7 +245,9 @@ def test_generate_buy_signals_allows_two_cross_sector_signals() -> None:
 
     out = engine.generate_buy_signals(SimpleNamespace(isoformat=lambda: "2026-06-15"))
 
-    assert [row["code"] for row in out["buy_signals"]] == ["300308", "600460"]
+    assert [row["code"] for row in out["buy_signals"]] == ["300308"]
+    assert [row["code"] for row in out["candidate_signals"]] == ["300308", "600460"]
+    assert [row["code"] for row in out["entry_signals"]] == ["300308"]
 
 
 def test_generate_buy_signals_no_longer_hard_caps_cross_sector_signal_count() -> None:
@@ -246,7 +292,8 @@ def test_generate_buy_signals_no_longer_hard_caps_cross_sector_signal_count() ->
 
     out = engine.generate_buy_signals(SimpleNamespace(isoformat=lambda: "2026-06-15"))
 
-    assert [row["code"] for row in out["buy_signals"]] == ["300394", "300308", "600460"]
+    assert [row["code"] for row in out["buy_signals"]] == ["300394", "300308"]
+    assert [row["code"] for row in out["entry_signals"]] == ["300394", "300308"]
 
 
 def test_run_backtest_executes_pending_buys_in_score_order() -> None:
@@ -262,6 +309,7 @@ def test_run_backtest_executes_pending_buys_in_score_order() -> None:
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 1
     engine.REBALANCE_DAYS = 1
@@ -340,6 +388,7 @@ def test_run_backtest_blocks_chase_entry_at_final_queue() -> None:
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 1
     engine.REBALANCE_DAYS = 1
@@ -408,6 +457,7 @@ def test_run_backtest_blocks_weak_soft_signal_at_execution_queue() -> None:
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 2
     engine.REBALANCE_DAYS = 1
@@ -487,6 +537,7 @@ def test_run_backtest_allows_strong_unknown_wave_leader() -> None:
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 1
     engine.REBALANCE_DAYS = 1
@@ -546,6 +597,7 @@ def test_run_backtest_reserves_elite_signal_and_releases_when_slot_opens() -> No
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 2
     engine.REBALANCE_DAYS = 1
@@ -625,11 +677,42 @@ def test_run_backtest_reserves_elite_signal_and_releases_when_slot_opens() -> No
     reservation_released = next(
         row for row in result["buy_signal_audit"] if row["event"] == "reservation_released_into_buy"
     )
+    direct_buy = next(row for row in result["buy_signal_audit"] if row["event"] == "buy_executed")
     assert reservation_created["code"] == "300001"
     assert reservation_created["date"] == day3.isoformat()
     assert reservation_created["signal_date"] == day2.isoformat()
+    assert reservation_created["source_layer"] == "execution"
+    assert reservation_created["action_type"] == "reserve"
+    assert reservation_created["order_action"] == "block"
+    assert reservation_created["reserve_action"] == "reserve"
+    assert reservation_created["funnel_stage"] == "reserved"
+    assert reservation_created["execution_block_reason"] == "positions_full"
     assert reservation_released["code"] == "300001"
     assert reservation_released["date"] == day4.isoformat()
+    assert reservation_released["action_type"] == "buy"
+    assert reservation_released["order_action"] == "buy"
+    assert reservation_released["reserve_action"] == "release"
+    assert reservation_released["position_delta"] == 10000
+    assert reservation_released["funnel_stage"] == "released"
+    assert direct_buy["code"] == "600001"
+    assert direct_buy["action_type"] == "buy"
+    assert direct_buy["order_action"] == "buy"
+    assert direct_buy["reserve_action"] == ""
+    assert result["execution_action_keys"] == ["buy", "reserve", "release", "hold", "exit", "block"]
+    assert result["execution_action_summary"]["reserve"] == 1
+    assert result["execution_action_summary"]["buy"] == 2
+    assert result["funnel_stage_keys"] == [
+        "candidate_detected",
+        "entry_ready",
+        "reserved",
+        "released",
+        "bought",
+        "hold_confirmed",
+        "exit_ready",
+        "exited",
+        "blocked",
+        "expired",
+    ]
 
 
 def test_run_backtest_expires_reserved_elite_signal_when_slot_never_opens() -> None:
@@ -651,6 +734,7 @@ def test_run_backtest_expires_reserved_elite_signal_when_slot_never_opens() -> N
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 2
     engine.REBALANCE_DAYS = 1
@@ -722,6 +806,11 @@ def test_run_backtest_expires_reserved_elite_signal_when_slot_never_opens() -> N
     assert reservation_expired["code"] == "300001"
     assert reservation_expired["date"] == day5.isoformat()
     assert reservation_expired["signal_date"] == day2.isoformat()
+    assert reservation_expired["action_type"] == "block"
+    assert reservation_expired["order_action"] == "block"
+    assert reservation_expired["reserve_action"] == "expire"
+    assert reservation_expired["execution_block_reason"] == "entry_window_missed"
+    assert reservation_expired["funnel_stage"] == "expired"
 
 
 def test_run_backtest_uses_end_flattened_cash_for_final_metrics() -> None:
@@ -741,6 +830,7 @@ def test_run_backtest_uses_end_flattened_cash_for_final_metrics() -> None:
 
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
     engine.MAX_POSITIONS = 1
     engine.BUY_SIGNAL_MEMORY_DAYS = 1
     engine.REBALANCE_DAYS = 1
@@ -802,8 +892,61 @@ def test_run_backtest_uses_end_flattened_cash_for_final_metrics() -> None:
     assert closed_trade["sell_reason"] == "回测结束平仓"
 
 
+def test_run_backtest_unbounded_mode_executes_all_entry_opportunities_without_full_book_or_cash_blocks() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn2:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 1
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = False
+    engine.EXECUTION_RESERVATION_ENABLED = True
+    engine._conn = lambda: _FakeConn2()
+    engine._get_trading_dates = lambda start, end: [day1, day2]
+    engine._count_trading_days = lambda start, end: 2
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {"close": 10.0, "pct_change": 0.0, "amount": 1e9}
+    engine.get_config_snapshot = lambda: {"execution_mode": "unbounded_opportunity"}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+    engine.generate_buy_signals = lambda current_date: {
+        "buy_signals": [
+            {"code": "600001", "name": "机会一", "sector": "A", "buy_score": 90.0, "wave_phase": "1浪", "role": "龙头"},
+            {"code": "300001", "name": "机会二", "sector": "B", "buy_score": 100.0, "wave_phase": "3浪", "role": "龙头"},
+        ]
+    }
+
+    result = engine.run_backtest(
+        day1,
+        day2,
+        initial_capital=1000.0,
+        include_trades=True,
+    )
+
+    assert {trade["code"] for trade in result["trades"]} == {"600001", "300001"}
+    assert result["trade_blocks"]["buy_reserved_due_to_full_book"] == 0
+    assert result["trade_blocks"]["buy_insufficient_cash"] == 0
+    assert result["execution_action_summary"]["buy"] == 2
+    assert result["config_snapshot"]["execution_mode"] == "unbounded_opportunity"
+
 def test_strong_leader_soft_release_clears_focus_and_structure_soft_flags() -> None:
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = True
     engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
     score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
@@ -831,6 +974,7 @@ def test_strong_leader_soft_release_clears_focus_and_structure_soft_flags() -> N
 
 def test_strong_leader_soft_release_keeps_other_soft_blockers() -> None:
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = True
     engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
     score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
@@ -850,6 +994,30 @@ def test_strong_leader_soft_release_keeps_other_soft_blockers() -> None:
     assert soft_flags == ["focus_soft_fail", "wave_uncertain"]
     assert "capture-first: focus gate 未过，降权保留" in reasons
     assert "capture-first: 波段不符，降权保留" in reasons
+    assert not any("capture-first: 高分龙头窄例外放行" in row for row in reasons)
+
+
+def test_strong_leader_soft_release_disabled_by_default() -> None:
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = False
+    engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
+
+    score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
+        score=83.5,
+        role="龙头",
+        wave_phase=WavePhase.WAVE_3.value,
+        soft_flags=["structure_soft_fail", "focus_soft_fail"],
+        reasons=[
+            "3浪主升浪",
+            "capture-first: 结构未确认，降权保留",
+            "capture-first: focus gate 未过，降权保留",
+        ],
+    )
+
+    assert score == 83.5
+    assert soft_flags == ["structure_soft_fail", "focus_soft_fail"]
+    assert "capture-first: 结构未确认，降权保留" in reasons
+    assert "capture-first: focus gate 未过，降权保留" in reasons
     assert not any("capture-first: 高分龙头窄例外放行" in row for row in reasons)
 
 
