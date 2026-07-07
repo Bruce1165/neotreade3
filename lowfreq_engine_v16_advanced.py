@@ -6391,7 +6391,12 @@ class LowFreqTradingEngineV16:
         final_value = values[-1] if values else initial_capital
         total_return = (final_value - initial_capital) / initial_capital * 100
         n_days = len(values)
-        annual_return = (1 + total_return / 100) ** (252 / max(n_days, 1)) - 1
+        annualization_base = 1 + total_return / 100
+        if annualization_base <= 0:
+            annual_return_pct = -100.0
+        else:
+            annual_return = annualization_base ** (252 / max(n_days, 1)) - 1
+            annual_return_pct = round(annual_return * 100, 2)
 
         peak = values[0]
         max_dd = 0
@@ -6427,7 +6432,7 @@ class LowFreqTradingEngineV16:
             "initial_capital": initial_capital,
             "final_value": round(final_value, 2),
             "total_return_pct": round(total_return, 2),
-            "annual_return_pct": round(annual_return * 100, 2),
+            "annual_return_pct": annual_return_pct,
             "max_drawdown_pct": round(max_dd, 2),
             "total_trades": len(trades),
             "win_rate_pct": round(win_rate, 2),
