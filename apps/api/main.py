@@ -7058,57 +7058,18 @@ class BootstrapApiService:
 
                 if table_exists("daily_prices"):
                     price_rows = list(daily_price_rows_by_code.get(code) or [])
-                    closes = [
-                        float(item["close"])
-                        for item in price_rows
-                        if isinstance(item.get("close"), (int, float))
-                    ]
-                    amounts = [
-                        float(item["amount"])
-                        for item in price_rows
-                        if isinstance(item.get("amount"), (int, float))
-                    ]
-                    turnovers = [
-                        float(item["turnover"])
-                        for item in price_rows
-                        if isinstance(item.get("turnover"), (int, float))
-                    ]
-                    pct_changes = [
-                        float(item["pct_change"])
-                        for item in price_rows
-                        if isinstance(item.get("pct_change"), (int, float))
-                    ]
-                    latest_close = closes[0] if closes else None
-                    earliest_close = closes[-1] if len(closes) >= 2 else None
-                    return_20d = (
-                        (latest_close / earliest_close) - 1.0
-                        if isinstance(latest_close, float)
-                        and isinstance(earliest_close, float)
-                        and earliest_close > 0
-                        else None
+                    trading_profile = project_pf1_trading_profile(
+                        stock_code=code,
+                        price_rows=price_rows,
                     )
-                    signals["trading_profile"] = {
-                        "available": True,
-                        "latest_trade_date": (
-                            price_rows[0].get("trade_date") if price_rows else None
-                        ),
-                        "rows_20d": len(price_rows),
-                        "latest_amount": amounts[0] if amounts else None,
-                        "avg_amount_5d": statistics.fmean(amounts[:5]) if amounts[:5] else None,
-                        "avg_amount_20d": statistics.fmean(amounts) if amounts else None,
-                        "latest_turnover": turnovers[0] if turnovers else None,
-                        "avg_turnover_5d": (
-                            statistics.fmean(turnovers[:5]) if turnovers[:5] else None
-                        ),
-                        "median_turnover_20d": (
-                            statistics.median(turnovers) if turnovers else None
-                        ),
-                        "return_20d": return_20d,
-                        "avg_pct_change_5d": (
-                            statistics.fmean(pct_changes[:5]) if pct_changes[:5] else None
-                        ),
-                        "positive_days_5d": sum(1 for value in pct_changes[:5] if value > 0),
-                    }
+                    if trading_profile is not None:
+                        signals["trading_profile"] = {
+                            "available": True,
+                            "source_mode": "formal_m1",
+                            "formal_object": "pf1_trading_profile",
+                            "compatibility_mode": "formal_only",
+                            **trading_profile.to_payload(),
+                        }
 
                 if stock_concepts and latest_ths_trade_date:
                     leading_concepts = [
@@ -7148,6 +7109,9 @@ class BootstrapApiService:
                         ]
                         signals["theme_momentum"] = {
                             "available": True,
+                            "source_mode": "compatibility_only",
+                            "compatibility_only": True,
+                            "not_formal_m1": True,
                             "trade_date": latest_ths_trade_date,
                             "best_mainline_rank": (
                                 min(mainline_ranks) if mainline_ranks else None
@@ -7188,6 +7152,10 @@ class BootstrapApiService:
                     "stock_code": code,
                     "ts_code": ts_code,
                     "stock_name": stock_name,
+                    "m1_consumption_mode": {
+                        "trading_profile": "formal_m1",
+                        "compatibility_only_signals": ["theme_momentum"],
+                    },
                     "signals": signals,
                     "derived_tags": derived_tags,
                     "thematic_tags": thematic_tags,
@@ -7297,9 +7265,6 @@ class BootstrapApiService:
         median_turnover_20d = trading_profile.get("median_turnover_20d")
         return_20d = trading_profile.get("return_20d")
         positive_days_5d = int(trading_profile.get("positive_days_5d") or 0)
-        best_mainline_rank = theme_momentum.get("best_mainline_rank")
-        best_heat_rank = theme_momentum.get("best_heat_rank")
-        best_mainline_score = theme_momentum.get("best_mainline_score")
 
         if (
             isinstance(latest_amount, (int, float))
@@ -7330,20 +7295,6 @@ class BootstrapApiService:
                 trading_reasons.append(f"近20日相对强度为正：{float(return_20d) * 100.0:.2f}%")
             else:
                 trading_reasons.append(f"近5日上涨天数较多：{positive_days_5d}")
-        if (
-            isinstance(best_mainline_rank, (int, float))
-            and int(best_mainline_rank) <= 20
-        ) or (
-            isinstance(best_heat_rank, (int, float))
-            and int(best_heat_rank) <= 20
-        ) or (
-            isinstance(best_mainline_score, (int, float))
-            and float(best_mainline_score) >= 80.0
-        ):
-            trading_score += 1
-            trading_reasons.append(
-                "所属赛道具备主线/热度支持"
-            )
         trading_level = (
             "high"
             if trading_score >= 3
@@ -7372,7 +7323,7 @@ class BootstrapApiService:
                 "score": trading_score,
                 "level": trading_level,
                 "reasons": trading_reasons,
-                "note": "第一版仅基于成交活跃度、近端强度与赛道主线热度做代理识别。",
+                "note": "第一版仅基于正式 M1 中的成交活跃度与近端强度做代理识别。",
             },
         }
 
