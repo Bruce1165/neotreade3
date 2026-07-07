@@ -1536,6 +1536,8 @@ class LowFreqTradingEngineV16:
         reasons: list[str],
     ) -> tuple[float, list[str], list[str]]:
         """Narrow exception: release only strong 1/3-wave leaders blocked by focus/structure soft gates."""
+        if not bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)):
+            return float(score), [str(flag or "").strip() for flag in list(soft_flags or []) if str(flag or "").strip()], list(reasons or [])
         normalized_role = str(role or "").strip()
         normalized_wave = str(wave_phase or "").strip()
         normalized_flags = [str(flag or "").strip() for flag in list(soft_flags or []) if str(flag or "").strip()]
