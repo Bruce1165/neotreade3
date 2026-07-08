@@ -20526,6 +20526,7 @@ class BootstrapApiService:
                     "realized_return_pct": None,
                     "top_signal_date": None,
                     "engine_snapshot_ref": f"engine://buy-signals/{target_key}/{code}",
+                    "formal_front": self._lowfreq_formal_front_projection(sig),
                     "updated_at": updated_at,
                 }
             )
