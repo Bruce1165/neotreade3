@@ -17111,6 +17111,11 @@ class BootstrapApiService:
             elif str(intent.get("intent_type") or "") == "buy_intent" and str(intent.get("status") or "pending") == "pending":
                 pending_buy_by_code[code] = intent
 
+        formal_front_by_code = self._build_lowfreq_formal_front_projection_map(
+            engine=engine,
+            target_date=target_date,
+        )
+
         sectors_payload: list[dict[str, Any]] = []
         t0 = time.perf_counter()
         hot_sectors = engine.get_hot_sectors(target_date, top_n=int(engine.HOT_SECTOR_COUNT))
@@ -17164,6 +17169,7 @@ class BootstrapApiService:
                     "sell_signal": bool(sell_signal),
                     "sell_reason": sell_reason,
                     "suggested_entry": "今日" if buy_signal else None,
+                    "formal_front": dict(formal_front_by_code.get(str(c.code or "").strip()) or {}),
                     "manual": {
                         "abandoned": c.code in abandoned_codes,
                         "buy_intent_pending": c.code in pending_buy_by_code,
@@ -17220,6 +17226,32 @@ class BootstrapApiService:
     @staticmethod
     def _lowfreq_formal_front_projection(signal_payload: object) -> dict[str, Any] | None:
         return project_lowfreq_formal_front(signal_payload)
+
+    def _build_lowfreq_formal_front_projection_map(
+        self,
+        *,
+        engine,
+        target_date: date,
+    ) -> dict[str, dict[str, Any]]:
+        try:
+            signals = engine.generate_buy_signals(target_date)
+        except Exception:
+            return {}
+        raw_items: list[dict[str, Any]] = []
+        if isinstance(signals, dict):
+            if isinstance(signals.get("candidate_signals"), list):
+                raw_items = [item for item in (signals.get("candidate_signals") or []) if isinstance(item, dict)]
+            elif isinstance(signals.get("buy_signals"), list):
+                raw_items = [item for item in (signals.get("buy_signals") or []) if isinstance(item, dict)]
+        projected: dict[str, dict[str, Any]] = {}
+        for item in raw_items:
+            code = str(item.get("code") or "").strip()
+            if not code:
+                continue
+            formal_front = self._lowfreq_formal_front_projection(item)
+            if isinstance(formal_front, dict):
+                projected[code] = dict(formal_front)
+        return projected
 
     def lowfreq_manual_buy_intent_view(
         self,
@@ -21307,7 +21339,14 @@ class BootstrapApiService:
             actionable_count = sum(
                 1
                 for stock in [*leaders, *middle, *followers]
-                if isinstance(stock, dict) and bool(stock.get("buy_signal"))
+                if isinstance(stock, dict)
+                and (
+                    self._lowfreq_formal_front_entry_ready(stock.get("formal_front"))
+                    or (
+                        not self._lowfreq_formal_front_ok(stock.get("formal_front"))
+                        and bool(stock.get("buy_signal"))
+                    )
+                )
             )
             mainline_rank = meta.get("mainline_rank")
             trend_state = str(meta.get("trend_state") or "").strip()
