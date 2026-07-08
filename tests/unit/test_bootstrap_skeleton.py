@@ -127,6 +127,30 @@ def test_lab_job_contracts_align_with_orchestrator_tasks() -> None:
     assert runtime_result["status"] == "pending_implementation"
 
 
+def test_cup_handle_lab_returns_failed_when_screener_artifact_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    artifact_path = (
+        tmp_path
+        / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+    )
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("{not-json", encoding="utf-8")
+
+    payload = LabRuntimeAdapter.run_job(
+        task_id="cup_handle_lab.daily_review",
+        target_date="2026-05-19",
+        lab_id="cup_handle_lab",
+        project_root=tmp_path,
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["degraded"] is True
+    assert payload["degraded_steps"] == ["screener_artifact_read"]
+    assert payload["details"]["artifact_path"] == str(artifact_path)
+    assert payload["details"]["error"]
+
+
 def test_daily_master_orchestrator_builds_bootstrap_plan() -> None:
     orchestrator = DailyMasterOrchestrator.from_files(
         orchestrator_config_path=ORCHESTRATOR_CONFIG,
@@ -818,6 +842,64 @@ def test_bootstrap_worker_uses_execution_status_in_orchestration_ledger(
     assert task_status_by_id == ledger_status_by_id
 
 
+def test_bootstrap_worker_lab_executor_materializes_contract_artifact(
+    tmp_path: Path,
+) -> None:
+    app = BootstrapWorkerApp(project_root=tmp_path)
+    app.paths["labs_config"] = LABS_CONFIG
+
+    class _ContractLabAdapter:
+        def run_job(self, *, task_id, target_date, lab_id, project_root):
+            return {
+                "task_id": task_id,
+                "lab_id": lab_id,
+                "status": "ok",
+                "message": "contract artifact ready",
+                "target_date": (
+                    target_date.isoformat()
+                    if hasattr(target_date, "isoformat")
+                    else str(target_date)
+                ),
+                "candidates": [
+                    {"stock_code": "000001", "stock_name": "平安银行"},
+                ],
+                "candidates_count": 1,
+                "raw_candidates_count": 1,
+                "tier_distribution": {"entry_ready": 1},
+                "analysis_version": "test",
+            }
+
+    app._get_lab_adapter = lambda: _ContractLabAdapter()
+    executor = app._create_lab_executor()
+
+    result = executor(
+        PlannedTask(
+            task_id="cup_handle_lab.daily_review",
+            phase=OrchestrationPhase.DAILY_LAB_JOBS,
+            lab_id="cup_handle_lab",
+            entrypoint="neotrade3.labs.runtime:LabRuntimeAdapter.run_job",
+            depends_on=[],
+            outputs=["lab_run_summary", "cup_handle_daily_report"],
+            requires_publish_status=False,
+            status=RunStatus.PLANNED,
+        ),
+        {
+            "target_date": date(2026, 5, 19),
+            "requested_by": "test.worker",
+            "dry_run": False,
+        },
+    )
+
+    contract_path = tmp_path / "var/artifacts/labs/cup_handle_lab/daily_report.json"
+    contract_payload = json.loads(contract_path.read_text(encoding="utf-8"))
+
+    assert result.status == RunStatus.OK
+    assert "var/artifacts/labs/cup_handle_lab/daily_report.json" in result.artifact_refs
+    assert contract_payload["status"] == "ok"
+    assert contract_payload["candidates"] == ["000001"]
+    assert contract_payload["candidate_details"][0]["stock_code"] == "000001"
+
+
 def test_bootstrap_api_service_and_router_expose_read_only_snapshot() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)
@@ -1082,6 +1164,175 @@ def test_orchestration_run_view_uses_worker_runtime_and_writes_wrapper_files(
     assert payload["orchestrator_run"]["publish_succeeded"] is True
     assert ledger_payload["publish_succeeded"] is True
     assert artifact_payload["tasks"][0]["task_id"] == "data_control.publish"
+
+
+def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    service.project_root = tmp_path
+    service._labs_config = LABS_CONFIG
+
+    service._materialize_lab_runs_from_snapshot(
+        snapshot={
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "cup_handle_lab.daily_review",
+                        "lab_id": "cup_handle_lab",
+                        "status": "failed",
+                        "message": "upstream artifact unreadable",
+                        "details": {"reason": "corrupt json"},
+                        "artifact_refs": [
+                            "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+                        ],
+                    }
+                ]
+            }
+        },
+        target_date="2026-05-19",
+        requested_by="test",
+        dry_run=False,
+    )
+
+    ledger_path = (
+        tmp_path / "var/ledgers/lab_runs/2026-05-19/lab_cup_handle_lab_run.json"
+    )
+    artifact_path = (
+        tmp_path / "var/artifacts/lab_runs/2026-05-19/lab_cup_handle_lab_result.json"
+    )
+
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert ledger_payload["status"] == "failed"
+    assert artifact_payload["status"] == "failed"
+    assert artifact_payload["message"] == "upstream artifact unreadable"
+    assert artifact_payload["details"] == {"reason": "corrupt json"}
+    assert artifact_payload["artifact_refs"] == [
+        "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+    ]
+
+
+def test_materialize_lab_runs_from_snapshot_persists_skipped_without_rerun(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    service.project_root = tmp_path
+    service._labs_config = LABS_CONFIG
+
+    def _unexpected_lab_run_view(**kwargs):
+        raise AssertionError("skipped lab results must not trigger a real rerun")
+
+    monkeypatch.setattr(service, "lab_run_view", _unexpected_lab_run_view)
+
+    service._materialize_lab_runs_from_snapshot(
+        snapshot={
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "cup_handle_lab.daily_review",
+                        "lab_id": "cup_handle_lab",
+                        "status": "skipped",
+                        "message": "lab skipped by orchestrator",
+                    }
+                ]
+            }
+        },
+        target_date="2026-05-19",
+        requested_by="test",
+        dry_run=False,
+    )
+
+    ledger_path = (
+        tmp_path / "var/ledgers/lab_runs/2026-05-19/lab_cup_handle_lab_run.json"
+    )
+    artifact_path = (
+        tmp_path / "var/artifacts/lab_runs/2026-05-19/lab_cup_handle_lab_result.json"
+    )
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert ledger_payload["status"] == "skipped"
+    assert artifact_payload["status"] == "skipped"
+    assert artifact_payload["message"] == "lab skipped by orchestrator"
+
+
+def test_lab_run_view_executes_runtime_and_writes_contract_artifact(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    service._labs_config = LABS_CONFIG
+    service.require_trading_day = lambda *, target_date, requested_by="api": {
+        "is_trading_day": True,
+        "date": target_date,
+        "source": requested_by,
+    }
+
+    db_path = tmp_path / "var/db/stock_data.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "CREATE TABLE stocks (code TEXT PRIMARY KEY, name TEXT, sector_lv1 TEXT, sector_lv2 TEXT, asset_type TEXT, is_delisted INTEGER)"
+        )
+        cursor.execute(
+            "CREATE TABLE daily_prices (trade_date TEXT, code TEXT, close REAL, preclose REAL, pct_change REAL, volume REAL, amount REAL)"
+        )
+        cursor.execute(
+            "INSERT INTO stocks(code,name,sector_lv1,sector_lv2,asset_type,is_delisted) VALUES (?,?,?,?,?,?)",
+            ("000001", "平安银行", "金融", "银行", "stock", 0),
+        )
+        cursor.execute(
+            "INSERT INTO daily_prices(trade_date,code,close,preclose,pct_change,volume,amount) VALUES (?,?,?,?,?,?,?)",
+            ("2026-05-19", "000001", 11.0, 10.0, 10.0, 1000.0, 11000.0),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    screener_artifact_path = (
+        tmp_path
+        / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+    )
+    screener_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    screener_artifact_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "status": "ok",
+                "picks": [{"code": "000001", "name": "平安银行", "close": 11.0}],
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = service.lab_run_view(
+        target_date="2026-05-19",
+        lab_id="cup_handle_lab",
+        requested_by="test",
+        dry_run=False,
+    )
+
+    contract_path = tmp_path / "var/artifacts/labs/cup_handle_lab/daily_report.json"
+    detail_payload = service.lab_run_detail_view(
+        target_date="2026-05-19",
+        lab_id="cup_handle_lab",
+    )
+    report_payload = detail_payload["lab_result"]["artifacts"]["cup_handle_daily_report"]
+
+    assert payload["_meta"]["status"] == "ok"
+    assert contract_path.exists()
+    assert detail_payload["_meta"]["status"] == "ok"
+    assert report_payload["status"] == "ok"
+    assert report_payload["candidates"] == ["000001"]
+    assert report_payload["candidate_details"][0]["stock_code"] == "000001"
 
 
 def test_worker_main_returns_nonzero_for_blocked_snapshot(

@@ -121,6 +121,7 @@ class LabRuntimeAdapter:
 
         # Step 1: Load cup handle candidates
         raw_candidates: list[dict[str, Any]] = []
+        screener_read_error: str | None = None
         if screener_artifact_path.exists():
             try:
                 payload = json.loads(screener_artifact_path.read_text(encoding="utf-8"))
@@ -137,10 +138,37 @@ class LabRuntimeAdapter:
                                 "cup_bottom_price": pick.get("cup_bottom_price"),
                                 "entry_price": pick.get("close"),
                             })
-            except (OSError, json.JSONDecodeError):
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                screener_read_error = str(exc)
+                logger.warning(
+                    "cup_handle_lab screener artifact degraded: target_date=%s path=%s error=%s",
+                    target_date,
+                    screener_artifact_path,
+                    exc,
+                )
 
         if not raw_candidates:
+            if screener_read_error is not None:
+                return {
+                    "task_id": task_id,
+                    "lab_id": "cup_handle_lab",
+                    "status": "failed",
+                    "message": "杯柄实验室读取上游筛选结果失败",
+                    "target_date": target_date,
+                    "candidates_count": 0,
+                    "candidates": [],
+                    "analysis_version": "v2_enhanced",
+                    "degraded": True,
+                    "degraded_steps": ["screener_artifact_read"],
+                    "details": {
+                        "artifact_path": str(screener_artifact_path),
+                        "error": screener_read_error,
+                    },
+                    "filter_applied": {
+                        "include_followers": include_followers,
+                        "min_resonance_score": min_resonance_score,
+                    },
+                }
             return {
                 "task_id": task_id,
                 "lab_id": "cup_handle_lab",
