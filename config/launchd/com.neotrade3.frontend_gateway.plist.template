@@ -17,7 +17,7 @@
       <string>--port</string>
       <string>5174</string>
       <string>--api-base</string>
-      <string>http://127.0.0.1:18030</string>
+      <string>http://127.0.0.1:18031</string>
       <string>--dist-dir</string>
       <string>{{PROJECT_ROOT}}/neotrade3-dashboard/dist</string>
     </array>

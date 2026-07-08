@@ -136,7 +136,7 @@ def _api_program_arguments(project_root: Path, python_bin: str, node_bin: str) -
         "--host",
         "127.0.0.1",
         "--port",
-        "18030",
+        "18031",
     ]
 
 
@@ -150,7 +150,7 @@ def _gateway_program_arguments(project_root: Path, python_bin: str, node_bin: st
         "--port",
         "5174",
         "--api-base",
-        "http://127.0.0.1:18030",
+        "http://127.0.0.1:18031",
         "--dist-dir",
         str(project_root / "neotrade3-dashboard" / "dist"),
     ]

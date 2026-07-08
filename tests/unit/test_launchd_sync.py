@@ -76,7 +76,7 @@ def test_render_launch_agents_uses_monday_to_friday_and_existing_log_paths(tmp_p
         "--host",
         "127.0.0.1",
         "--port",
-        "18030",
+        "18031",
     ]
     assert api.document["KeepAlive"] is True
     assert gateway.document["ProgramArguments"][0] == node_bin
