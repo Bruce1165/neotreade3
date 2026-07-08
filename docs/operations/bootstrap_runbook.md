@@ -273,7 +273,8 @@ http://127.0.0.1:5173/
 - `Overview` 会读取 `data/status`、`sectors/hot`、`concepts/mainline`、`lowfreq/execution/queue` 等
 - `Screeners` 会读取 `screeners`、`screeners/runs`、`screeners/bulk-runs`
 - `Stock Check` 会读取 `check-stock`
-- `Lowfreq` 会读取 `market-phase`、`sectors/hot`、`lowfreq/portfolio`、`lowfreq/backtest/*`
+- `Lowfreq` 会读取 `market-phase`、`sectors/hot`、`lowfreq-score/pool|events|summary`、`lowfreq/backtest/*`
+- `Lowfreq` 会写入 `lowfreq-score/manual/buy-intent`、`lowfreq-score/manual/abandon`、`lowfreq/backtest/run`
 
 ### 7.4 当前限制
 
