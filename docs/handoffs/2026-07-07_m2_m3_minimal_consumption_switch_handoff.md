@@ -8,8 +8,8 @@
 
 - 让新会话直接恢复当前 `M2/M3` formal front 的真实实现状态
 - 明确哪些内容已经落地到代码
-- 明确哪些内容只存在于 working tree，尚未提交
-- 明确当前为什么不能继续假装把 `Commit B` 切成纯净窄提交
+- 明确哪些 formal-front 切片已经进入提交历史
+- 明确当前 remaining working tree 不应再被笼统表述成“formal-front 尚未提交”
 
 ## 2. 当前工作范围
 
@@ -58,37 +58,38 @@
 
 - `lowfreq_engine_v16_advanced.py`
 
-当前已落地但尚未提交的 formal front 接线包括：
+当前已进入提交历史的 formal front / related engine 切片包括：
 
-- formal `M1 -> M2/M3` 构建入口导入
-- `generate_buy_signals()` 增加 `formal`
-- 单个 candidate 增加 `formal`
-- formal 构建失败显式暴露 `status=error`
+- `4c416e6 refactor(engine): add lowfreq signal structure baseline`
+- `3c9393b feat(engine): wire lowfreq formal front chain`
+- `a160796 feat(engine): expose lowfreq execution result summary`
+- `1ccb680 fix(engine): clamp invalid lowfreq annual return`
+- `0c39ca6 fix(engine): honor strong leader soft release flag`
+- `9ea8f33 feat(engine): enrich lowfreq execution audit events`
 
 ### 4.3 API 投影层
 
 - `apps/api/main.py`
 
-当前已落地但尚未提交的投影包括：
+当前已进入提交历史的 API / workbench formal-front 切片包括：
 
-- `_lowfreq_formal_front_projection(...)`
-- `signal_memory` 写入 `formal_front`
-- `lowfreq_score_sync_state()` 写入 `formal_front`
-- `next_candidates` 写入 `formal_front`
-- workbench 在可用时优先消费 `formal_front`
-- hot sectors snapshot 透传已有 `formal_front`
+- `05d5c46 fix(api): enforce formal priority in lowfreq workbench`
+- `1b6e5ad feat(api): carry lowfreq formal front into hot sectors`
+- `30723fa feat(api): persist lowfreq formal front in signal memory`
+- `de8d08c feat(api): project lowfreq formal front into score pool`
+- `7a097c5 fix(api): add lowfreq formal front status helpers`
+- `8c36629 feat(api): project lowfreq formal front into next candidates`
 
 ### 4.4 report 脚本消费层
 
 - `scripts/generate_lowfreq_top200_attribution_report.py`
 
-当前已落地但尚未提交的 report 消费切换包括：
+当前与 report/formal-front 直接相关、已进入历史的切片包括：
 
-- `_signal_layer_snapshot(...)` 增加 `formal` 优先兼容翻译
-- 在存在 formal 时优先回填：
-  - `candidate_tier`
-  - `entry_ready`
-- 同时保留 `formal_front` 给后续章节读取
+- `753ede8 refactor(m3): extract shared lowfreq formal front projection`
+- `fb0a629 refactor(report): split candidate and entry attribution flow`
+
+当前 handoff 应以此为准：report 侧 formal-front 最小消费切换已在 `HEAD`，不再属于“working tree 待提交”事项。
 
 ### 4.5 测试层
 
@@ -103,41 +104,37 @@
 
 ### 5.1 已提交部分
 
-当前唯一已提交的本轮代码提交是：
+当前已确认进入历史的 formal-front 主线提交包括：
 
 - `8ba2f84`
 - `feat(m2-m3): add formal front contracts and assemblers`
+- `4c416e6 refactor(engine): add lowfreq signal structure baseline`
+- `3c9393b feat(engine): wire lowfreq formal front chain`
+- `a160796 feat(engine): expose lowfreq execution result summary`
+- `1ccb680 fix(engine): clamp invalid lowfreq annual return`
+- `0c39ca6 fix(engine): honor strong leader soft release flag`
+- `9ea8f33 feat(engine): enrich lowfreq execution audit events`
+- `05d5c46 fix(api): enforce formal priority in lowfreq workbench`
+- `1b6e5ad feat(api): carry lowfreq formal front into hot sectors`
+- `30723fa feat(api): persist lowfreq formal front in signal memory`
+- `de8d08c feat(api): project lowfreq formal front into score pool`
+- `7a097c5 fix(api): add lowfreq formal front status helpers`
+- `8c36629 feat(api): project lowfreq formal front into next candidates`
+- `753ede8 refactor(m3): extract shared lowfreq formal front projection`
+- `fb0a629 refactor(report): split candidate and entry attribution flow`
 
-该提交只包含：
+### 5.2 当前 remaining working tree 的正确表述
 
-- `neotrade3/cycle_intelligence/*`
-- `neotrade3/decision_engine/*`
-- `tests/unit/test_m2_m3_contract_skeleton.py`
+当前仍可能存在其他未审计脏改动，但不能再把它们笼统记为：
 
-### 5.2 尚未提交但已实现的部分
+- “formal-front 主线仍只在 working tree”
+- “Commit B / C 尚未提交”
 
-当前 working tree 中已完成但未提交的内容包括：
+更准确的口径应是：
 
-- `lowfreq_engine_v16_advanced.py` 中的 formal front 接线
-- `apps/api/main.py` 中的 formal front 压缩投影
-- `apps/api/main.py` 中的 workbench / hot sectors formal front 优先消费
-- `scripts/generate_lowfreq_top200_attribution_report.py` 中的 formal 优先快照层
-- `tests/unit/test_lowfreq_engine_v16_signal_convergence.py` 中的 formal 引擎测试
-- `tests/unit/test_lowfreq_intent_conflicts.py` 中的 formal score 投影测试
-- `tests/unit/test_lowfreq_formal_front_projection.py`
-- `tests/unit/test_lowfreq_workbench_formal_consumption.py`
-- `tests/unit/test_lowfreq_phase5_projection_sync.py`
-
-### 5.3 为什么没有继续提交 `Commit B / C`
-
-原因不是“忘了提交”，而是已经核实出真实耦合：
-
-1. `lowfreq_engine_v16_advanced.py` 当前 diff 不只包含 formal front
-2. 关键 hunk 已与既有未提交的信号结构改造发生真实耦合
-3. 若继续强拆，会把本轮之外的改动误带入提交
-4. 因此当前已经明确冻结策略：
-   - 保留 `Commit A`
-   - 不再假装把 `Commit B` 切成纯净窄提交
+1. formal-front 主线已经通过多段窄提交收口
+2. 当前 working tree 的剩余内容需要按实时 diff 重新审计
+3. 新会话不得继续沿用“API/report formal-front 尚未提交”的旧判断
 
 ## 6. 当前运行语义
 
@@ -195,12 +192,16 @@
 
 ## 7. 已有验证
 
-当前最近一次最小验证结果：
+当前已知验证证据分两类：
 
-- `python3 -m pytest -q tests/unit/test_m2_m3_contract_skeleton.py tests/unit/test_lowfreq_engine_v16_signal_convergence.py tests/unit/test_lowfreq_intent_conflicts.py tests/unit/test_lowfreq_formal_front_projection.py tests/unit/test_lowfreq_workbench_formal_consumption.py tests/unit/test_lowfreq_phase5_projection_sync.py`
+- formal-front 主线落地期的聚合验证：
+  - `python3 -m pytest -q tests/unit/test_m2_m3_contract_skeleton.py tests/unit/test_lowfreq_engine_v16_signal_convergence.py tests/unit/test_lowfreq_intent_conflicts.py tests/unit/test_lowfreq_formal_front_projection.py tests/unit/test_lowfreq_workbench_formal_consumption.py tests/unit/test_lowfreq_phase5_projection_sync.py`
   - `73 passed`
+- API 切片与后续 test-only 审计期的定向验证：
+  - `python3 -m pytest -q tests/unit/test_lowfreq_intent_conflicts.py tests/unit/test_lowfreq_workbench_formal_consumption.py tests/unit/test_lowfreq_workbench_formal_priority.py tests/unit/test_lowfreq_score_pool_formal_front.py`
+  - `30 passed`
 - `python3 -m py_compile ...`
-  - 已通过本轮涉及文件的最小语法校验
+  - 已通过相关轮次涉及文件的最小语法校验
 
 ## 8. 新会话续接建议
 
@@ -215,17 +216,16 @@
    - `docs/superpowers/specs/2026-07-07-m2-m3-minimal-consumption-switch-plan.md`
    - `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
 3. 接着先确认当前目标是：
-   - 继续基于 working tree 推进
-   - 还是先处理 dirty files 的边界与后续提交策略
+   - 先更新/核对 handoff 与 repo 实时状态
+   - 再审计当前 dirty files 的真实边界与后续提交策略
 4. 不要在未重新确认的情况下做以下动作：
-   - 强拆 `Commit B`
+   - 把旧 handoff 中“API/report formal-front 尚未提交”继续当成事实
    - 把 `hold/exit` 偷带进本轮
    - 把 workbench/report 的最小消费切换误表述成“已经完成全量迁移”
 
 ## 9. 一句话提醒
 
-当前最重要的事实不是“已经提交完”，而是：
+当前最重要的事实是：
 
-- `M2/M3` 前半段 formal 消费切换已经在代码层面落地并验证通过
-- 但 git 提交态只停在 `Commit A`
-- 后续继续时，必须始终区分“已提交对象层”和“working tree 中的引擎/API 接线层”
+- `M2/M3` 前半段 formal-front 主线已经在代码层面落地、验证，并通过多段窄提交进入历史
+- 当前真正需要谨慎处理的是 remaining working tree 的实时边界，而不是重复处理已经落地的 API/report formal-front 切片

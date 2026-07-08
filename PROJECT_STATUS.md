@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-07
+**Last Updated**: 2026-07-08
 
 ---
 
@@ -326,9 +326,9 @@
 - 新会话续接以本文件为准：只记录“已经存在且可运行”的入口、约束与验收口径；其它文档仅作为背景参考，使用前需按代码现状核对。
 - 进行中：
   - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
-  - `M2/M3` 前半段最小正式消费切换已完成代码落地与测试校验；当前正式对象/组装器骨架已提交，formal front 已继续推进到 workbench 与 top200 attribution report 的最小消费面，但引擎 / API / workbench / report 接线仍保留在 working tree，尚未形成安全窄提交
+  - `M2/M3` 前半段最小正式消费切换已完成多段窄提交收口；正式对象/组装器、引擎 formal front 接线、API formal-front 消费切片与 workbench 优先级修正都已进入提交历史，top200 attribution report 所依赖的公共投影与 report 拆分也已在 `HEAD`
 - 下一步第一件事：
-  - 将 `M1` 首批正式对象的质量信号继续向后推进到真正的 `M2/M3` 最小消费切换，避免后续新逻辑继续绕过 `/api/data-control/m1/...` 正式入口
+  - 先更新交接与计划口径，并基于 repo 实时状态重新审计剩余 working tree，避免继续沿用“API/report formal-front 尚未提交”的过期判断
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
@@ -354,13 +354,15 @@
   - `python3 -m pytest -q tests/unit/test_m2_m3_contract_skeleton.py tests/unit/test_lowfreq_engine_v16_signal_convergence.py tests/unit/test_lowfreq_intent_conflicts.py tests/unit/test_lowfreq_formal_front_projection.py tests/unit/test_lowfreq_workbench_formal_consumption.py tests/unit/test_lowfreq_phase5_projection_sync.py` -> `73 passed`
   - `python3 -m py_compile ...` 已通过本轮涉及文件的最小语法校验
 - 当前 git 边界状态：
-  - 已提交：`8ba2f84 feat(m2-m3): add formal front contracts and assemblers`
-  - 未提交但已通过验证：`lowfreq_engine_v16_advanced.py`、`apps/api/main.py`、`scripts/generate_lowfreq_top200_attribution_report.py` 与相关测试中的 formal front 接线
-  - 已确认：`Commit B` 当前与既有未提交结构改动存在真实耦合，不能再假装切成纯净窄提交
+  - 已提交对象层：`8ba2f84 feat(m2-m3): add formal front contracts and assemblers`
+  - 已提交引擎层：`4c416e6 refactor(engine): add lowfreq signal structure baseline`、`3c9393b feat(engine): wire lowfreq formal front chain`、`a160796 feat(engine): expose lowfreq execution result summary`、`1ccb680 fix(engine): clamp invalid lowfreq annual return`、`0c39ca6 fix(engine): honor strong leader soft release flag`、`9ea8f33 feat(engine): enrich lowfreq execution audit events`
+  - 已提交 API/workbench 层：`05d5c46 fix(api): enforce formal priority in lowfreq workbench`、`1b6e5ad feat(api): carry lowfreq formal front into hot sectors`、`30723fa feat(api): persist lowfreq formal front in signal memory`、`de8d08c feat(api): project lowfreq formal front into score pool`、`7a097c5 fix(api): add lowfreq formal front status helpers`、`8c36629 feat(api): project lowfreq formal front into next candidates`
+  - 已提交 report/public projection 依赖：`753ede8 refactor(m3): extract shared lowfreq formal front projection`、`fb0a629 refactor(report): split candidate and entry attribution flow`
+  - 当前应显式区分：上述 formal-front 主线已进入提交历史；working tree 中剩余脏改动并不等于“formal-front 主线整体仍未提交”
 - 当前最重要的事实：
   - `M2/M3` 前半段 formal 消费切换在代码层面已经可运行、可测试
-  - 但提交态仍停在 `Commit A`
-  - 后续继续工作时，必须显式区分“已提交对象层”与“工作树中的引擎/API 接线层”
+  - 且核心 consumer 链已通过多段窄提交进入历史
+  - 后续继续工作时，必须显式区分“已提交的 formal-front 主线”与“当前 working tree 中其他未审计脏改动”
 
 
 ---
