@@ -22773,6 +22773,7 @@ class BootstrapApiService:
                         "wave_phase": str(item.get("wave_phase") or ""),
                         "resonance": float(item.get("resonance") or 0.0),
                         "reasons": list(item.get("reasons") or []),
+                        "formal_front": self._lowfreq_formal_front_projection(item),
                     }
                 )
             next_candidates.sort(key=lambda x: float(x.get("buy_score") or 0.0), reverse=True)
