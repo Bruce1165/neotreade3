@@ -627,7 +627,10 @@ def _full_light_row(
             "signal_progress_label": _progress_label(signal_progress),
             "signal_time_progress_pct": signal_time_progress,
             "buy_progress_pct": buy_progress,
-            "buy_progress_label": _progress_label(buy_progress),
+            "buy_progress_label": str(
+                first_trade_item.get("buy_progress_label")
+                or _progress_label(buy_progress)
+            ),
             "buy_time_progress_pct": buy_time_progress,
             "reason_bucket": str(row.get("reason_bucket") or ""),
             "primary_reason": str(row.get("primary_reason") or ""),
