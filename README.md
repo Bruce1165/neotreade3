@@ -61,14 +61,20 @@ Current API groups:
   - `GET /api/lowfreq/backtest/reports/<report_id>.pdf|.json`
   - `GET /api/lowfreq/backtest/status?report_id=<report_id>`
   - `GET /api/lowfreq/backtest/window-summary?end_date=YYYY-MM-DD&window_trading_days=60`
-  - `GET /api/lowfreq/portfolio?date=YYYY-MM-DD`
+  - `GET /api/lowfreq-score/pool?date=YYYY-MM-DD`
+  - `GET /api/lowfreq-score/pool/<code>?date=YYYY-MM-DD`
+  - `GET /api/lowfreq-score/events?date=YYYY-MM-DD`
+  - `GET /api/lowfreq-score/summary?date=YYYY-MM-DD`
+  - `POST /api/lowfreq-score/manual/buy-intent`
+  - `POST /api/lowfreq-score/manual/abandon`
   - `GET /api/lowfreq/confidence/overview?date=YYYY-MM-DD`
   - `GET /api/lowfreq/confidence/calibration?date=YYYY-MM-DD`
   - `POST /api/lowfreq/confidence/run`
   - `GET /api/lowfreq/rsi/regression`
   - `POST /api/lowfreq/rsi/weekly-record`
-  - `POST /api/lowfreq/manual/buy-intent`
-  - `POST /api/lowfreq/manual/abandon`
+  - `GET /api/lowfreq/portfolio?date=YYYY-MM-DD` `[deprecated]`
+  - `POST /api/lowfreq/manual/buy-intent` `[deprecated]`
+  - `POST /api/lowfreq/manual/abandon` `[deprecated]`
   - `POST /api/lowfreq/settings/autopilot`
   - `GET /api/lowfreq/execution/queue`
   - `POST /api/lowfreq/execution/processed`
