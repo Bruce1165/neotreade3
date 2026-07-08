@@ -1803,6 +1803,10 @@ def test_market_intelligence_review_board_view_focus_candidate_prefers_focus_the
                 "recommendation_status": "推荐",
                 "leader_summary": {"candidate_types": ["institutional_attention", "trading_leader"]},
                 "thematic_tags": {"penetration_stage": {"values": ["1_10"]}},
+                "special_markers": ["boundary_recovered_candidate"],
+                "special_marker_notes": [
+                    "边界样本：因补齐渗透率标注后恢复为推荐，需人工重点复核主题集中度。"
+                ],
                 "candidate": {
                     "roles": {
                         "institutional_attention": {},
@@ -1818,6 +1822,12 @@ def test_market_intelligence_review_board_view_focus_candidate_prefers_focus_the
 
     assert payload["review_focus"]["theme"]["concept_name"] == "东数西算(算力)"
     assert payload["review_focus"]["candidate"]["stock_code"] == "002202"
+    assert payload["review_focus"]["candidate"]["special_markers"] == [
+        "boundary_recovered_candidate"
+    ]
+    assert payload["review_focus"]["candidate"]["special_marker_notes"] == [
+        "边界样本：因补齐渗透率标注后恢复为推荐，需人工重点复核主题集中度。"
+    ]
     assert payload["candidate_summary"]["focus_candidate"]["stock_code"] == "002202"
 
 
