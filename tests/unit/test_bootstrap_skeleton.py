@@ -1927,6 +1927,105 @@ def test_v1_screener_results_endpoint_returns_not_implemented() -> None:
         thread.join(timeout=2)
 
 
+def test_bootstrap_api_handler_rejects_invalid_legacy_api_key_on_post() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT, api_key="test-key")
+    handler = build_handler(service)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        body = json.dumps(
+            {
+                "screener_id": "cup_handle_v4",
+                "date": "2026-05-19",
+                "requested_by": "test",
+                "dry_run": False,
+                "parameters": {},
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/screeners/run",
+            data=body,
+            headers={"Content-Type": "application/json", "X-API-Key": "wrong-key"},
+            method="POST",
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(request)
+        assert exc_info.value.code == 401
+        payload = json.loads(exc_info.value.read().decode("utf-8"))
+        assert payload["error"]["code"] == "unauthorized"
+        assert payload["error"]["message"] == "invalid API key"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_bootstrap_api_handler_allows_post_without_legacy_api_key_header() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT, api_key="test-key")
+    handler = build_handler(service)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        calendar_path = PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+        calendar_path.parent.mkdir(parents=True, exist_ok=True)
+        previous_calendar_text = (
+            calendar_path.read_text(encoding="utf-8") if calendar_path.exists() else None
+        )
+        calendar_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "generated_at": "2026-05-20T00:00:00Z",
+                    "generated_by": "test",
+                    "source": {"type": "test"},
+                    "trading_days": ["2026-05-19"],
+                    "trading_day_count": 1,
+                },
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        body = json.dumps(
+            {
+                "screener_id": "cup_handle_v4",
+                "date": "2026-05-19",
+                "requested_by": "test",
+                "dry_run": False,
+                "parameters": {},
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/screeners/run",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["_meta"]["status"] == "ok"
+        assert payload["screener_run"]["screener_id"] == "cup_handle_v4"
+        assert payload["screener_run"]["target_date"] == "2026-05-19"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        if "previous_calendar_text" in locals():
+            if previous_calendar_text is None:
+                if calendar_path.exists():
+                    calendar_path.unlink()
+            else:
+                calendar_path.write_text(previous_calendar_text, encoding="utf-8")
+
+
 def test_v1_stock_check_endpoint_returns_not_implemented() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     handler = build_handler(service)

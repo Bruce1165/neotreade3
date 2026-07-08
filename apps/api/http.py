@@ -85,6 +85,20 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
                 message="missing or invalid API key",
             )
 
+        def _accept_legacy_api_key(self) -> None:
+            # API key auth is retained only as a backward-compatible header contract.
+            # Active local write paths are no longer gated on it.
+            provided = self.headers.get("X-API-Key")
+            if not provided:
+                return
+            if service.api_key is None or provided == service.api_key:
+                return
+            raise ApiError(
+                status_code=HTTPStatus.UNAUTHORIZED,
+                code="unauthorized",
+                message="invalid API key",
+            )
+
         def _send_json_response(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True).encode(
                 "utf-8"
@@ -187,7 +201,7 @@ def build_handler(service: "BootstrapApiService") -> type[BaseHTTPRequestHandler
         def do_POST(self) -> None:  # noqa: N802
             started_at = time.perf_counter()
             try:
-                self._require_api_key(allow_if_not_configured=False)
+                self._accept_legacy_api_key()
                 content_length = int(self.headers.get("Content-Length", "0"))
                 raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
                 payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
