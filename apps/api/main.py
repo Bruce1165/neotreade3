@@ -17255,6 +17255,51 @@ class BootstrapApiService:
                 projected[code] = dict(formal_front)
         return projected
 
+    @staticmethod
+    def _lowfreq_formal_front_ok(formal_front: object) -> bool:
+        return isinstance(formal_front, dict) and str(formal_front.get("status") or "").strip() == "ok"
+
+    @classmethod
+    def _lowfreq_formal_front_entry_ready(cls, formal_front: object) -> bool:
+        if not cls._lowfreq_formal_front_ok(formal_front):
+            return False
+        entry_state = (
+            formal_front.get("entry_state")
+            if isinstance(formal_front.get("entry_state"), dict)
+            else {}
+        )
+        return bool(entry_state.get("actionable")) or str(entry_state.get("status") or "").strip() == "ready"
+
+    @classmethod
+    def _lowfreq_formal_front_tracking_watch(cls, formal_front: object) -> bool:
+        if not cls._lowfreq_formal_front_ok(formal_front):
+            return False
+        tracking_state = (
+            formal_front.get("tracking_state")
+            if isinstance(formal_front.get("tracking_state"), dict)
+            else {}
+        )
+        identify_state = (
+            formal_front.get("identify_state")
+            if isinstance(formal_front.get("identify_state"), dict)
+            else {}
+        )
+        return (
+            str(tracking_state.get("status") or "").strip() == "tracking"
+            or str(identify_state.get("status") or "").strip() == "identified"
+        )
+
+    @classmethod
+    def _lowfreq_formal_front_blocked(cls, formal_front: object) -> bool:
+        if not cls._lowfreq_formal_front_ok(formal_front):
+            return False
+        constraints = (
+            formal_front.get("m1_constraints")
+            if isinstance(formal_front.get("m1_constraints"), dict)
+            else {}
+        )
+        return bool(constraints.get("blocked"))
+
     def lowfreq_manual_buy_intent_view(
         self,
         *,
