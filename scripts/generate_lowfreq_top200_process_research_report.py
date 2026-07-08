@@ -25,6 +25,40 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _resolve_process_research_inputs(
+    *,
+    base_backtest_json: Optional[Path],
+    variant_backtest_json: Optional[Path],
+    base_attribution_json: Optional[Path],
+    variant_attribution_json: Optional[Path],
+) -> dict[str, Path]:
+    provided = {
+        "base_backtest_json": base_backtest_json,
+        "variant_backtest_json": variant_backtest_json,
+        "base_attribution_json": base_attribution_json,
+        "variant_attribution_json": variant_attribution_json,
+    }
+    missing = [
+        f"--{name.replace('_', '-')}"
+        for name, value in provided.items()
+        if value is None
+    ]
+    if missing:
+        raise ValueError(
+            "explicit input artifacts are required for process research; "
+            f"missing {', '.join(missing)}"
+        )
+    resolved: dict[str, Path] = {}
+    for name, value in provided.items():
+        path = Path(value)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{name.replace('_', '-')} not found: {path}"
+            )
+        resolved[name] = path
+    return resolved
+
+
 def _date_from_text(value: str) -> date:
     return date.fromisoformat(str(value))
 
@@ -686,35 +720,44 @@ def main() -> int:
     parser.add_argument(
         "--base-backtest-json",
         type=Path,
-        default=PROJECT_ROOT / "var/artifacts/lowfreq_backtest/lowfreq_v16_capture_first_2024-12-18_2025-12-31_capture_first_top200_capacity_50m_8pos_oneprice_hold_first_market_tight_20260620_payload.json",
+        default=None,
     )
     parser.add_argument(
         "--variant-backtest-json",
         type=Path,
-        default=PROJECT_ROOT / "var/artifacts/lowfreq_backtest/lowfreq_v16_capture_first_2024-12-18_2025-12-31_capture_first_top200_capacity_50m_8pos_oneprice_hold_first_market_tight_chase_block_20260621_payload.json",
+        default=None,
     )
     parser.add_argument(
         "--base-attribution-json",
         type=Path,
-        default=PROJECT_ROOT / "var/artifacts/lowfreq_top200_attribution/capture_first_top200_capacity_50m_8pos_oneprice_hold_first_market_tight_20260620/top200_2025_model_attribution.json",
+        default=None,
     )
     parser.add_argument(
         "--variant-attribution-json",
         type=Path,
-        default=PROJECT_ROOT / "var/artifacts/lowfreq_top200_attribution/capture_first_top200_capacity_50m_8pos_oneprice_hold_first_market_tight_chase_block_20260621/top200_2025_model_attribution.json",
+        default=None,
     )
     parser.add_argument("--year", type=int, default=2025)
     parser.add_argument("--report-id", type=str, default="")
     args = parser.parse_args()
+    try:
+        resolved_inputs = _resolve_process_research_inputs(
+            base_backtest_json=args.base_backtest_json,
+            variant_backtest_json=args.variant_backtest_json,
+            base_attribution_json=args.base_attribution_json,
+            variant_attribution_json=args.variant_attribution_json,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        parser.error(str(exc))
 
     report_id = str(args.report_id or f"top200_process_research_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
     output_dir = PROJECT_ROOT / "var/artifacts/lowfreq_top200_process_research" / report_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    base_payload = _load_json(Path(args.base_backtest_json))
-    variant_payload = _load_json(Path(args.variant_backtest_json))
-    base_attr = _load_json(Path(args.base_attribution_json))
-    variant_attr = _load_json(Path(args.variant_attribution_json))
+    base_payload = _load_json(resolved_inputs["base_backtest_json"])
+    variant_payload = _load_json(resolved_inputs["variant_backtest_json"])
+    base_attr = _load_json(resolved_inputs["base_attribution_json"])
+    variant_attr = _load_json(resolved_inputs["variant_attribution_json"])
     base_items = list(base_attr.get("items") or [])
     variant_items = list(variant_attr.get("items") or [])
     base_map = {str(item["code"]): dict(item) for item in base_items}
