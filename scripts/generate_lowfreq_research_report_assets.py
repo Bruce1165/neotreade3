@@ -14,6 +14,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, TradeRecord
 
 
+def _entry_signal_rows(signals: Any) -> list[dict[str, Any]]:
+    if not isinstance(signals, dict):
+        return []
+    entry = signals.get("entry_signals")
+    if isinstance(entry, list):
+        return [dict(item) for item in entry if isinstance(item, dict)]
+    return []
+
+
 def run_backtest_with_daily_values(
     *,
     engine: LowFreqTradingEngineV16,
@@ -198,7 +207,7 @@ def run_backtest_with_daily_values(
 
             if i % int(engine.REBALANCE_DAYS) == 0 and len(positions) < int(engine.MAX_POSITIONS):
                 signals = engine.generate_buy_signals(current_date)
-                raw = signals.get("buy_signals", []) if isinstance(signals, dict) else []
+                raw = _entry_signal_rows(signals)
                 for sig in raw:
                     if not isinstance(sig, dict):
                         continue
