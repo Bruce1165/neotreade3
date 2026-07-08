@@ -144,6 +144,163 @@ def test_update_daily_prices_authoritative_prefers_tushare(monkeypatch, tmp_path
     assert calls["tencent"] == 0
 
 
+def test_update_daily_prices_tushare_rebuilds_trading_calendar_ledger(monkeypatch, tmp_path) -> None:
+    db_path = Path(tmp_path) / "stock_data.db"
+    sqlite3.connect(str(db_path)).close()
+    monkeypatch.setenv("NEOTRADE3_STOCK_DB_PATH", str(db_path))
+    svc = BootstrapApiService(project_root=str(Path(__file__).resolve().parents[2]))
+
+    rebuild_calls: list[dict[str, str]] = []
+
+    monkeypatch.setattr(svc, "_ensure_daily_price_capture_tables", lambda conn: None)
+    monkeypatch.setattr(svc, "_ensure_daily_price_publish_batch_table", lambda conn: None)
+    monkeypatch.setattr(
+        BootstrapApiService,
+        "_is_market_closed_cn",
+        classmethod(lambda cls, *, target_trade_date: True),
+    )
+    monkeypatch.setattr(
+        svc,
+        "_calendar_membership",
+        lambda conn, target_date: ("trading_calendar_cache", True),
+    )
+    monkeypatch.setattr(
+        svc,
+        "_backfill_daily_prices_from_tushare_daily",
+        lambda **kwargs: {
+            "status": "ok",
+            "coverage": {"close": 1.0, "open": 1.0, "amount": 1.0, "turnover": 0.5},
+            "format_gate": {"passed": True, "gate_reasons": []},
+            "db_upserted": 4819,
+            "before_rows": 0,
+            "after_rows": 4819,
+            "volume_normalized_rows": 0,
+        },
+    )
+
+    def fake_rebuild(**kwargs):
+        rebuild_calls.append(kwargs)
+        return {
+            "_meta": {"status": "ok"},
+            "trading_calendar": {
+                "generated_by": kwargs["requested_by"],
+                "trading_day_count": 123,
+            },
+        }
+
+    monkeypatch.setattr(svc, "rebuild_trading_calendar_view", fake_rebuild)
+
+    out = svc.update_daily_prices_tushare_view(
+        target_date="2026-06-16",
+        requested_by="unit.test",
+        dry_run=False,
+    )
+
+    assert len(rebuild_calls) == 1
+    assert rebuild_calls[0]["sqlite_db_path"] == str(db_path)
+    assert rebuild_calls[0]["table"] == "daily_prices"
+    assert rebuild_calls[0]["date_column"] == "trade_date"
+    assert out["tushare_update"]["trading_calendar"]["trading_day_count"] == 123
+
+
+def test_daily_pipeline_records_failed_screeners_bulk_run_status(monkeypatch, tmp_path) -> None:
+    db_path = Path(tmp_path) / "stock_data.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE daily_prices (trade_date TEXT)")
+        conn.execute("CREATE TABLE trading_calendar_cache (trade_date TEXT)")
+        conn.execute("INSERT INTO trading_calendar_cache (trade_date) VALUES (?)", ("2026-06-08",))
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setenv("NEOTRADE3_STOCK_DB_PATH", str(db_path))
+    svc = BootstrapApiService(project_root=str(Path(__file__).resolve().parents[2]))
+
+    monkeypatch.setattr(
+        svc,
+        "update_daily_prices_authoritative_view",
+        lambda **kwargs: {
+            "_meta": {"status": "ok"},
+            "status": "ok",
+            "fallback_used": False,
+            "authoritative_update": {
+                "tushare_update": {
+                    "trade_date": "2026-06-08",
+                    "calendar_is_trading_day": True,
+                    "quality_gate": {"passed": True},
+                    "format_gate": {"passed": True},
+                    "db_upserted": 4819,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        BootstrapApiService,
+        "_is_market_closed_cn",
+        classmethod(lambda cls, *, target_trade_date: True),
+    )
+    monkeypatch.setattr(
+        svc,
+        "tushare_concept_health_view",
+        lambda *, requested_by: {"ok": True, "elapsed_ms": 0.0, "checks": {}, "errors": []},
+    )
+    monkeypatch.setattr(
+        svc,
+        "refresh_team_theme_snapshot_view",
+        lambda *, target_date, requested_by="api": {"snapshot_path": "x"},
+    )
+    monkeypatch.setattr(
+        svc,
+        "ths_concept_mainline_compute_view",
+        lambda *, trade_date, requested_by, top_n=10: {
+            "status": "ok",
+            "trade_date": trade_date,
+            "concept_count": 0,
+            "top_mainline": [],
+            "reason": None,
+        },
+    )
+    monkeypatch.setattr(
+        svc,
+        "screeners_bulk_run_view",
+        lambda **kwargs: {
+            "_meta": {"status": "failed"},
+            "status": "failed",
+            "bulk_run": {"status": "failed", "run_count": 6},
+        },
+    )
+    monkeypatch.setattr(
+        svc,
+        "lowfreq_confidence_daily_run_view",
+        lambda **kwargs: {
+            "date": "2026-06-08",
+            "market_regime": "unknown",
+            "observations_written": 0,
+            "labels_updated": 0,
+            "buckets_written": 0,
+        },
+    )
+    monkeypatch.setattr(svc, "lowfreq_backtest_run_view", lambda **kwargs: {"pdf_url": None, "summary": {}})
+    monkeypatch.setattr(
+        svc,
+        "lowfreq_daily_auto_optimize_view",
+        lambda **kwargs: {"run_id": "x", "selected_overrides": {}, "effective_from": "2026-06-08"},
+    )
+    monkeypatch.setattr(
+        svc,
+        "_write_daily_run_ledger",
+        lambda *, target_date, payload: str(Path(tmp_path) / f"{target_date}.json"),
+    )
+
+    out = svc.daily_pipeline_run_view(target_date="2026-06-08", requested_by="test")
+    steps = out["ledger"]["steps"]
+    bulk_step = next(step for step in steps if step["step_id"] == "screeners_bulk_run")
+    assert bulk_step["status"] == "failed"
+    assert bulk_step["outputs"]["status"] == "failed"
+    assert bulk_step["outputs"]["run_count"] == 6
+
+
 def test_lowfreq_hot_sectors_view_caches_lightweight_ths_concept_payload(monkeypatch) -> None:
     svc = BootstrapApiService(project_root=str(Path(__file__).resolve().parents[2]))
     calls = {"count": 0}
