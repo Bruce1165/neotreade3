@@ -352,7 +352,7 @@ npm run dev
 
 本机当前通过 launchd 管理以下入口:
 
-- `com.neotrade3.api`：API 服务（默认监听 `127.0.0.1:18030`，长期进程）
+- `com.neotrade3.api`：API 服务（默认监听 `127.0.0.1:18031`，长期进程）
 - `com.neotrade3.frontend_gateway`：V3 前端网关（默认监听 `127.0.0.1:5174`，长期进程，托管 `neotrade3-dashboard/dist` 并代理 `/api/*` 与 `/healthz`）
 - `com.neotrade3.scheduler`：每日下载入口（`launchd` 定时触发 `--run-once update_daily_prices_authoritative`）
 - `com.neotrade3.trade_execution_rt`：09:35 实时执行入口（`launchd` 定时触发 `--run-once trade_execution_rt_0935`）
@@ -389,7 +389,7 @@ LaunchAgent 模板与安装约定:
   - 重点看 `path`
   - 重点看 `state`
   - 重点看 `pid`
-- `http://127.0.0.1:18030/healthz`
+- `http://127.0.0.1:18031/healthz`
 - `http://127.0.0.1:5174/healthz`
 
 2026-06-19 的实际排障结论：
@@ -402,7 +402,7 @@ LaunchAgent 模板与安装约定:
   - Python 解释器损坏
   - API 程序本身无法启动
   - `NEOTRADE3_ENV_FILE` 无法读取
-  - `18030` 端口本身不可用
+  - `18031` 端口本身不可用
 
 当前已确认的恢复口径：
 
@@ -410,7 +410,7 @@ LaunchAgent 模板与安装约定:
 - 先不要重启全部 LaunchAgents
 - 先核查：
   - `launchctl print gui/$(id -u)/com.neotrade3.api`
-  - `curl http://127.0.0.1:18030/healthz`
+  - `curl http://127.0.0.1:18031/healthz`
   - `curl -u user:$DASHBOARD_PASSWORD http://127.0.0.1:5174/healthz`
 - 若确认是“旧 plist 文件状态异常”，可用“全新生成的 same-label plist”恢复 `com.neotrade3.api`
 - 恢复后必须重新执行 `scripts/install_launchagents.py check --target-dir "$HOME/Library/LaunchAgents" --launchctl --python-bin "$PROJECT_PYTHON"` 复核
