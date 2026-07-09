@@ -1,16 +1,98 @@
 const DEFAULT_TIMEOUT_MS = 45000;
+const API_ERROR_EVENT = 'neotrade3:api-error';
 
 function createApiError(message, extra = {}) {
   const error = new Error(message);
   error.code = extra.code || null;
   error.details = extra.details || null;
   error.status = extra.status || null;
+  error.endpoint = extra.endpoint || null;
   return error;
 }
 
+function emitApiError(detail) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return;
+  }
+  if (typeof window.CustomEvent !== 'function') {
+    return;
+  }
+  window.dispatchEvent(
+    new window.CustomEvent(API_ERROR_EVENT, {
+      detail: {
+        endpoint: detail.endpoint || '',
+        message: detail.message || '请求失败',
+        status: detail.status || null,
+        code: detail.code || null,
+        happenedAt: new Date().toISOString(),
+      },
+    })
+  );
+}
+
+function normalizeEndpoint(endpoint) {
+  return endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+}
+
+function createTimeoutOrUnreachableError(error, endpoint) {
+  if (error && String(error.name || '') === 'AbortError') {
+    const apiError = createApiError('请求超时：后端不可达或响应过慢（/api）', {
+      code: 'api_timeout',
+      endpoint,
+    });
+    emitApiError({
+      endpoint,
+      message: apiError.message,
+    });
+    return apiError;
+  }
+  const apiError = createApiError('请求失败：后端不可达（/api）', {
+    code: 'api_unreachable',
+    endpoint,
+  });
+  emitApiError({
+    endpoint,
+    message: apiError.message,
+  });
+  return apiError;
+}
+
+async function createHttpError(response, endpoint, fallbackMessage, payload = null) {
+  if (payload == null) {
+    const contentType = response.headers.get('Content-Type') || '';
+    const isJson = contentType.toLowerCase().includes('application/json');
+    if (isJson) {
+      payload = await response.json().catch(() => null);
+    }
+  }
+
+  const errorPayload =
+    payload && typeof payload.error === 'object' && payload.error ? payload.error : null;
+  const message =
+    (payload && typeof payload.message === 'string' && payload.message) ||
+    (errorPayload &&
+      typeof errorPayload.message === 'string' &&
+      errorPayload.message) ||
+    (payload && typeof payload.error === 'string' && payload.error) ||
+    fallbackMessage ||
+    `HTTP ${response.status}`;
+  const apiError = createApiError(message, {
+    code: errorPayload && typeof errorPayload.code === 'string' ? errorPayload.code : null,
+    details: errorPayload && typeof errorPayload.details === 'object' ? errorPayload.details : null,
+    status: response.status,
+    endpoint,
+  });
+  emitApiError({
+    endpoint,
+    message: apiError.message,
+    status: response.status,
+    code: apiError.code,
+  });
+  return apiError;
+}
+
 async function fetchApi(endpoint, options = {}, config = {}) {
-  const normalized = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  const url = normalized;
+  const url = normalizeEndpoint(endpoint);
   const timeoutMs = Number.isFinite(Number(config?.timeoutMs))
     ? Number(config.timeoutMs)
     : DEFAULT_TIMEOUT_MS;
@@ -35,16 +117,13 @@ async function fetchApi(endpoint, options = {}, config = {}) {
     });
   } catch (error) {
     if (timerId) window.clearTimeout(timerId);
-    if (error && String(error.name || "") === "AbortError") {
-      throw new Error("请求超时：后端不可达或响应过慢（/api）");
-    }
-    throw new Error(`请求失败：后端不可达（/api）`);
+    throw createTimeoutOrUnreachableError(error, url);
   } finally {
     if (timerId) window.clearTimeout(timerId);
   }
 
-  const contentType = response.headers.get("Content-Type") || "";
-  const isJson = contentType.toLowerCase().includes("application/json");
+  const contentType = response.headers.get('Content-Type') || '';
+  const isJson = contentType.toLowerCase().includes('application/json');
 
   let payload = null;
   if (isJson) {
@@ -52,26 +131,45 @@ async function fetchApi(endpoint, options = {}, config = {}) {
   }
 
   if (!response.ok) {
-    const errorPayload =
-      payload && typeof payload.error === "object" && payload.error ? payload.error : null;
-    const message =
-      (payload && typeof payload.message === "string" && payload.message) ||
-      (errorPayload &&
-        typeof errorPayload.message === "string" &&
-        errorPayload.message) ||
-      (payload && typeof payload.error === "string" && payload.error) ||
-      `HTTP ${response.status}`;
-    throw createApiError(message, {
-      code: errorPayload && typeof errorPayload.code === "string" ? errorPayload.code : null,
-      details: errorPayload && typeof errorPayload.details === "object" ? errorPayload.details : null,
-      status: response.status,
-    });
+    throw await createHttpError(response, url, undefined, payload);
   }
 
   return isJson ? payload : response.text();
 }
 
-export { fetchApi };
+async function downloadApi(endpoint, options = {}, config = {}) {
+  const url = normalizeEndpoint(endpoint);
+  const timeoutMs = Number.isFinite(Number(config?.timeoutMs))
+    ? Number(config.timeoutMs)
+    : DEFAULT_TIMEOUT_MS;
+
+  let controller = null;
+  let timerId = null;
+  const mergedOptions = { ...options };
+  if (!mergedOptions.signal) {
+    controller = new AbortController();
+    mergedOptions.signal = controller.signal;
+    timerId = window.setTimeout(() => controller.abort(), timeoutMs);
+  }
+
+  let response;
+  try {
+    response = await fetch(url, mergedOptions);
+  } catch (error) {
+    if (timerId) window.clearTimeout(timerId);
+    throw createTimeoutOrUnreachableError(error, url);
+  } finally {
+    if (timerId) window.clearTimeout(timerId);
+  }
+
+  if (!response.ok) {
+    throw await createHttpError(response, url, `HTTP ${response.status}`);
+  }
+
+  return response;
+}
+
+export { API_ERROR_EVENT, downloadApi, fetchApi };
 
 export const checkHealth = () => fetchApi("/healthz");
 export const getApiDocs = () => fetchApi("/api");

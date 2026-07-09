@@ -10,9 +10,13 @@ vi.mock('../context/AppContext', () => ({
   useApp: () => mockUseApp(),
 }))
 
-vi.mock('../services/api', () => ({
-  fetchApi: (...args) => mockFetchApi(...args),
-}))
+vi.mock('../services/api', async () => {
+  const actual = await vi.importActual('../services/api')
+  return {
+    ...actual,
+    fetchApi: (...args) => mockFetchApi(...args),
+  }
+})
 
 vi.mock('../components/DateSelector', () => ({
   default: ({ onRefresh, loading }) => (
@@ -216,6 +220,9 @@ describe('Screeners', () => {
     global.fetch.mockResolvedValue({
       ok: false,
       status: 500,
+      headers: {
+        get: vi.fn().mockReturnValue('text/csv; charset=utf-8'),
+      },
     })
 
     render(<Screeners />)
@@ -245,6 +252,9 @@ describe('Screeners', () => {
     global.fetch.mockResolvedValue({
       ok: true,
       status: 200,
+      headers: {
+        get: vi.fn().mockReturnValue('text/csv; charset=utf-8'),
+      },
       blob: () => Promise.resolve(new Blob(['csv'])),
     })
 
@@ -258,7 +268,8 @@ describe('Screeners', () => {
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
-        '/api/screeners/runs/2026-06-08/shi_pan_xian/download.csv'
+        '/api/screeners/runs/2026-06-08/shi_pan_xian/download.csv',
+        expect.objectContaining({})
       )
     })
   })

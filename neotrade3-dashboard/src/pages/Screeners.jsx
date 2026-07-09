@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Play, Filter, AlertCircle, CheckCircle, Clock, Download, Loader2, Settings, Save } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
-import { fetchApi } from '../services/api';
+import { downloadApi, fetchApi } from '../services/api';
 import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
 
 // 状态中文映射
@@ -177,7 +177,11 @@ export default function Screeners() {
   const loadBulkRunsBlock = useCallback(async () => {
     setBlocks((prev) => ({ ...prev, bulkRuns: startBlock(prev.bulkRuns, true) }));
     try {
-      const bulkRuns = await fetchApi('/api/screeners/bulk-runs?limit=1', {}, { timeoutMs: 60000 });
+      const bulkRuns = await fetchApi(
+        '/api/screeners/bulk-runs?limit=1',
+        {},
+        { timeoutMs: 60000 }
+      );
       setBlocks((prev) => ({ ...prev, bulkRuns: resolveBlock(bulkRuns) }));
     } catch (err) {
       setBlocks((prev) => ({ ...prev, bulkRuns: rejectBlock(prev.bulkRuns, err, true) }));
@@ -223,15 +227,12 @@ export default function Screeners() {
   // 下载结果（按: date + screener_id）
   const handleDownload = async (targetDate, screenerId) => {
     try {
-      const response = await fetch(
+      const response = await downloadApi(
         `/api/screeners/runs/${encodeURIComponent(targetDate)}/${encodeURIComponent(
           screenerId
         )}/download.csv`
       );
-      if (!response.ok) {
-        throw new Error(`下载失败：HTTP ${response.status}`);
-      }
-      
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -242,6 +243,10 @@ export default function Screeners() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err) {
+      if (err?.status) {
+        setError(`下载失败：HTTP ${err.status}`);
+        return;
+      }
       setError(err?.message || '下载失败');
     }
   };
@@ -555,14 +560,14 @@ export default function Screeners() {
                           <td className="py-3 px-4">
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-sm ${
                               run.status === 'success' || run.status === 'completed'
-                                ? 'bg-green-100 text-green-700' 
+                                ? 'bg-green-100 text-green-700'
                                 : run.status === 'failed'
                                 ? 'bg-red-100 text-red-700'
                                 : run.status === 'running'
                                 ? 'bg-blue-100 text-blue-700'
                                 : 'bg-yellow-100 text-yellow-700'
                             }`}>
-                              {run.status === 'success' || run.status === 'completed' ? <CheckCircle size={14} /> : 
+                              {run.status === 'success' || run.status === 'completed' ? <CheckCircle size={14} /> :
                                run.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
                               {STATUS_CN[run.status] || run.status}
                             </span>
