@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { 
+  AlertTriangle,
   LayoutDashboard, 
   Filter, 
   Search, 
@@ -78,6 +79,17 @@ function Header() {
   );
 }
 
+function isEnvironmentUnavailable(apiError) {
+  const code = String(apiError?.code || '').trim();
+  const message = String(apiError?.message || '').trim();
+  return (
+    code === 'api_unreachable' ||
+    code === 'api_timeout' ||
+    message.includes('后端不可达') ||
+    message.includes('请求超时')
+  );
+}
+
 function GlobalBanner() {
   const [tushare, setTushare] = useState(null);
 
@@ -131,6 +143,90 @@ function GlobalBanner() {
   );
 }
 
+function GlobalApiErrorBanner() {
+  const [apiError, setApiError] = useState(null);
+
+  useEffect(() => {
+    function handleApiError(event) {
+      const detail = event?.detail || {};
+      const message = String(detail.message || '').trim() || '请求失败';
+      const endpoint = String(detail.endpoint || '').trim();
+      const status = detail.status == null ? null : String(detail.status);
+      const code = String(detail.code || '').trim();
+      const happenedAt = String(detail.happenedAt || '').trim();
+      setApiError({
+        message,
+        endpoint,
+        status,
+        code,
+        happenedAt,
+      });
+    }
+
+    window.addEventListener('neotrade3:api-error', handleApiError);
+    return () => window.removeEventListener('neotrade3:api-error', handleApiError);
+  }, []);
+
+  if (!apiError) return null;
+
+  const environmentUnavailable = isEnvironmentUnavailable(apiError);
+
+  return (
+    <div className={`${environmentUnavailable ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'} border-b px-6 py-3`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className={`flex items-start gap-3 text-sm ${environmentUnavailable ? 'text-amber-900' : 'text-red-900'}`}>
+          <AlertTriangle size={18} className="mt-0.5 flex-shrink-0" />
+          <div className="space-y-1">
+            <div>
+              <span className="font-semibold">{environmentUnavailable ? '开发环境未连接：' : '接口失败告警：'}</span>
+              <span>
+                {environmentUnavailable
+                  ? '本地 API 服务暂未连接，页面会先展示占位信息。'
+                  : apiError.message}
+              </span>
+            </div>
+            {environmentUnavailable ? (
+              <div className="text-xs text-amber-800">
+                请先启动后端服务或检查本地代理配置。
+                {(apiError.endpoint || apiError.status || apiError.code || apiError.happenedAt) ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-amber-900 font-medium">查看详细信息</summary>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      {apiError.endpoint ? <span>最近请求：{apiError.endpoint}</span> : null}
+                      {apiError.status ? <span>状态码：{apiError.status}</span> : null}
+                      {apiError.code ? <span>错误编码：{apiError.code}</span> : null}
+                      {apiError.happenedAt ? <span>记录时间：{apiError.happenedAt}</span> : null}
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+            ) : (
+              (apiError.endpoint || apiError.status || apiError.code || apiError.happenedAt) ? (
+                <details className="text-xs text-red-800">
+                  <summary className="cursor-pointer text-red-900 font-medium">查看详细信息</summary>
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                    {apiError.endpoint ? <span>最近请求：{apiError.endpoint}</span> : null}
+                    {apiError.status ? <span>状态码：{apiError.status}</span> : null}
+                    {apiError.code ? <span>错误编码：{apiError.code}</span> : null}
+                    {apiError.happenedAt ? <span>记录时间：{apiError.happenedAt}</span> : null}
+                  </div>
+                </details>
+              ) : null
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setApiError(null)}
+          className={`text-xs font-medium ${environmentUnavailable ? 'text-amber-800 hover:text-amber-900' : 'text-red-800 hover:text-red-900'}`}
+        >
+          关闭
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   return (
     <AppProvider>
@@ -140,6 +236,7 @@ function App() {
           <div className="flex-1 ml-64">
             <Header />
             <GlobalBanner />
+            <GlobalApiErrorBanner />
             <main className="p-6">
               <Routes>
                 <Route path="/" element={<Overview />} />
