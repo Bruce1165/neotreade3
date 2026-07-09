@@ -1346,6 +1346,7 @@ export default function Lowfreq() {
   const [backtestEndDate, setBacktestEndDate] = useState('');
   const [backtestResult, setBacktestResult] = useState(null);
   const [backtestRunning, setBacktestRunning] = useState(false);
+  const previousSelectedDateRef = useRef(selectedDate);
   const scorePoolRequestIdRef = useRef(0);
   const [data, setData] = useState({
     marketPhase: null,
@@ -1524,9 +1525,14 @@ export default function Lowfreq() {
   }, [activeTab, fetchBacktestReports, fetchData]);
 
   useEffect(() => {
-    if (!backtestEndDate) {
-      setBacktestEndDate(selectedDate);
-    }
+    const previousSelectedDate = previousSelectedDateRef.current;
+    setBacktestEndDate((prev) => {
+      if (!prev || prev === previousSelectedDate) {
+        return selectedDate;
+      }
+      return prev;
+    });
+    previousSelectedDateRef.current = selectedDate;
   }, [selectedDate, backtestEndDate]);
 
   const postJson = async (url, payload) => {
