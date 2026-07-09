@@ -24,9 +24,8 @@ function Sidebar() {
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: '今日总览' },
     { path: '/market-intelligence', icon: Target, label: '主线审阅' },
-    { path: '/lowfreq', icon: TrendingUp, label: '低频交易' },
-    { path: '/screeners', icon: Filter, label: '筛选器' },
-    { path: '/stock-check', icon: Search, label: '单股核验' },
+    { path: '/lowfreq', icon: TrendingUp, label: '选股工作台' },
+    { path: '/ops', icon: AlertTriangle, label: '运维中心' },
   ];
 
   return (
@@ -40,7 +39,9 @@ function Sidebar() {
         <div className="space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive =
+              location.pathname === item.path ||
+              (item.path !== '/' && location.pathname.startsWith(`${item.path}/`));
             return (
               <Link
                 key={item.path}
