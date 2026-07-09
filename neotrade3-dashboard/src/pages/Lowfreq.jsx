@@ -6,6 +6,7 @@ import SemanticBadge from '../components/SemanticBadge';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
 import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
+import { Link } from 'react-router-dom';
 
 function BlockMessage({ tone = 'gray', message, onRetry }) {
   const toneClass =
@@ -73,6 +74,10 @@ function displaySectorName(value) {
     return displayText(value.sector);
   }
   return displayText(value);
+}
+
+function backtestReportDetailPath(reportId) {
+  return `/lowfreq/backtest-reports/${encodeURIComponent(String(reportId || '').trim())}`;
 }
 
 function manualIntentTypeBadge(intentType) {
@@ -855,12 +860,52 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
 
 function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, onRun, running, reports }) {
   const summary = result?.summary;
+  const executionActionSummary =
+    result?.execution_action_summary && typeof result.execution_action_summary === 'object'
+      ? result.execution_action_summary
+      : {};
+  const exitQuality = result?.exit_quality && typeof result.exit_quality === 'object' ? result.exit_quality : {};
+  const exitRunup =
+    exitQuality.post_exit_runup_pct && typeof exitQuality.post_exit_runup_pct === 'object'
+      ? exitQuality.post_exit_runup_pct
+      : {};
+  const nextSession = result?.next_session && typeof result.next_session === 'object' ? result.next_session : {};
+  const nextSignalSummary =
+    nextSession.signal_summary && typeof nextSession.signal_summary === 'object'
+      ? nextSession.signal_summary
+      : {};
+  const nextCandidates = Array.isArray(nextSession.candidates) ? nextSession.candidates.slice(0, 5) : [];
   const metaStatus = result?._meta?.status;
+  const jobStatus = result?.job?.status;
+  const executionMode = String(result?.execution_mode || summary?.execution_mode || '').trim();
+  const isRunning = metaStatus === 'accepted' || jobStatus === 'running';
+  const isErrorState = metaStatus === 'error' || jobStatus === 'failed' || jobStatus === 'unknown';
   const pendingMessage =
-    metaStatus === 'accepted'
+    isRunning
       ? String(result?.message || '已提交后台运行，报告生成中').trim()
       : '';
-  const jobStatus = result?.job?.status;
+  const errorMessage = isErrorState
+    ? String(
+        result?.job?.reason ||
+          result?.job?.message ||
+          result?.message ||
+          '回测任务状态异常，请重新发起回测或检查后端日志。'
+      ).trim()
+    : '';
+  const actionEntries = Object.entries(executionActionSummary).filter(
+    ([key, value]) => String(key || '').trim() && typeof value === 'number' && Number.isFinite(value)
+  );
+  const nextSignalEntries = Object.entries(nextSignalSummary).filter(
+    ([key, value]) => String(key || '').trim() && typeof value === 'number' && Number.isFinite(value)
+  );
+  const resultGroups = [
+    { title: '核心绩效指标', description: '回测总收益、年化、回撤与夏普', key: 'metrics' },
+    { title: '执行动作摘要', description: '本轮执行了多少买入、保留等动作', key: 'actions' },
+    { title: '退出质量评估', description: '卖出后 10 个交易日的继续上涨情况', key: 'exit-quality' },
+    { title: '下一交易日信号', description: '下一交易日候选与信号摘要', key: 'next-session' },
+    { title: '买点分布', description: '买入日期的出现次数分布', key: 'buy-dates' },
+    { title: '完整下载', description: 'PDF 摘要与 JSON 明细均可下载', key: 'downloads' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -872,15 +917,17 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
           </h3>
           <div className="flex items-center gap-3 flex-wrap">
             <input
+              type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              placeholder="start_date (YYYY-MM-DD，可选)"
+              aria-label="回测开始日期"
               className="px-3 py-2 border border-gray-200 rounded text-sm w-56"
             />
             <input
+              type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              placeholder="end_date (YYYY-MM-DD，可选)"
+              aria-label="回测结束日期"
               className="px-3 py-2 border border-gray-200 rounded text-sm w-56"
             />
             <button
@@ -892,73 +939,197 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             </button>
           </div>
         </div>
+        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+          <div className="text-sm font-medium text-blue-900">本次回测输出包含什么</div>
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {resultGroups.map((group) => (
+              <div key={group.key} className="rounded border border-blue-100 bg-white px-3 py-3">
+                <div className="text-sm font-medium text-gray-900">{group.title}</div>
+                <div className="mt-1 text-xs text-gray-500">{group.description}</div>
+              </div>
+            ))}
+          </div>
+        </div>
         {pendingMessage ? (
-          <div className="mt-4 text-sm text-blue-700 bg-blue-50 border border-blue-100 rounded px-3 py-2">
+          <div className="mt-4 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
             {pendingMessage}（建议稍后再点击下载链接）
           </div>
         ) : null}
-        {result?.pdf_url && (
-          <div className="mt-4 flex items-center gap-3 text-sm">
-            <a className="text-blue-600 hover:underline" href={result.pdf_url} target="_blank" rel="noreferrer">
-              下载 PDF
-            </a>
-            <a className="text-blue-600 hover:underline" href={result.json_url} target="_blank" rel="noreferrer">
-              下载 JSON
-            </a>
-            <span className="text-gray-500">report_id: {result.report_id}</span>
+        {errorMessage ? (
+          <div className="mt-4 rounded border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMessage}
           </div>
-        )}
+        ) : null}
+        {(result?.pdf_url || (result?.json_url && result?.report_id)) ? (
+          <div className="mt-4 flex items-center gap-3 text-sm flex-wrap">
+            {result?.pdf_url ? (
+              <a className="text-blue-600 hover:underline" href={result.pdf_url} target="_blank" rel="noreferrer">
+                下载 PDF
+              </a>
+            ) : null}
+            {result?.json_url && result?.report_id ? (
+              <Link className="text-blue-600 hover:underline" to={backtestReportDetailPath(result.report_id)}>
+                查看明细
+              </Link>
+            ) : null}
+            {result?.report_id ? (
+              <span className="text-gray-500">报告编号：{result.report_id}</span>
+            ) : null}
+            {executionMode ? (
+              <span className="text-gray-500">运行方式：{executionMode}</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      {(metaStatus === 'accepted' || jobStatus === 'running') && (
+      {isRunning ? (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <FileText size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">回测运行中</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">报告生成中</h3>
           <p className="text-gray-500">可切换板块，后台会继续生成报告</p>
           {result?.report_id ? (
-            <div className="mt-3 text-sm text-gray-500">report_id: {result.report_id}</div>
+            <div className="mt-3 text-sm text-gray-500">报告编号：{result.report_id}</div>
           ) : null}
         </div>
-      )}
+      ) : null}
 
-      {!summary && metaStatus !== 'accepted' && jobStatus !== 'running' && (
+      {!summary && isErrorState ? (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-12 text-center">
+          <FileText size={48} className="mx-auto text-red-200 mb-4" />
+          <h3 className="text-lg font-medium text-red-900 mb-2">回测状态异常</h3>
+          <p className="text-red-700">{errorMessage}</p>
+        </div>
+      ) : null}
+
+      {!summary && !isRunning && !isErrorState ? (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <FileText size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">暂无回测结果</h3>
           <p className="text-gray-500">点击“运行回测”生成报告</p>
         </div>
-      )}
+      ) : null}
 
-      {/* Summary */}
-      {summary && (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">回测总收益</div>
-          <div className={`text-2xl font-bold ${summary.total_return_pct >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-            {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct?.toFixed(2)}%
+      {summary ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="text-sm text-gray-500 mb-1">回测总收益</div>
+            <div className={`text-2xl font-bold ${signedNumberClass(summary.total_return_pct)}`}>
+              {formatPercent(summary.total_return_pct, { signed: true })}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="text-sm text-gray-500 mb-1">年化收益</div>
+            <div className={`text-2xl font-bold ${signedNumberClass(summary.annualized_return_pct)}`}>
+              {formatPercent(summary.annualized_return_pct, { signed: true })}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="text-sm text-gray-500 mb-1">最大回撤</div>
+            <div className="text-2xl font-bold text-green-600">{formatPercent(summary.max_drawdown_pct)}</div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="text-sm text-gray-500 mb-1">夏普比率</div>
+            <div className="text-2xl font-bold text-gray-900">
+              {safeNumber(summary.sharpe_ratio) == null ? '--' : summary.sharpe_ratio.toFixed(2)}
+            </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">年化收益</div>
-          <div className={`text-2xl font-bold ${summary.annualized_return_pct >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-            {summary.annualized_return_pct >= 0 ? '+' : ''}{summary.annualized_return_pct?.toFixed(2)}%
-          </div>
-        </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">最大回撤</div>
-          <div className="text-2xl font-bold text-green-600">
-            {summary.max_drawdown_pct?.toFixed(2)}%
-          </div>
-        </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">夏普比率</div>
-          <div className="text-2xl font-bold text-gray-900">{summary.sharpe_ratio?.toFixed(2)}</div>
-        </div>
-      </div>
-      )}
+      ) : null}
 
-      {/* Trades */}
-      {result?.buy_dates?.length > 0 && (
+      {summary ? (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">执行摘要</h3>
+            {actionEntries.length > 0 ? (
+              <div className="space-y-3">
+                {actionEntries.map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">{displayText(key)}</span>
+                    <span className="font-medium text-gray-900">{value}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">暂无执行动作摘要</div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">退出质量评估</h3>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">观察窗口</span>
+                <span className="font-medium text-gray-900">{displayText(exitQuality.lookahead_trading_days)} 个交易日</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">样本数</span>
+                <span className="font-medium text-gray-900">{displayText(exitQuality.count)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">卖出后涨幅 P50</span>
+                <span className={`font-medium ${signedNumberClass(exitRunup.p50)}`}>{formatPercent(exitRunup.p50, { signed: true })}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">卖出后涨幅 P75</span>
+                <span className={`font-medium ${signedNumberClass(exitRunup.p75)}`}>{formatPercent(exitRunup.p75, { signed: true })}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">卖出后涨幅 P90</span>
+                <span className={`font-medium ${signedNumberClass(exitRunup.p90)}`}>{formatPercent(exitRunup.p90, { signed: true })}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">窗口内最大继续上涨</span>
+                <span className={`font-medium ${signedNumberClass(exitRunup.max)}`}>{formatPercent(exitRunup.max, { signed: true })}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">继续上涨超 10% 占比</span>
+                <span className={`font-medium ${signedNumberClass(exitRunup.gt_10pct_rate)}`}>{formatPercent(exitRunup.gt_10pct_rate, { signed: true })}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">下一交易日信号</h3>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">下一交易日</span>
+                <span className="font-medium text-gray-900">{displayText(nextSession.next_trading_day)}</span>
+              </div>
+              {nextSignalEntries.length > 0 ? (
+                nextSignalEntries.map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-gray-500">{displayText(key)}</span>
+                    <span className="font-medium text-gray-900">{value}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-gray-500">暂无信号摘要</div>
+              )}
+            </div>
+            <div className="mt-4">
+              <div className="text-sm font-medium text-gray-900 mb-2">前 5 候选</div>
+              {nextCandidates.length > 0 ? (
+                <div className="space-y-2">
+                  {nextCandidates.map((candidate) => (
+                    <div key={candidate.code} className="rounded border border-gray-100 px-3 py-2">
+                      <div className="text-sm font-medium text-gray-900">
+                        {displayText(candidate.name)} · {displayText(candidate.code)}
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分 {safeNumber(candidate.buy_score) == null ? '--' : candidate.buy_score.toFixed(0)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">暂无候选信号</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {result?.buy_dates?.length > 0 ? (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">买点分布</h3>
           <div className="overflow-x-auto">
@@ -980,7 +1151,7 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             </table>
           </div>
         </div>
-      )}
+      ) : null}
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">最近 10 次回测报告</h3>
@@ -1011,13 +1182,21 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
                       )}
                     </td>
                     <td className="py-3 px-4 text-sm">
-                      <a className="text-blue-600 hover:underline" href={r.pdf_url} target="_blank" rel="noreferrer">
-                        PDF
-                      </a>
-                      <span className="text-gray-300 mx-2">|</span>
-                      <a className="text-blue-600 hover:underline" href={r.json_url} target="_blank" rel="noreferrer">
-                        JSON
-                      </a>
+                      {r.pdf_url ? (
+                        <a className="text-blue-600 hover:underline" href={r.pdf_url} target="_blank" rel="noreferrer">
+                          PDF
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">PDF</span>
+                      )}
+                      {r.json_url ? (
+                        <>
+                          <span className="text-gray-300 mx-2">|</span>
+                          <Link className="text-blue-600 hover:underline" to={backtestReportDetailPath(r.report_id)}>
+                            明细
+                          </Link>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -1307,20 +1486,28 @@ export default function Lowfreq() {
             ...(prev || {}),
             report_id: reportId,
             job,
+            summary: payload?.summary || prev?.summary,
             pdf_url: payload?.pdf_url || prev?.pdf_url,
             json_url: payload?.json_url || prev?.json_url,
+            execution_mode: payload?.execution_mode || prev?.execution_mode,
+            execution_action_summary: payload?.execution_action_summary || prev?.execution_action_summary,
+            exit_quality: payload?.exit_quality || prev?.exit_quality,
+            next_session: payload?.next_session || prev?.next_session,
           };
           if (jobStatus === 'done') {
             merged._meta = { ...(merged._meta || {}), status: 'ok' };
-          } else if (jobStatus === 'failed') {
+          } else if (jobStatus === 'failed' || jobStatus === 'unknown') {
             merged._meta = { ...(merged._meta || {}), status: 'error' };
           } else {
             merged._meta = { ...(merged._meta || {}), status: 'accepted' };
           }
           return merged;
         });
-        if (jobStatus === 'done' || jobStatus === 'failed') {
+        if (jobStatus === 'done' || jobStatus === 'failed' || jobStatus === 'unknown') {
           fetchBacktestReports();
+          if (timer) {
+            window.clearInterval(timer);
+          }
         }
       } catch {
         return;
