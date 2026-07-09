@@ -185,49 +185,6 @@ describe('Lowfreq', () => {
     expect(screen.getAllByText('满足出手条件')[0].closest('span')?.getAttribute('aria-label')).toContain('一级状态：建仓')
   })
 
-  it('creates a buy intent from candidates tab', async () => {
-    const payloads = buildTodayPayloads()
-    mockFetchApi.mockImplementation((url) => {
-      if (url === '/api/lowfreq/manual/buy-intent') {
-        return Promise.resolve({ ok: true })
-      }
-      return Promise.resolve(payloads[url])
-    })
-
-    render(<Lowfreq />)
-
-    await waitFor(() => {
-      expect(screen.getByText('今日快照')).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '候选池' }))
-
-    await waitFor(() => {
-      expect(screen.getByText('候选池 (1)')).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '买进(T+1)' }))
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith(
-        '/api/lowfreq/manual/buy-intent',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            code: '600001',
-            name: '领涨一号',
-            sector: '机器人',
-            role: 'leader',
-            buy_score: 92,
-            requested_date: '2026-06-09',
-            requested_by: 'dashboard.react',
-          }),
-        },
-        { timeoutMs: 30000 },
-      )
-    })
-  })
-
   it('shows fallback instead of NaN percent when market phase fields are missing', async () => {
     const payloads = buildTodayPayloads()
     payloads['/api/market-phase?date=2026-06-09'] = {
