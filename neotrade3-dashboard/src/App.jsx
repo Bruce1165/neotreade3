@@ -73,7 +73,7 @@ function Header() {
         </div>
         <div className="flex items-center gap-4">
           <div className="text-sm text-gray-500">
-            API: <span className="text-gray-700 font-medium">本地模式</span>
+            当前环境：<span className="text-gray-700 font-medium">本地工作区</span>
           </div>
         </div>
       </div>
