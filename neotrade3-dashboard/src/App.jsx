@@ -9,6 +9,7 @@ import {
   Target,
 } from 'lucide-react';
 import Overview from './pages/Overview';
+import OpsCenter from './pages/OpsCenter';
 import Screeners from './pages/Screeners';
 import StockCheck from './pages/StockCheck';
 import Lowfreq from './pages/Lowfreq';
@@ -245,6 +246,7 @@ function App() {
             <main className="p-6">
               <Routes>
                 <Route path="/" element={<Overview />} />
+                <Route path="/ops" element={<OpsCenter />} />
                 <Route path="/market-intelligence" element={<MarketIntelligence />} />
                 <Route path="/screeners" element={<Screeners />} />
                 <Route path="/stock-check" element={<StockCheck />} />
