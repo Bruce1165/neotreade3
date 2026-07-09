@@ -768,91 +768,163 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
     );
   }
 
+  const candidates = data.candidates;
+  const actionableCandidates = candidates.filter(
+    (candidate) => !candidate.manual?.abandoned && !candidate.manual?.buy_intent_pending
+  );
+  const readyCount = actionableCandidates.filter(
+    (candidate) => candidate.buy_signal === true && candidate.role !== '跟随'
+  ).length;
+  const watchCount = candidates.filter(
+    (candidate) => candidate.buy_signal !== true || candidate.role === '跟随'
+  ).length;
+  const queuedCount = candidates.filter((candidate) => candidate.manual?.buy_intent_pending).length;
+  const abandonedCount = candidates.filter((candidate) => candidate.manual?.abandoned).length;
+
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-        <ListFilter size={20} />
-        候选池 ({data.candidates.length})
-      </h3>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-200">
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">代码</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">板块</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">角色</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入分</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">5日涨幅</th>
-              <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.candidates.map((candidate, index) => (
-              <tr key={index} className="border-b border-gray-100">
-                <td className="py-3 px-4 text-gray-900">
-                  <StockCodeLink code={candidate.code} className="hover:text-blue-600 hover:underline">
-                    {candidate.code || '--'}
-                  </StockCodeLink>
-                </td>
-                <td className="py-3 px-4 text-gray-900">{candidate.name}</td>
-                <td className="py-3 px-4 text-gray-500">{candidate.sector}</td>
-                <td className="py-3 px-4 text-gray-500">{candidate.role || '--'}</td>
-                <td className="py-3 px-4">
-                  {candidate.manual?.abandoned ? (
-                    <SemanticBadge semanticKey="abandoned" label="已放弃" />
-                  ) : candidate.manual?.buy_intent_pending ? (
-                    <SemanticBadge semanticKey="entry_queued" label="已排队" />
-                  ) : candidate.buy_signal ? (
-                    <SemanticBadge semanticKey="entry_ready" label="可出手" />
-                  ) : (
-                    <SemanticBadge semanticKey="watch_general" label="观察" />
-                  )}
-                </td>
-                <td className="py-3 px-4 text-gray-900">{candidate.buy_score?.toFixed(0)}</td>
-                <td className="py-3 px-4">
-                  <span className={candidate.return_5d >= 0 ? 'text-red-600' : 'text-green-600'}>
-                    {candidate.return_5d >= 0 ? '+' : ''}{candidate.return_5d?.toFixed(2)}%
-                  </span>
-                </td>
-                <td className="py-3 px-4">
-                  <div className="flex items-center gap-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.6fr)_360px]">
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
+          <ListFilter size={20} />
+          候选阅读区 ({candidates.length})
+        </h3>
+        <p className="text-sm text-gray-500 mb-4">
+          先看角色、状态、分数与涨幅，再决定是否进入人工动作区。
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">代码</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">板块</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">角色</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入分</th>
+                <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">5日涨幅</th>
+              </tr>
+            </thead>
+            <tbody>
+              {candidates.map((candidate, index) => (
+                <tr key={index} className="border-b border-gray-100">
+                  <td className="py-3 px-4 text-gray-900">
+                    <StockCodeLink code={candidate.code} className="hover:text-blue-600 hover:underline">
+                      {candidate.code || '--'}
+                    </StockCodeLink>
+                  </td>
+                  <td className="py-3 px-4 text-gray-900">{candidate.name}</td>
+                  <td className="py-3 px-4 text-gray-500">{displaySectorName(candidate)}</td>
+                  <td className="py-3 px-4 text-gray-500">{candidate.role || '--'}</td>
+                  <td className="py-3 px-4">
                     {candidate.manual?.abandoned ? (
-                      <span className="text-sm text-gray-500">已放弃</span>
+                      <SemanticBadge semanticKey="abandoned" label="已放弃" />
                     ) : candidate.manual?.buy_intent_pending ? (
-                      <span className="text-sm text-blue-600">已排队({candidate.manual?.buy_execute_date || 'T+1'})</span>
+                      <SemanticBadge semanticKey="entry_queued" label="已排队" />
+                    ) : candidate.buy_signal ? (
+                      <SemanticBadge semanticKey="entry_ready" label="可出手" />
                     ) : (
-                      <>
-                        <button
-                          onClick={() => onBuyIntent(candidate)}
-                          disabled={posting || candidate.buy_signal !== true || candidate.role === '跟随'}
-                          title={
-                            candidate.role === '跟随'
-                              ? '跟随仅观察'
-                              : candidate.buy_signal !== true
-                                ? '未满足出手条件'
-                                : ''
-                          }
-                          className="px-3 py-1 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
-                        >
-                          买进(T+1)
-                        </button>
-                        <button
-                          onClick={() => onAbandon(candidate)}
-                          disabled={posting}
-                          className="px-3 py-1 rounded bg-gray-100 text-gray-700 text-sm hover:bg-gray-200 disabled:opacity-50"
-                        >
-                          放弃
-                        </button>
-                      </>
+                      <SemanticBadge semanticKey="watch_general" label="观察" />
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-gray-900">{candidate.buy_score?.toFixed(0)}</td>
+                  <td className="py-3 px-4">
+                    <span className={candidate.return_5d >= 0 ? 'text-red-600' : 'text-green-600'}>
+                      {candidate.return_5d >= 0 ? '+' : ''}{candidate.return_5d?.toFixed(2)}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900">人工动作区</h3>
+          <p className="text-sm text-gray-500 mt-2">
+            这里集中处理可买、排队和放弃，避免在阅读流中直接混入操作按钮。
+          </p>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <div className="text-xs text-gray-500">可出手</div>
+              <div className="mt-1 text-xl font-semibold text-gray-900">{readyCount}</div>
+              <div className="mt-1 text-xs text-gray-500">满足条件且非跟随</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <div className="text-xs text-gray-500">观察</div>
+              <div className="mt-1 text-xl font-semibold text-gray-900">{watchCount}</div>
+              <div className="mt-1 text-xs text-gray-500">仅观察或条件未满足</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <div className="text-xs text-gray-500">已排队</div>
+              <div className="mt-1 text-xl font-semibold text-gray-900">{queuedCount}</div>
+              <div className="mt-1 text-xs text-gray-500">等待执行</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <div className="text-xs text-gray-500">已放弃</div>
+              <div className="mt-1 text-xl font-semibold text-gray-900">{abandonedCount}</div>
+              <div className="mt-1 text-xs text-gray-500">人工明确跳过</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="text-sm font-medium text-gray-500 mb-3">待处理列表</div>
+          <div className="space-y-3">
+            {actionableCandidates.length === 0 ? (
+              <div className="text-sm text-gray-500">当前没有需要立即人工处理的候选股。</div>
+            ) : (
+              actionableCandidates.map((candidate, index) => (
+                <div
+                  key={`${candidate.code || candidate.name || index}-action`}
+                  className="rounded-lg border border-gray-100 p-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {displayText(candidate.name)}{' '}
+                        <span className="text-gray-500 font-normal">({displayText(candidate.code)})</span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分{' '}
+                        {candidate.buy_score?.toFixed(0) || '--'}
+                      </div>
+                    </div>
+                    {candidate.buy_signal ? (
+                      <SemanticBadge semanticKey="entry_ready" label="可出手" />
+                    ) : (
+                      <SemanticBadge semanticKey="watch_general" label="观察" />
                     )}
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <div className="flex items-center gap-2 mt-4">
+                    <button
+                      onClick={() => onBuyIntent(candidate)}
+                      disabled={posting || candidate.buy_signal !== true || candidate.role === '跟随'}
+                      title={
+                        candidate.role === '跟随'
+                          ? '跟随仅观察'
+                          : candidate.buy_signal !== true
+                            ? '未满足出手条件'
+                            : ''
+                      }
+                      className="px-3 py-1 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
+                    >
+                      买进(T+1)
+                    </button>
+                    <button
+                      onClick={() => onAbandon(candidate)}
+                      disabled={posting}
+                      className="px-3 py-1 rounded bg-gray-100 text-gray-700 text-sm hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      放弃
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
