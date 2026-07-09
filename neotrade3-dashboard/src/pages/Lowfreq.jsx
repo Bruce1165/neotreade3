@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Flame, Target, Calendar, AlertCircle, Loader2, Wallet, ListFilter, FileText } from 'lucide-react';
+import { Flame, Target, Calendar, AlertCircle, Loader2, Wallet, ListFilter, FileText, Filter, Search } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
 import SemanticBadge from '../components/SemanticBadge';
@@ -858,6 +858,58 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
   );
 }
 
+function ToolEntryCard({ title, description, to, cta, icon: Icon }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
+          <Icon size={18} />
+        </div>
+        <div className="text-lg font-semibold text-gray-900">{title}</div>
+      </div>
+      <div className="text-sm text-gray-600 leading-6">{description}</div>
+      <div>
+        <Link
+          to={to}
+          className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          {cta}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ToolsHubPanel() {
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900">辅助工具</h3>
+        <p className="text-sm text-gray-500 mt-2">
+          这里放置专业工具入口，避免直接占用一级导航，但仍保留原有能力。
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <ToolEntryCard
+          title="筛选器"
+          description="查看筛选器运行结果、批量执行情况与配置入口，适合维护筛选链路与参数。"
+          to="/screeners"
+          cta="进入筛选器"
+          icon={Filter}
+        />
+        <ToolEntryCard
+          title="单股核验"
+          description="按股票代码快速核验筛选器命中、热门板块与确定性结果，适合做临时问题排查。"
+          to="/stock-check"
+          cta="进入单股核验"
+          icon={Search}
+        />
+      </div>
+    </div>
+  );
+}
+
 function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, onRun, running, reports }) {
   const summary = result?.summary;
   const executionActionSummary =
@@ -1529,6 +1581,7 @@ export default function Lowfreq() {
     { id: 'scorePool', label: '股票池与台账', icon: Wallet },
     { id: 'candidates', label: '候选池', icon: ListFilter },
     { id: 'backtest', label: '回测报告', icon: FileText },
+    { id: 'tools', label: '辅助工具', icon: Search },
   ];
   const loading =
     activeTab === 'today'
@@ -1745,6 +1798,8 @@ export default function Lowfreq() {
           />
         </div>
       )}
+
+      {activeTab === 'tools' && <ToolsHubPanel />}
     </div>
   );
 }
