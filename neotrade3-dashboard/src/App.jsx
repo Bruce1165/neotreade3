@@ -233,6 +233,23 @@ function GlobalApiErrorBanner() {
   );
 }
 
+function RouteNotFound() {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-8">
+      <div className="max-w-xl space-y-3">
+        <h3 className="text-lg font-semibold text-gray-900">页面不存在</h3>
+        <p className="text-sm text-gray-600">路径无效，请返回已登记的工作台入口。</p>
+        <Link
+          to="/lowfreq"
+          className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          返回选股工作台
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   return (
     <AppProvider>
@@ -252,6 +269,7 @@ function App() {
                 <Route path="/stock-check" element={<StockCheck />} />
                 <Route path="/lowfreq" element={<Lowfreq />} />
                 <Route path="/lowfreq/backtest-reports/:reportId" element={<LowfreqBacktestReport />} />
+                  <Route path="*" element={<RouteNotFound />} />
               </Routes>
             </main>
           </div>
