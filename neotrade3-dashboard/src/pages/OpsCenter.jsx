@@ -39,8 +39,35 @@ export default function OpsCenter() {
   const checklist = Array.isArray(payload.checklist) ? payload.checklist : [];
   const pipelineSteps = Array.isArray(payload.pipeline_steps) ? payload.pipeline_steps : [];
   const exceptions = Array.isArray(payload.exceptions) ? payload.exceptions : [];
+  const evidence = payload.evidence || {};
   const loading = block.loading;
   const pageError = !block.loaded && block.error ? block.error : null;
+  const runningEvidenceItems = [
+    {
+      label: '快照生成',
+      value: meta.snapshot_generated_at,
+    },
+    {
+      label: '最近任务',
+      value: evidence.latest_run_date,
+    },
+    {
+      label: '目标交易日',
+      value: evidence.expected_trade_date,
+    },
+    {
+      label: '顺延待处理',
+      value: evidence.overdue_shifted_count,
+    },
+    {
+      label: '收口异常',
+      value: evidence.inconsistency_count,
+    },
+    {
+      label: '日后待执行',
+      value: evidence.pending_intents_after,
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -159,6 +186,17 @@ export default function OpsCenter() {
         )}
       </div>
 
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900">运行证据</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
+          {runningEvidenceItems.map((item) => (
+            <div key={item.label} className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-500">{item.label}</div>
+              <div className="mt-2 text-sm font-medium text-gray-900">{displayText(item.value)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
