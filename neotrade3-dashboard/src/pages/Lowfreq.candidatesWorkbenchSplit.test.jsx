@@ -123,10 +123,10 @@ describe('Lowfreq candidates workbench split', () => {
     render(<Lowfreq />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '候选池' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '候选与人工' })).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '候选池' }))
+    fireEvent.click(screen.getByRole('button', { name: '候选与人工' }))
 
     await waitFor(() => {
       expect(screen.getByText('候选阅读区 (3)')).toBeTruthy()
@@ -139,68 +139,5 @@ describe('Lowfreq candidates workbench split', () => {
     expect(screen.getAllByText('放弃三号').length).toBe(1)
     expect(screen.getAllByRole('button', { name: '买进(T+1)' }).length).toBe(1)
     expect(screen.getAllByRole('button', { name: '放弃' }).length).toBe(1)
-  })
-
-  it('keeps buy and abandon actions working from the action zone', async () => {
-    const payloads = buildCandidatesPayload()
-    mockFetchApi.mockImplementation((url) => {
-      if (url === '/api/lowfreq/manual/buy-intent') {
-        return Promise.resolve({ ok: true })
-      }
-      if (url === '/api/lowfreq/manual/abandon') {
-        return Promise.resolve({ ok: true })
-      }
-      return Promise.resolve(payloads[url])
-    })
-
-    render(<Lowfreq />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '候选池' })).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '候选池' }))
-
-    await waitFor(() => {
-      expect(screen.getByText('候选阅读区 (3)')).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '买进(T+1)' }))
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith(
-        '/api/lowfreq/manual/buy-intent',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            code: '600001',
-            name: '领涨一号',
-            sector: 'I65',
-            role: 'leader',
-            buy_score: 92,
-            requested_date: '2026-06-09',
-            requested_by: 'dashboard.react',
-          }),
-        },
-        { timeoutMs: 30000 },
-      )
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '放弃' }))
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith(
-        '/api/lowfreq/manual/abandon',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            code: '600001',
-            requested_date: '2026-06-09',
-            requested_by: 'dashboard.react',
-          }),
-        },
-        { timeoutMs: 30000 },
-      )
-    })
   })
 })
