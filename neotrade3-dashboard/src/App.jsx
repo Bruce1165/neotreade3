@@ -11,6 +11,7 @@ import Overview from './pages/Overview';
 import Screeners from './pages/Screeners';
 import StockCheck from './pages/StockCheck';
 import Lowfreq from './pages/Lowfreq';
+import LowfreqBacktestReport from './pages/LowfreqBacktestReport';
 import MarketIntelligence from './pages/MarketIntelligence';
 import { AppProvider } from './context/AppContext';
 import { getDataStatus } from './services/api';
@@ -146,6 +147,7 @@ function App() {
                 <Route path="/screeners" element={<Screeners />} />
                 <Route path="/stock-check" element={<StockCheck />} />
                 <Route path="/lowfreq" element={<Lowfreq />} />
+                <Route path="/lowfreq/backtest-reports/:reportId" element={<LowfreqBacktestReport />} />
               </Routes>
             </main>
           </div>
