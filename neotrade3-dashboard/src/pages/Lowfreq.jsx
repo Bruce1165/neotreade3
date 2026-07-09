@@ -1346,6 +1346,7 @@ export default function Lowfreq() {
   const [backtestEndDate, setBacktestEndDate] = useState('');
   const [backtestResult, setBacktestResult] = useState(null);
   const [backtestRunning, setBacktestRunning] = useState(false);
+  const scorePoolRequestIdRef = useRef(0);
   const [data, setData] = useState({
     marketPhase: null,
     hotSectors: null,
@@ -1432,6 +1433,8 @@ export default function Lowfreq() {
   }, [hotMode, selectedDate]);
 
   const loadScorePoolBlock = useCallback(async () => {
+    const requestId = scorePoolRequestIdRef.current + 1;
+    scorePoolRequestIdRef.current = requestId;
     setBlocks((prev) => ({ ...prev, scorePool: startBlock(prev.scorePool, true) }));
     try {
       const summaryPayload = await fetchApi(
@@ -1439,6 +1442,9 @@ export default function Lowfreq() {
         {},
         { timeoutMs: 45000 }
       );
+      if (scorePoolRequestIdRef.current !== requestId) {
+        return;
+      }
       const partialPayload = { summary: summaryPayload };
       setData((prev) => ({ ...prev, scorePool: partialPayload }));
       setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(partialPayload) }));
@@ -1448,10 +1454,16 @@ export default function Lowfreq() {
         {},
         { timeoutMs: 45000 }
       );
+      if (scorePoolRequestIdRef.current !== requestId) {
+        return;
+      }
       const payload = { pool: poolPayload, summary: summaryPayload };
       setData((prev) => ({ ...prev, scorePool: payload }));
       setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(payload) }));
     } catch (err) {
+      if (scorePoolRequestIdRef.current !== requestId) {
+        return;
+      }
       setBlocks((prev) => ({ ...prev, scorePool: rejectBlock(prev.scorePool, err, true) }));
     }
   }, [selectedDate]);
