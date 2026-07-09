@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Flame, Target, Calendar, AlertCircle, Loader2, Wallet, ListFilter, FileText } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
@@ -394,13 +394,130 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
   );
 }
 
-function ScorePoolPanel({ data }) {
+function ScorePoolDetailDrawer({ code, loading, error, payload, onClose }) {
+  if (!code) {
+    return null;
+  }
+
+  const item = payload?.item || {};
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  const snapshots = Array.isArray(payload?.snapshots) ? payload.snapshots : [];
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-gray-900/20" role="presentation">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="股票池明细"
+        className="h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl"
+      >
+        <div className="sticky top-0 z-10 border-b border-gray-200 bg-white px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500">Lowfreq Score Drilldown</div>
+              <h3 className="mt-1 text-lg font-semibold text-gray-900">
+                {displayText(item.name)} <span className="text-gray-500 font-normal">({displayText(code)})</span>
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded border border-gray-200 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-6 p-6">
+          {loading ? (
+            <BlockMessage message="股票池明细加载中..." />
+          ) : error ? (
+            <BlockMessage tone="red" message={error} />
+          ) : (
+            <>
+              <div className="rounded-lg border border-gray-200 bg-white p-5">
+                <h4 className="mb-4 text-base font-semibold text-gray-900">当前状态</h4>
+                <div className="grid grid-cols-1 gap-3 text-sm text-gray-700 md:grid-cols-2">
+                  <div>代码: <span className="text-gray-900">{displayText(item.code)}</span></div>
+                  <div>名称: <span className="text-gray-900">{displayText(item.name)}</span></div>
+                  <div>板块: <span className="text-gray-900">{displaySectorName(item)}</span></div>
+                  <div>状态: <span className="text-gray-900">{displayText(item.state)}</span></div>
+                  <div>跟踪起点: <span className="text-gray-900">{displayText(item.tracking_since)}</span></div>
+                  <div>买入日: <span className="text-gray-900">{displayText(item.buy_date)}</span></div>
+                  <div>买入价: <span className="text-gray-900">{formatCurrency(item.buy_price)}</span></div>
+                  <div>当前/卖出价: <span className="text-gray-900">{formatCurrency(item.last_price ?? item.sell_price)}</span></div>
+                  <div>浮动收益: <span className={signedNumberClass(item.current_return_pct)}>{formatPercent(item.current_return_pct, { signed: true })}</span></div>
+                  <div>已实现收益: <span className={signedNumberClass(item.realized_return_pct)}>{formatPercent(item.realized_return_pct, { signed: true })}</span></div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-white p-5">
+                <h4 className="mb-4 text-base font-semibold text-gray-900">近期事件</h4>
+                {events.length > 0 ? (
+                  <div className="space-y-3">
+                    {events.map((event) => (
+                      <div key={event.event_id || `${event.code}-${event.event_date}-${event.event_type}`} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium text-gray-900">{displayText(event.event_type)}</div>
+                          <div className="text-gray-500">{displayText(event.event_date)}</div>
+                        </div>
+                        <div className="mt-2 text-gray-600">
+                          来源: {displayText(event.trigger_source)}{event.price != null ? ` · 价格 ${formatCurrency(event.price)}` : ''}
+                        </div>
+                        <div className="mt-1 text-gray-600">{displayText(event.note)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">暂无事件</div>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-white p-5">
+                <h4 className="mb-4 text-base font-semibold text-gray-900">最新快照</h4>
+                {snapshots.length > 0 ? (
+                  <div className="space-y-3">
+                    {snapshots.map((snapshot) => (
+                      <div key={`${snapshot.code || code}-${snapshot.trade_date || 'snapshot'}`} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium text-gray-900">{displayText(snapshot.trade_date)}</div>
+                          <div>{displayText(snapshot.state)}</div>
+                        </div>
+                        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                          <div>收盘价: <span className="text-gray-900">{formatCurrency(snapshot.close_price)}</span></div>
+                          <div>买入价: <span className="text-gray-900">{formatCurrency(snapshot.buy_price)}</span></div>
+                          <div>卖出价: <span className="text-gray-900">{formatCurrency(snapshot.sell_price)}</span></div>
+                          <div>浮动收益: <span className={signedNumberClass(snapshot.unrealized_return_pct)}>{formatPercent(snapshot.unrealized_return_pct, { signed: true })}</span></div>
+                          <div>已实现收益: <span className={signedNumberClass(snapshot.realized_return_pct)}>{formatPercent(snapshot.realized_return_pct, { signed: true })}</span></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">暂无快照</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScorePoolPanel({ data, selectedDate }) {
   const poolPayload = data?.pool;
   const summaryPayload = data?.summary;
   const pool = Array.isArray(poolPayload?.pool) ? poolPayload.pool : [];
   const summaries = Array.isArray(summaryPayload?.summaries) ? summaryPayload.summaries : [];
   const asOfDate = displayText(poolPayload?.meta?.as_of_date || summaryPayload?.meta?.as_of_date);
   const summary = poolPayload?.summary || {};
+  const detailRequestIdRef = useRef(0);
+  const [detailCode, setDetailCode] = useState('');
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const [detailPayload, setDetailPayload] = useState(null);
 
   const stateBadge = (state) => {
     const value = String(state || '').trim();
@@ -418,6 +535,49 @@ function ScorePoolPanel({ data }) {
     if (value === 'custom') return '自定义';
     return displayText(value);
   };
+
+  const closeDetail = useCallback(() => {
+    detailRequestIdRef.current += 1;
+    setDetailCode('');
+    setDetailLoading(false);
+    setDetailError(null);
+    setDetailPayload(null);
+  }, []);
+
+  const openDetail = useCallback((code) => {
+    setDetailCode(String(code || '').trim());
+  }, []);
+
+  useEffect(() => {
+    if (!detailCode) {
+      return;
+    }
+    const requestId = detailRequestIdRef.current + 1;
+    detailRequestIdRef.current = requestId;
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetailPayload(null);
+
+    fetchApi(
+      `/api/lowfreq-score/pool/${encodeURIComponent(detailCode)}?date=${encodeURIComponent(selectedDate)}&event_limit=20`,
+      {},
+      { timeoutMs: 45000 }
+    )
+      .then((payload) => {
+        if (detailRequestIdRef.current !== requestId) {
+          return;
+        }
+        setDetailPayload(payload);
+        setDetailLoading(false);
+      })
+      .catch((err) => {
+        if (detailRequestIdRef.current !== requestId) {
+          return;
+        }
+        setDetailError(err?.message || String(err));
+        setDetailLoading(false);
+      });
+  }, [detailCode, selectedDate]);
 
   if (!poolPayload && !summaryPayload) {
     return (
@@ -483,6 +643,7 @@ function ScorePoolPanel({ data }) {
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入价</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">当前/卖出价</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">收益率</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">明细</th>
                 </tr>
               </thead>
               <tbody>
@@ -514,6 +675,15 @@ function ScorePoolPanel({ data }) {
                     <td className="py-3 px-4 text-gray-900">{formatCurrency(priceValue)}</td>
                     <td className="py-3 px-4">
                       <span className={signedNumberClass(returnValue)}>{formatPercent(returnValue, { signed: true })}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <button
+                        type="button"
+                        onClick={() => openDetail(item.code)}
+                        className="rounded border border-gray-200 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        查看明细
+                      </button>
                     </td>
                     </tr>
                   );
@@ -570,6 +740,14 @@ function ScorePoolPanel({ data }) {
           <div className="text-sm text-gray-500">暂无阶段汇总</div>
         )}
       </div>
+
+      <ScorePoolDetailDrawer
+        code={detailCode}
+        loading={detailLoading}
+        error={detailError}
+        payload={detailPayload}
+        onClose={closeDetail}
+      />
     </div>
   );
 }
@@ -1343,7 +1521,7 @@ export default function Lowfreq() {
           {blocks.scorePool.error && !blocks.scorePool.loaded ? (
             <BlockMessage tone="red" message={blocks.scorePool.error} onRetry={loadScorePoolBlock} />
           ) : (
-            <ScorePoolPanel data={data.scorePool} />
+            <ScorePoolPanel data={data.scorePool} selectedDate={selectedDate} />
           )}
         </>
       )}
