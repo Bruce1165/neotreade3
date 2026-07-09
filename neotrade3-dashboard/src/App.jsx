@@ -134,10 +134,15 @@ function GlobalBanner() {
       <div className="text-sm text-yellow-900">
         <span className="font-semibold">Tushare 黄旗：</span>
         <span>检测到 Tushare 积分不足，日线主源可能受影响。</span>
-        <span className="ml-3">last_insufficient={lastAt}</span>
-        <span className="ml-3">api={lastApi}</span>
-        {lastOkAt ? <span className="ml-3">last_ok={lastOkAt}</span> : null}
-        {lastOkApi ? <span className="ml-3">last_ok_api={lastOkApi}</span> : null}
+        <details className="inline-block ml-3">
+          <summary className="cursor-pointer font-medium">查看详细信息</summary>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <span>最近一次受影响时间：{lastAt}</span>
+            <span>受影响接口：{lastApi}</span>
+            {lastOkAt ? <span>最近一次恢复时间：{lastOkAt}</span> : null}
+            {lastOkApi ? <span>最近一次恢复接口：{lastOkApi}</span> : null}
+          </div>
+        </details>
       </div>
     </div>
   );
