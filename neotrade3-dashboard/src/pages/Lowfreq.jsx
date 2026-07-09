@@ -1543,10 +1543,10 @@ export default function Lowfreq() {
     setPosting(true);
     setError(null);
     try {
-      await postJson('/api/lowfreq/manual/buy-intent', {
+      await postJson('/api/lowfreq-score/manual/buy-intent', {
         code: candidate.code,
         name: candidate.name,
-        sector: candidate.sector,
+        sector: displaySectorName(candidate),
         role: candidate.role,
         buy_score: candidate.buy_score,
         requested_date: selectedDate,
@@ -1564,7 +1564,7 @@ export default function Lowfreq() {
     setPosting(true);
     setError(null);
     try {
-      await postJson('/api/lowfreq/manual/abandon', {
+      await postJson('/api/lowfreq-score/manual/abandon', {
         code: candidate.code,
         requested_date: selectedDate,
         requested_by: 'dashboard.react',
@@ -1667,9 +1667,9 @@ export default function Lowfreq() {
   }, [activeTab, backtestResult?.report_id, fetchBacktestReports]);
 
   const tabs = [
-    { id: 'today', label: '今日快照', icon: Calendar },
+    { id: 'today', label: '盘面详情', icon: Calendar },
     { id: 'scorePool', label: '股票池与台账', icon: Wallet },
-    { id: 'candidates', label: '候选池', icon: ListFilter },
+    { id: 'candidates', label: '候选与人工', icon: ListFilter },
     { id: 'backtest', label: '回测报告', icon: FileText },
     { id: 'tools', label: '辅助工具', icon: Search },
   ];
