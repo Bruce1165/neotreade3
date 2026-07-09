@@ -64,6 +64,17 @@ function displayText(value) {
   return text || '--';
 }
 
+function displaySectorName(value) {
+  if (value && typeof value === 'object') {
+    const sectorName = String(value.sector_name ?? '').trim();
+    if (sectorName) {
+      return sectorName;
+    }
+    return displayText(value.sector);
+  }
+  return displayText(value);
+}
+
 function manualIntentTypeBadge(intentType) {
   const value = String(intentType || '').trim();
   if (value === 'buy_intent') return { key: 'entry_ready', label: '买入' };
@@ -252,7 +263,10 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
                 onBuyIntent({
                   code: stock.code,
                   name: stock.name,
-                  sector: stock.sector,
+                  sector: displaySectorName({
+                    sector_name: stock.sector_name || sector?.name,
+                    sector: stock.sector,
+                  }),
                   role: stock.role,
                   buy_score: stock.buy_score,
                 })
@@ -380,194 +394,82 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
   );
 }
 
-function PortfolioPanel({ data }) {
-  // 数据来自 /api/sectors/hot 的 portfolio 字段
-  const portfolio = data?.portfolio;
-  
-  if (!portfolio) {
+function ScorePoolPanel({ data }) {
+  const poolPayload = data?.pool;
+  const summaryPayload = data?.summary;
+  const pool = Array.isArray(poolPayload?.pool) ? poolPayload.pool : [];
+  const summaries = Array.isArray(summaryPayload?.summaries) ? summaryPayload.summaries : [];
+  const asOfDate = displayText(poolPayload?.meta?.as_of_date || summaryPayload?.meta?.as_of_date);
+  const summary = poolPayload?.summary || {};
+
+  const stateBadge = (state) => {
+    const value = String(state || '').trim();
+    if (value === '跟踪') return { label: '跟踪', cls: 'bg-blue-50 text-blue-700 border-blue-100' };
+    if (value === '持有中') return { label: '持有中', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+    if (value === '已清仓') return { label: '已清仓', cls: 'bg-gray-50 text-gray-700 border-gray-100' };
+    return { label: displayText(value), cls: 'bg-gray-50 text-gray-700 border-gray-100' };
+  };
+
+  const periodLabel = (periodType) => {
+    const value = String(periodType || '').trim();
+    if (value === 'day') return '日';
+    if (value === 'month') return '月';
+    if (value === 'week') return '周';
+    if (value === 'custom') return '自定义';
+    return displayText(value);
+  };
+
+  if (!poolPayload && !summaryPayload) {
     return (
       <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
         <Wallet size={48} className="mx-auto text-gray-300 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">暂无交易数据</h3>
-        <p className="text-gray-500">无法获取组合与交易信息</p>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">暂无股票池数据</h3>
+        <p className="text-gray-500">无法获取低频交易得分系统的股票池与阶段汇总信息</p>
       </div>
     );
   }
   
-  const hasPositions = Array.isArray(portfolio.open_positions) && portfolio.open_positions.length > 0;
-  const hasClosedTrades = Array.isArray(portfolio.closed_trades) && portfolio.closed_trades.length > 0;
-  const hasManualIntents = Array.isArray(portfolio.manual_intents) && portfolio.manual_intents.length > 0;
-  const totalReturnPct = safeNumber(portfolio.total_return_pct);
-  const processBadge = (stage) => {
-    const value = String(stage || '').trim();
-    if (value === 'exit_signal') {
-      return { label: '退出确认', cls: 'bg-red-50 text-red-700 border-red-100' };
-    }
-    if (value === 'exit_watch') {
-      return { label: '退出观察', cls: 'bg-amber-50 text-amber-700 border-amber-100' };
-    }
-    if (value === 'closed') {
-      return { label: '已退出', cls: 'bg-gray-50 text-gray-700 border-gray-100' };
-    }
-    return { label: '持有中', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
-  };
-  const entryStageText = (item) => {
-    const parts = [];
-    if (String(item?.buy_progress_label || '').trim()) parts.push(String(item.buy_progress_label).trim());
-    if (String(item?.wave_phase || '').trim()) parts.push(String(item.wave_phase).trim());
-    return parts.length > 0 ? parts.join(' / ') : '--';
-  };
-  const warningSummary = (item) => {
-    const parts = [];
-    if (String(item?.market_exit_state || '').trim()) {
-      parts.push(`大盘${String(item.market_exit_state).trim()}(${Number(item.market_exit_hits || 0)})`);
-    }
-    if (String(item?.sector_exit_state || '').trim()) {
-      parts.push(`板块${String(item.sector_exit_state).trim()}(${Number(item.sector_exit_hits || 0)})`);
-    }
-    return parts.length > 0 ? parts.join(' | ') : '--';
-  };
-  const graceSummary = (item) => {
-    if (!item?.system_exit_grace_used) return null;
-    const scope = String(item.system_exit_grace_scope || '').trim();
-    const date = String(item.system_exit_grace_date || '').trim();
-    return `grace${scope ? `:${scope}` : ''}${date ? ` @ ${date}` : ''}`;
-  };
-  const timelineItems = [
-    ...(Array.isArray(portfolio.open_positions)
-      ? portfolio.open_positions.map((pos) => ({
-          kind: 'open',
-          eventDate: pos.buy_date || '',
-          code: pos.code,
-          name: pos.name,
-          sector: pos.sector,
-          buyDate: pos.buy_date,
-          holdDays: pos.hold_days,
-          entryStage: entryStageText(pos),
-          processStage: processBadge(pos.process_stage),
-          returnText: formatPercent(pos.unrealized_pnl_pct, { signed: true }),
-          returnClass: signedNumberClass(pos.unrealized_pnl_pct),
-          peakText: formatPercent(pos.peak_return_pct),
-          holdText: warningSummary(pos),
-          exitText: displayText(pos.sell_reason || pos.sector_exit_last_reason || pos.market_exit_last_reason),
-          graceText: graceSummary(pos),
-        }))
-      : []),
-    ...(Array.isArray(portfolio.closed_trades)
-      ? portfolio.closed_trades.slice(0, 20).map((trade) => ({
-          kind: 'closed',
-          eventDate: trade.sell_date || trade.buy_date || '',
-          code: trade.code,
-          name: trade.name,
-          sector: trade.sector,
-          buyDate: trade.buy_date,
-          holdDays: trade.hold_days,
-          entryStage: entryStageText(trade),
-          processStage: processBadge(trade.process_stage),
-          returnText: formatPercent(trade.return_pct, { signed: true }),
-          returnClass: signedNumberClass(trade.return_pct),
-          peakText: formatPercent(trade.peak_return_pct),
-          holdText: `${displayText(trade.sell_date)} 卖出`,
-          exitText: displayText(trade.sell_reason),
-          graceText: graceSummary(trade),
-        }))
-      : []),
-  ].sort((a, b) => String(b.eventDate || '').localeCompare(String(a.eventDate || '')));
-  
   return (
     <div className="space-y-6">
-      {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">总资产</div>
-          <div className="text-2xl font-bold text-gray-900">{formatAmountWan(portfolio.total_value)}</div>
+          <div className="text-sm text-gray-500 mb-1">股票池总数</div>
+          <div className="text-2xl font-bold text-gray-900">{displayText(summary.pool_size)}</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">现金</div>
-          <div className="text-2xl font-bold text-blue-600">{formatAmountWan(portfolio.cash)}</div>
+          <div className="text-sm text-gray-500 mb-1">跟踪中</div>
+          <div className="text-2xl font-bold text-blue-600">{displayText(summary.tracked_count)}</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">当前组合累计收益</div>
-          <div className={`text-2xl font-bold ${signedNumberClass(totalReturnPct)}`}>
-            {formatPercent(totalReturnPct, { signed: true })}
-          </div>
+          <div className="text-sm text-gray-500 mb-1">持有中</div>
+          <div className="text-2xl font-bold text-emerald-600">{displayText(summary.holding_count)}</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="text-sm text-gray-500 mb-1">持仓数</div>
-          <div className="text-2xl font-bold text-gray-900">{portfolio.open_positions?.length || 0}</div>
+          <div className="text-sm text-gray-500 mb-1">已清仓</div>
+          <div className="text-2xl font-bold text-gray-900">{displayText(summary.closed_count)}</div>
         </div>
       </div>
 
-      {/* Strategy Info */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-500">策略: <span className="text-gray-900 font-medium">{displayText(portfolio.strategy)}</span></span>
-          <span className="text-gray-500">数据日期: <span className="text-gray-900">{displayText(portfolio.as_of)}</span></span>
-          <span className="text-gray-500">初始资金: <span className="text-gray-900">{formatAmountWan(portfolio.initial_capital)}</span></span>
+        <div className="flex items-center justify-between gap-4 text-sm flex-wrap">
+          <span className="text-gray-500">
+            数据日期: <span className="text-gray-900">{asOfDate}</span>
+          </span>
+          <span className="text-gray-500">
+            持有平均收益: <span className={signedNumberClass(summary.holding_return_pct)}>{formatPercent(summary.holding_return_pct, { signed: true })}</span>
+          </span>
+          <span className="text-gray-500">
+            已实现平均收益: <span className={signedNumberClass(summary.realized_return_pct)}>{formatPercent(summary.realized_return_pct, { signed: true })}</span>
+          </span>
         </div>
       </div>
 
-      {timelineItems.length > 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Calendar size={20} />
-            捕捉 / 持有 / 退出全过程
-          </h3>
-          <div className="space-y-3">
-            {timelineItems.slice(0, 24).map((item) => (
-              <div key={`${item.kind}-${item.code}-${item.eventDate}`} className="rounded-lg border border-gray-100 p-4">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="font-medium text-gray-900">{displayText(item.name)}</div>
-                      <StockCodeLink code={item.code} className="text-sm text-gray-500 hover:text-blue-600 hover:underline">
-                        {item.code || '--'}
-                      </StockCodeLink>
-                      <span className="text-xs text-gray-400">{displayText(item.sector)}</span>
-                    </div>
-                    <div className="mt-2 text-sm text-gray-600 flex items-center gap-3 flex-wrap">
-                      <span>捕捉: {displayText(item.buyDate)}</span>
-                      <span>阶段: {item.entryStage}</span>
-                      <span>持有: {displayText(item.holdDays)}天</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`px-2 py-1 rounded border text-xs ${item.processStage.cls}`}>{item.processStage.label}</span>
-                    {item.graceText ? (
-                      <span className="px-2 py-1 rounded border text-xs bg-blue-50 text-blue-700 border-blue-100">
-                        {item.graceText}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                  <div className="rounded bg-gray-50 px-3 py-2">
-                    <div className="text-xs text-gray-500 mb-1">持有表现</div>
-                    <div className={item.returnClass}>{item.returnText}</div>
-                    <div className="text-gray-500">峰值: {item.peakText}</div>
-                  </div>
-                  <div className="rounded bg-gray-50 px-3 py-2">
-                    <div className="text-xs text-gray-500 mb-1">预警进度</div>
-                    <div className="text-gray-700">{item.holdText}</div>
-                  </div>
-                  <div className="rounded bg-gray-50 px-3 py-2">
-                    <div className="text-xs text-gray-500 mb-1">退出结果</div>
-                    <div className="text-gray-700">{item.exitText}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Positions Table */}
-      {hasPositions ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Wallet size={20} />
-            持仓明细
-          </h3>
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <Wallet size={20} />
+          统一股票池
+        </h3>
+        {pool.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -576,173 +478,98 @@ function PortfolioPanel({ data }) {
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">板块</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">进场阶段</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入价</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">现价</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">峰值收益</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">市值</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">盈亏</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">过程</th>
-                </tr>
-              </thead>
-              <tbody>
-                {portfolio.open_positions.map((pos, index) => (
-                  <tr key={index} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">
-                      <StockCodeLink code={pos.code} className="hover:text-blue-600 hover:underline">
-                        {pos.code || '--'}
-                      </StockCodeLink>
-                    </td>
-                    <td className="py-3 px-4 text-gray-900">{displayText(pos.name)}</td>
-                    <td className="py-3 px-4 text-gray-500">{displayText(pos.sector)}</td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2 py-1 rounded border text-xs ${processBadge(pos.process_stage).cls}`}>
-                        {processBadge(pos.process_stage).label}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-gray-700">{entryStageText(pos)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(pos.buy_price)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(pos.current_price)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatPercent(pos.peak_return_pct)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatAmountWan(pos.market_value)}</td>
-                    <td className="py-3 px-4">
-                      <span className={`${signedNumberClass(safeNumber(pos.unrealized_pnl ?? pos.unrealized_pnl_pct))}`}>
-                        {formatPercent(pos.unrealized_pnl_pct, { signed: true })}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-gray-500">
-                      <div>{warningSummary(pos)}</div>
-                      {graceSummary(pos) ? <div className="text-blue-600">{graceSummary(pos)}</div> : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-          <Wallet size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">当前无持仓</h3>
-          <p className="text-gray-500">投资组合中暂无持仓股票</p>
-        </div>
-      )}
-
-      {hasClosedTrades ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <FileText size={20} />
-            交易记录
-            <span className={`ml-2 text-sm ${Number(portfolio.realized_pnl_total || 0) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-              累计已实现{Number(portfolio.realized_pnl_total || 0) >= 0 ? '+' : ''}¥{Number(portfolio.realized_pnl_total || 0).toFixed(2)}
-            </span>
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">卖出日</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">代码</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">跟踪起点</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入日</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">进场阶段</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">数量</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入价</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">卖出价</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">峰值收益</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">收益</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">退出过程</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">当前/卖出价</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">收益率</th>
                 </tr>
               </thead>
               <tbody>
-                {portfolio.closed_trades.map((t, index) => (
-                  <tr key={index} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">{t.sell_date || '--'}</td>
+                {pool.map((item) => {
+                  const state = stateBadge(item.state);
+                  const returnValue =
+                    String(item.state || '').trim() === '已清仓'
+                      ? item.realized_return_pct
+                      : item.current_return_pct;
+                  const priceValue =
+                    String(item.state || '').trim() === '已清仓'
+                      ? item.sell_price
+                      : item.last_price;
+                  return (
+                    <tr key={item.code} className="border-b border-gray-100">
                     <td className="py-3 px-4 text-gray-900">
-                      <StockCodeLink code={t.code} className="hover:text-blue-600 hover:underline">
-                        {t.code || '--'}
+                      <StockCodeLink code={item.code} className="hover:text-blue-600 hover:underline">
+                        {item.code || '--'}
                       </StockCodeLink>
                     </td>
-                    <td className="py-3 px-4 text-gray-900">{displayText(t.name)}</td>
-                    <td className="py-3 px-4 text-gray-500">{displayText(t.buy_date)}</td>
-                    <td className="py-3 px-4 text-gray-700">{entryStageText(t)}</td>
-                    <td className="py-3 px-4 text-gray-900">{displayText(t.shares)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(t.buy_price)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(t.sell_price)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatPercent(t.peak_return_pct)}</td>
+                    <td className="py-3 px-4 text-gray-900">{displayText(item.name)}</td>
+                    <td className="py-3 px-4 text-gray-500">{displaySectorName(item)}</td>
                     <td className="py-3 px-4">
-                      <span className={`${signedNumberClass(t.realized_pnl)}`}>
-                        {`${formatCurrency(t.realized_pnl)} (${formatPercent(t.return_pct)})`}
-                      </span>
+                      <span className={`px-2 py-1 rounded border text-xs ${state.cls}`}>{state.label}</span>
                     </td>
-                    <td className="py-3 px-4 text-gray-500">
-                      <div>{displayText(t.sell_reason)}</div>
-                      {graceSummary(t) ? <div className="text-blue-600">{graceSummary(t)}</div> : null}
+                    <td className="py-3 px-4 text-gray-700">{displayText(item.tracking_since)}</td>
+                    <td className="py-3 px-4 text-gray-700">{displayText(item.buy_date)}</td>
+                    <td className="py-3 px-4 text-gray-900">{formatCurrency(item.buy_price)}</td>
+                    <td className="py-3 px-4 text-gray-900">{formatCurrency(priceValue)}</td>
+                    <td className="py-3 px-4">
+                      <span className={signedNumberClass(returnValue)}>{formatPercent(returnValue, { signed: true })}</span>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <div className="text-sm text-gray-500">当前股票池为空</div>
+        )}
+      </div>
 
-      {hasManualIntents ? (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <ListFilter size={20} />
-            人工干预记录
-          </h3>
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <FileText size={20} />
+          阶段汇总
+        </h3>
+        {summaries.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">时间</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">类型</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">代码</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">请求日</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">状态</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">阶段</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">起点</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">终点</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">跟踪</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">持有</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">清仓</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">池收益</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">捕捉质量</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">退出质量</th>
                 </tr>
               </thead>
               <tbody>
-                {portfolio.manual_intents.slice(-30).reverse().map((it, idx) => (
-                  <tr key={idx} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">{displayText(it.created_at || it.executed_at || it.cancelled_at)}</td>
-                    <td className="py-3 px-4 text-gray-900">
-                      {manualIntentTypeBadge(it.intent_type) ? (
-                        <SemanticBadge
-                          semanticKey={manualIntentTypeBadge(it.intent_type).key}
-                          label={manualIntentTypeBadge(it.intent_type).label}
-                        />
-                      ) : (
-                        it.intent_type || '--'
-                      )}
+                {summaries.map((row) => (
+                  <tr key={`${row.period_type}-${row.period_start}-${row.period_end}`} className="border-b border-gray-100">
+                    <td className="py-3 px-4 text-gray-900">{periodLabel(row.period_type)}</td>
+                    <td className="py-3 px-4 text-gray-700">{displayText(row.period_start)}</td>
+                    <td className="py-3 px-4 text-gray-700">{displayText(row.period_end)}</td>
+                    <td className="py-3 px-4 text-gray-900">{displayText(row.tracked_count)}</td>
+                    <td className="py-3 px-4 text-gray-900">{displayText(row.holding_count)}</td>
+                    <td className="py-3 px-4 text-gray-900">{displayText(row.closed_count)}</td>
+                    <td className="py-3 px-4">
+                      <span className={signedNumberClass(row.pool_return_pct)}>{formatPercent(row.pool_return_pct, { signed: true })}</span>
                     </td>
-                    <td className="py-3 px-4 text-gray-900">
-                      <StockCodeLink code={it.code} className="hover:text-blue-600 hover:underline">
-                        {it.code || '--'}
-                      </StockCodeLink>
-                    </td>
-                    <td className="py-3 px-4 text-gray-900">{displayText(it.name)}</td>
-                    <td className="py-3 px-4 text-gray-500">{displayText(it.requested_date)}</td>
-                    <td className="py-3 px-4 text-gray-500">
-                      {manualIntentStatusBadge(it.status, it.intent_type, it.cancel_reason) ? (
-                        <SemanticBadge
-                          semanticKey={manualIntentStatusBadge(it.status, it.intent_type, it.cancel_reason).key}
-                          label={manualIntentStatusBadge(it.status, it.intent_type, it.cancel_reason).label}
-                        />
-                      ) : (
-                        it.status || '--'
-                      )}
-                    </td>
+                    <td className="py-3 px-4 text-gray-900">{formatPercent(row.capture_quality == null ? null : row.capture_quality * 100)}</td>
+                    <td className="py-3 px-4 text-gray-900">{formatPercent(row.top_exit_quality == null ? null : row.top_exit_quality * 100)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <div className="text-sm text-gray-500">暂无阶段汇总</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1041,14 +868,14 @@ export default function Lowfreq() {
   const [data, setData] = useState({
     marketPhase: null,
     hotSectors: null,
-    portfolio: null,
+    scorePool: null,
     candidates: null,
     backtest: null,
   });
   const [blocks, setBlocks] = useState({
     marketPhase: createBlockState(),
     hotSectors: createBlockState(),
-    portfolio: createBlockState(),
+    scorePool: createBlockState(),
     candidates: createBlockState(),
     reports: createBlockState([]),
   });
@@ -1075,6 +902,7 @@ export default function Lowfreq() {
             code: s.code,
             name: s.name,
             sector: s.sector,
+            sector_name: s.sector_name || sec.name || s.sector,
             buy_score: s.buy_score,
             certainty: s.certainty,
             return_5d: s.return_5d,
@@ -1122,14 +950,28 @@ export default function Lowfreq() {
     }
   }, [hotMode, selectedDate]);
 
-  const loadPortfolioBlock = useCallback(async () => {
-    setBlocks((prev) => ({ ...prev, portfolio: startBlock(prev.portfolio, true) }));
+  const loadScorePoolBlock = useCallback(async () => {
+    setBlocks((prev) => ({ ...prev, scorePool: startBlock(prev.scorePool, true) }));
     try {
-      const payload = await fetchApi(`/api/lowfreq/portfolio?date=${encodeURIComponent(selectedDate)}`, {}, { timeoutMs: 45000 });
-      setData((prev) => ({ ...prev, portfolio: payload }));
-      setBlocks((prev) => ({ ...prev, portfolio: resolveBlock(payload) }));
+      const summaryPayload = await fetchApi(
+        `/api/lowfreq-score/summary?date=${encodeURIComponent(selectedDate)}&limit=12`,
+        {},
+        { timeoutMs: 45000 }
+      );
+      const partialPayload = { summary: summaryPayload };
+      setData((prev) => ({ ...prev, scorePool: partialPayload }));
+      setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(partialPayload) }));
+
+      const poolPayload = await fetchApi(
+        `/api/lowfreq-score/pool?date=${encodeURIComponent(selectedDate)}&limit=500`,
+        {},
+        { timeoutMs: 45000 }
+      );
+      const payload = { pool: poolPayload, summary: summaryPayload };
+      setData((prev) => ({ ...prev, scorePool: payload }));
+      setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(payload) }));
     } catch (err) {
-      setBlocks((prev) => ({ ...prev, portfolio: rejectBlock(prev.portfolio, err, true) }));
+      setBlocks((prev) => ({ ...prev, scorePool: rejectBlock(prev.scorePool, err, true) }));
     }
   }, [selectedDate]);
 
@@ -1156,14 +998,14 @@ export default function Lowfreq() {
     if (activeTab === 'today') {
       void loadMarketPhaseBlock();
       void loadHotSectorsBlock();
-    } else if (activeTab === 'portfolio') {
-      void loadPortfolioBlock();
+    } else if (activeTab === 'scorePool') {
+      void loadScorePoolBlock();
     } else if (activeTab === 'candidates') {
       void loadCandidatesBlock();
     } else if (activeTab === 'backtest') {
       setData((prev) => ({ ...prev, backtest: null }));
     }
-  }, [activeTab, loadCandidatesBlock, loadHotSectorsBlock, loadMarketPhaseBlock, loadPortfolioBlock]);
+  }, [activeTab, loadCandidatesBlock, loadHotSectorsBlock, loadMarketPhaseBlock, loadScorePoolBlock]);
 
   const fetchBacktestReports = useCallback(async () => {
     setBlocks((prev) => ({ ...prev, reports: startBlock(prev.reports, true) }));
@@ -1319,15 +1161,15 @@ export default function Lowfreq() {
 
   const tabs = [
     { id: 'today', label: '今日快照', icon: Calendar },
-    { id: 'portfolio', label: '交易记录', icon: Wallet },
+    { id: 'scorePool', label: '股票池与台账', icon: Wallet },
     { id: 'candidates', label: '候选池', icon: ListFilter },
     { id: 'backtest', label: '回测报告', icon: FileText },
   ];
   const loading =
     activeTab === 'today'
       ? blocks.marketPhase.loading || blocks.hotSectors.loading
-      : activeTab === 'portfolio'
-      ? blocks.portfolio.loading
+      : activeTab === 'scorePool'
+      ? blocks.scorePool.loading
       : activeTab === 'candidates'
       ? blocks.candidates.loading
       : activeTab === 'backtest'
@@ -1496,12 +1338,12 @@ export default function Lowfreq() {
         </div>
       )}
 
-      {!loading && activeTab === 'portfolio' && (
+      {!loading && activeTab === 'scorePool' && (
         <>
-          {blocks.portfolio.error && !blocks.portfolio.loaded ? (
-            <BlockMessage tone="red" message={blocks.portfolio.error} onRetry={loadPortfolioBlock} />
+          {blocks.scorePool.error && !blocks.scorePool.loaded ? (
+            <BlockMessage tone="red" message={blocks.scorePool.error} onRetry={loadScorePoolBlock} />
           ) : (
-            <PortfolioPanel data={data.portfolio} />
+            <ScorePoolPanel data={data.scorePool} />
           )}
         </>
       )}
