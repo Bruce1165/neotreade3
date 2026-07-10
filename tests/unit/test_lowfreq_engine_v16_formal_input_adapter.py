@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import neotrade3.data_control.formal_input_adapter as formal_input_adapter
-from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16
+from neotrade3.decision_engine.formal_front import build_lowfreq_formal_front_payload
 
 
 def _seed_formal_input_db(db_path: Path) -> date:
@@ -181,17 +181,19 @@ def test_load_formal_m1_inputs_uses_trading_day_projection(monkeypatch, tmp_path
     assert out["trading_day_status"].calendar_source == "trading_calendar_cache"
 
 
-def test_build_formal_front_chain_payload_consumes_adapter_output(tmp_path: Path) -> None:
+def test_build_lowfreq_formal_front_payload_consumes_adapter_output(tmp_path: Path) -> None:
     db_path = tmp_path / "stock_data.db"
     target = _seed_formal_input_db(db_path)
 
-    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
-    engine._conn = lambda: sqlite3.connect(str(db_path))
-
-    out = engine._build_formal_front_chain_payload(
-        target_date=target,
-        candidate_signals=[{"code": "000001"}],
-    )
+    conn = sqlite3.connect(str(db_path))
+    try:
+        out = build_lowfreq_formal_front_payload(
+            conn.cursor(),
+            target_date=target,
+            candidate_signals=[{"code": "000001"}],
+        )
+    finally:
+        conn.close()
 
     assert out["status"] == "ok"
     assert out["summary"] == {"total": 1, "ok": 1, "error": 0}
