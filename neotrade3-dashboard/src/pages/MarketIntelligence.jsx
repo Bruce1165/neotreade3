@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Flame, Link2, RefreshCw, Target } from 'lucide-react'
+import { AlertCircle, Flame, Link2, Target } from 'lucide-react'
 
 import DateSelector from '../components/DateSelector'
+import PageHeader from '../components/PageHeader'
 import StockCodeLink from '../components/StockCodeLink'
 import { useApp } from '../context/AppContext'
 import { createBlockState, resolveBlock, startBlock } from '../services/asyncBlocks'
@@ -333,22 +334,12 @@ export default function MarketIntelligence() {
     <div className="space-y-6">
       <DateSelector onRefresh={fetchData} loading={loading} />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">主线审阅</h2>
-          <div className="text-gray-500 mt-1">
-            先看赛道，再看候选，再核对主线与候选之间的联动关系
-          </div>
-        </div>
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
-      </div>
+      <PageHeader
+        title="主线审阅"
+        subtitle="先看赛道，再看候选，再核对主线与候选之间的联动关系"
+        onRefresh={fetchData}
+        loading={loading}
+      />
 
       <div className="bg-white rounded-lg border border-gray-200 p-4 text-sm text-gray-600">
         审阅日期：<span className="font-medium text-gray-900">{tradeDate || '--'}</span>
