@@ -6439,11 +6439,6 @@ class LowFreqTradingEngineV16:
         target_hits_50 = [t for t in trades if t.return_pct >= 50]
         target_hit_rate_50 = len(target_hits_50) / len(trades) * 100 if trades else 0
 
-        sell_reasons = {}
-        for t in trades:
-            reason_key = t.sell_reason.split(":")[0].strip() if t.sell_reason else "unknown"
-            sell_reasons[reason_key] = sell_reasons.get(reason_key, 0) + 1
-
         return {
             "strategy": "low_freq_v16_advanced",
             "start_date": daily_values[0]["date"] if daily_values else "",
@@ -6462,15 +6457,8 @@ class LowFreqTradingEngineV16:
             "target_hits_30": len(target_hits_30),
             "target_hit_rate_50_pct": round(target_hit_rate_50, 2),
             "target_hits_50": len(target_hits_50),
-            "sell_reasons": sell_reasons,
-            "recent_trades": [
-                {"code": t.code, "name": t.name, "sector": t.sector,
-                 "buy_date": t.buy_date, "sell_date": t.sell_date,
-                 "return_pct": t.return_pct, "hold_days": t.hold_days,
-                 "buy_score": t.buy_score, "wave_phase": t.wave_phase,
-                 "sell_reason": t.sell_reason, "role": t.role}
-                for t in trades[-20:]
-            ],
+            "sell_reasons": _summarize_sell_reasons(trades),
+            "recent_trades": _serialize_recent_trades(trades),
         }
 
     def _get_trading_dates(self, start: date, end: date) -> list[date]:
@@ -6502,30 +6490,61 @@ class LowFreqTradingEngineV16:
         return len(dates)
 
 
-def main():
-    engine = LowFreqTradingEngineV16()
-    
-    start_date = date(2024, 11, 26)
-    end_date = date(2026, 5, 22)
-    
+def _summarize_sell_reasons(trades) -> dict[str, int]:
+    sell_reasons: dict[str, int] = {}
+    for trade in trades:
+        reason_key = trade.sell_reason.split(":")[0].strip() if trade.sell_reason else "unknown"
+        sell_reasons[reason_key] = sell_reasons.get(reason_key, 0) + 1
+    return sell_reasons
+
+
+def _serialize_recent_trades(trades, limit: int = 20) -> list[dict[str, Any]]:
+    return [
+        {
+            "code": trade.code,
+            "name": trade.name,
+            "sector": trade.sector,
+            "buy_date": trade.buy_date,
+            "sell_date": trade.sell_date,
+            "return_pct": trade.return_pct,
+            "hold_days": trade.hold_days,
+            "buy_score": trade.buy_score,
+            "wave_phase": trade.wave_phase,
+            "sell_reason": trade.sell_reason,
+            "role": trade.role,
+        }
+        for trade in trades[-limit:]
+    ]
+
+
+def _print_backtest_run_header(engine: LowFreqTradingEngineV16, start_date: date, end_date: date) -> None:
     print(f"\n{'='*70}")
-    print(f"低频量化交易系统 v17 (跟随股溃散预警+龙头雷达)")
+    print("低频量化交易系统 v17 (跟随股溃散预警+龙头雷达)")
     print(f"{'='*70}")
     print(f"回测区间: {start_date} ~ {end_date}")
-    print(f"选股范围: 市值 200-400 亿")
+    print("选股范围: 市值 200-400 亿")
     print(f"买入阈值: 确定性评分 ≥ {engine.BUY_THRESHOLD}")
     print(f"目标收益: ≥ {engine.TARGET_RETURN}%")
     print(f"持仓周期: {engine.MIN_HOLD_DAYS}-{engine.MAX_HOLD_DAYS} 天")
-    print(f"止损线: {engine.STOP_LOSS_PCT}% (盈利>{engine.TRAILING_PROFIT_LEVEL}%后提高到{engine.TRAILING_STOP_PCT}%)")
-    print(f"分批止盈: 盈利>{engine.PARTIAL_PROFIT_LEVEL}%时卖出{engine.PARTIAL_PROFIT_PCT}%仓位")
-    print(f"基本面筛选: PE<{engine.MAX_PE}, 净利增>{engine.MIN_PROFIT_GROWTH}%, ROE>{engine.MIN_ROE}%")
+    print(
+        f"止损线: {engine.STOP_LOSS_PCT}% "
+        f"(盈利>{engine.TRAILING_PROFIT_LEVEL}%后提高到{engine.TRAILING_STOP_PCT}%)"
+    )
+    print(
+        f"分批止盈: 盈利>{engine.PARTIAL_PROFIT_LEVEL}%时卖出"
+        f"{engine.PARTIAL_PROFIT_PCT}%仓位"
+    )
+    print(
+        f"基本面筛选: PE<{engine.MAX_PE}, "
+        f"净利增>{engine.MIN_PROFIT_GROWTH}%, ROE>{engine.MIN_ROE}%"
+    )
     print(f"市场情绪过滤: {'启用' if engine.MARKET_FILTER_ENABLED else '禁用'}")
     print(f"{'='*70}\n")
-    
-    result = engine.run_backtest(start_date, end_date)
-    
+
+
+def _print_backtest_result_summary(result: dict[str, Any]) -> None:
     print(f"\n{'='*70}")
-    print(f"回测结果")
+    print("回测结果")
     print(f"{'='*70}")
     print(f"回测区间: {result['start_date']} ~ {result['end_date']}")
     print(f"交易日数: {result['trading_days']}")
@@ -6538,27 +6557,49 @@ def main():
     print(f"胜率: {result['win_rate_pct']:.2f}%")
     print(f"平均收益: {result['avg_return_pct']:.2f}%")
     print(f"盈亏比: {result['profit_loss_ratio']:.2f}")
-    print(f"\n【核心目标】30%+收益达成率: {result['target_hit_rate_30_pct']:.2f}% ({result['target_hits_30']}/{result['total_trades']})")
-    print(f"【核心目标】50%+收益达成率: {result['target_hit_rate_50_pct']:.2f}% ({result['target_hits_50']}/{result['total_trades']})")
-    
-    print(f"\n卖出原因分布:")
-    for reason, count in result['sell_reasons'].items():
+    print(
+        f"\n【核心目标】30%+收益达成率: {result['target_hit_rate_30_pct']:.2f}% "
+        f"({result['target_hits_30']}/{result['total_trades']})"
+    )
+    print(
+        f"【核心目标】50%+收益达成率: {result['target_hit_rate_50_pct']:.2f}% "
+        f"({result['target_hits_50']}/{result['total_trades']})"
+    )
+
+    print("\n卖出原因分布:")
+    for reason, count in result["sell_reasons"].items():
         print(f"  {reason}: {count}次")
-    
-    print(f"\n最近交易记录:")
-    for t in result['recent_trades']:
-        print(f"  {t['code']} {t['name']} | {t['buy_date']}→{t['sell_date']} | "
-              f"{t['hold_days']}天 | {t['return_pct']:+.1f}% | {t.get('role', '')}")
-    
+
+    print("\n最近交易记录:")
+    for trade in result["recent_trades"]:
+        print(
+            f"  {trade['code']} {trade['name']} | "
+            f"{trade['buy_date']}→{trade['sell_date']} | "
+            f"{trade['hold_days']}天 | {trade['return_pct']:+.1f}% | "
+            f"{trade.get('role', '')}"
+        )
     print(f"\n{'='*70}\n")
-    
-    # 保存结果
-    import json
+
+
+def _save_backtest_result(result: dict[str, Any], start_date: date, end_date: date) -> Path:
     output_dir = Path("var/backtest_results")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"lowfreq_v16_{start_date}_{end_date}.json"
-    with open(output_file, 'w') as f:
-        json.dump(result, f, indent=2, default=str)
+    with open(output_file, "w", encoding="utf-8") as file_obj:
+        json.dump(result, file_obj, indent=2, default=str)
+    return output_file
+
+
+def main():
+    engine = LowFreqTradingEngineV16()
+
+    start_date = date(2024, 11, 26)
+    end_date = date(2026, 5, 22)
+
+    _print_backtest_run_header(engine, start_date, end_date)
+    result = engine.run_backtest(start_date, end_date)
+    _print_backtest_result_summary(result)
+    output_file = _save_backtest_result(result, start_date, end_date)
     print(f"结果已保存: {output_file}")
 
 
