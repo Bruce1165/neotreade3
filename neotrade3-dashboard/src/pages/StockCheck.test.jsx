@@ -33,7 +33,7 @@ describe('StockCheck', () => {
   it('shows validation error when stock code is empty', async () => {
     render(<StockCheck />)
 
-    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始核验' }))
 
     expect(screen.getByText('请输入股票代码')).toBeTruthy()
     expect(mockFetchApi).not.toHaveBeenCalled()
@@ -86,7 +86,7 @@ describe('StockCheck', () => {
     fireEvent.change(screen.getByPlaceholderText('例如：600000'), {
       target: { value: '600000' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '检查' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始核验' }))
 
     await waitFor(() => {
       expect(mockFetchApi).toHaveBeenCalledWith(
