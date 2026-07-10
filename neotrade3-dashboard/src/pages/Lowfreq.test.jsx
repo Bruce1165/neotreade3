@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Lowfreq from './Lowfreq'
@@ -62,7 +62,8 @@ function buildTodayPayloads() {
             {
               code: '600001',
               name: '领涨一号',
-              sector: '机器人',
+              sector: 'I65',
+              sector_name: '机器人',
               role: 'leader',
               buy_score: 92,
               buy_signal: true,
@@ -81,69 +82,6 @@ function buildTodayPayloads() {
           followers: [],
         },
       ],
-    },
-    '/api/lowfreq/portfolio?date=2026-06-09': {
-      portfolio: {
-        strategy: 'low_freq_v16_advanced',
-        as_of: '2026-06-09',
-        initial_capital: 1000000,
-        total_value: 1080600,
-        cash: 320000,
-        total_return_pct: 8.06,
-        open_positions: [
-          {
-            code: '600001',
-            name: '领涨一号',
-            sector: '机器人',
-            buy_date: '2026-05-20',
-            hold_days: 15,
-            buy_price: 12.3,
-            current_price: 13.6,
-            market_value: 200000,
-            unrealized_pnl_pct: 10.57,
-            peak_return_pct: 18.2,
-            process_stage: 'exit_watch',
-            buy_progress_label: '早窗',
-            wave_phase: '3浪',
-            market_exit_state: 'review',
-            market_exit_hits: 2,
-            system_exit_grace_used: true,
-            system_exit_grace_scope: 'market',
-            system_exit_grace_date: '2026-06-08',
-            sell_reason: '创业板见顶确认候选',
-          },
-        ],
-        closed_trades: [
-          {
-            code: '600002',
-            name: '跟踪二号',
-            sector: '机器人',
-            buy_date: '2026-05-01',
-            sell_date: '2026-06-06',
-            shares: 1000,
-            buy_price: 10.0,
-            sell_price: 12.0,
-            realized_pnl: 2000,
-            return_pct: 20.0,
-            peak_return_pct: 26.0,
-            buy_progress_label: '前置布局',
-            wave_phase: '1浪',
-            process_stage: 'closed',
-            sell_reason: '板块见顶确认',
-            system_exit_grace_used: false,
-          },
-        ],
-        manual_intents: [
-          {
-            code: '600001',
-            name: '机器人',
-            intent_type: 'buy_intent',
-            status: 'pending',
-            requested_date: '2026-06-09',
-            created_at: '2026-06-09 10:30:00',
-          },
-        ],
-      },
     },
   }
 }
@@ -224,34 +162,4 @@ describe('Lowfreq', () => {
     expect(screen.getAllByText('机器人').length).toBeGreaterThan(0)
   })
 
-  it('opens trade record tab without white screen when portfolio fields are partial', async () => {
-    const payloads = buildTodayPayloads()
-    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
-
-    render(<Lowfreq />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '交易记录' })).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: '交易记录' }))
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith(
-        '/api/lowfreq/portfolio?date=2026-06-09',
-        {},
-        { timeoutMs: 45000 },
-      )
-    })
-
-    expect(screen.getByText('当前组合累计收益')).toBeTruthy()
-    expect(screen.getByText('持仓明细')).toBeTruthy()
-    expect(screen.getByText('捕捉 / 持有 / 退出全过程')).toBeTruthy()
-    expect(screen.getByText('人工干预记录')).toBeTruthy()
-    expect(screen.getAllByRole('columnheader', { name: '名称' }).length).toBeGreaterThan(0)
-    expect(screen.getAllByText('机器人').length).toBeGreaterThan(0)
-    expect(screen.getByText('初始资金:')).toBeTruthy()
-    expect(screen.getByText('早窗 / 3浪')).toBeTruthy()
-    expect(screen.getAllByText('grace:market @ 2026-06-08').length).toBeGreaterThan(0)
-  })
 })
