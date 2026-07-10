@@ -33,6 +33,8 @@ describe('StockCheck', () => {
   it('shows validation error when stock code is empty', async () => {
     render(<StockCheck />)
 
+    expect(screen.getByText('输入股票代码，核验筛选器、热门板块、形态与确定性')).toBeTruthy()
+
     fireEvent.click(screen.getByRole('button', { name: '开始核验' }))
 
     expect(screen.getByText('请输入股票代码')).toBeTruthy()

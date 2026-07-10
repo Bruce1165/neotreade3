@@ -50,7 +50,7 @@ export default function StockCheck() {
       {/* Date Selector */}
       <DateSelector />
 
-      <PageHeader title="单股核验" subtitle="输入股票代码，核验筛选器 / 热门板块 / 老鸭头 / 确定性" />
+      <PageHeader title="单股核验" subtitle="输入股票代码，核验筛选器、热门板块、形态与确定性" />
 
       {/* Search Input */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
