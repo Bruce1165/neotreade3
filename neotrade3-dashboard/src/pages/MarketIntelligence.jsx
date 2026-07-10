@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertCircle, Flame, Link2, Target } from 'lucide-react'
 
+import BlockMessage from '../components/BlockMessage'
 import DateSelector from '../components/DateSelector'
 import PageHeader from '../components/PageHeader'
 import StockCodeLink from '../components/StockCodeLink'
@@ -109,27 +110,6 @@ function buildDisplayError(err) {
       `后端信息：${message}`,
     ],
   }
-}
-
-function BlockMessage({ tone = 'gray', message, onRetry, retryLabel = '重试' }) {
-  const toneClass =
-    tone === 'red'
-      ? 'bg-red-50 border-red-200 text-red-700'
-      : 'bg-gray-50 border-gray-200 text-gray-600'
-  return (
-    <div className={`rounded-lg border p-4 text-sm flex items-center justify-between gap-3 ${toneClass}`}>
-      <span>{message}</span>
-      {typeof onRetry === 'function' ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="px-3 py-1 rounded bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-        >
-          {retryLabel}
-        </button>
-      ) : null}
-    </div>
-  )
 }
 
 function ErrorPanel({ error, onRetry }) {
