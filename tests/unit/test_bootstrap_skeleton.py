@@ -3505,6 +3505,30 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             + "\n",
             encoding="utf-8",
         )
+        screener_artifact_path = (
+            PROJECT_ROOT
+            / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+        )
+        screener_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        previous_screener_artifact_text = (
+            screener_artifact_path.read_text(encoding="utf-8")
+            if screener_artifact_path.exists()
+            else None
+        )
+        screener_artifact_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "status": "ok",
+                    "picks": [{"code": "000001", "name": "平安银行", "close": 11.0}],
+                },
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/factor-matrix/daily?date=2026-05-19"
@@ -3548,7 +3572,7 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["_meta"]["status"] == "ok"
             assert payload["lab_run"]["lab_id"] == "cup_handle_lab"
-            assert payload["lab_run"]["status"] == "pending_implementation"
+            assert payload["lab_run"]["status"] == "ok"
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/labs/runs?date=2026-05-19&limit=10"
@@ -3567,6 +3591,9 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             payload = json.loads(response.read().decode("utf-8"))
             assert payload["_meta"]["status"] == "ok"
             assert payload["lab_result"]["lab_id"] == "cup_handle_lab"
+            report = payload["lab_result"]["artifacts"]["cup_handle_daily_report"]
+            assert report["status"] == "ok"
+            assert "000001" in report["candidates"]
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/labs/runs/2026-05-19/cup_handle_lab/download"
@@ -3787,6 +3814,14 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
                     calendar_path.unlink()
             else:
                 calendar_path.write_text(previous_calendar_text, encoding="utf-8")
+        if "previous_screener_artifact_text" in locals():
+            if previous_screener_artifact_text is None:
+                if screener_artifact_path.exists():
+                    screener_artifact_path.unlink()
+            else:
+                screener_artifact_path.write_text(
+                    previous_screener_artifact_text, encoding="utf-8"
+                )
         shutil.rmtree(
             PROJECT_ROOT / "var/ledgers/factor_matrix" / "2026-05-19",
             ignore_errors=True,
@@ -3808,6 +3843,10 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
         shutil.rmtree(
             PROJECT_ROOT / "var/artifacts/lab_runs" / "2026-05-19", ignore_errors=True
+        )
+        shutil.rmtree(
+            PROJECT_ROOT / "var/artifacts/labs/cup_handle_lab",
+            ignore_errors=True,
         )
         shutil.rmtree(
             PROJECT_ROOT / "var/ledgers/orchestration_runs" / "2026-05-19",
