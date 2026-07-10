@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import lowfreq_engine_v16_advanced as lowfreq_engine_module
 from lowfreq_engine_v16_advanced import (
     LowFreqTradingEngineV16,
     LowFreqV16Config,
@@ -12,6 +13,7 @@ from lowfreq_engine_v16_advanced import (
     StockCandidate,
     WavePhase,
 )
+from neotrade3.cycle_intelligence.legacy_recognition import apply_strong_leader_soft_release
 
 
 class _FakeConn:
@@ -949,7 +951,7 @@ def test_strong_leader_soft_release_clears_focus_and_structure_soft_flags() -> N
     engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = True
     engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
-    score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
+    score, soft_flags, reasons = apply_strong_leader_soft_release(
         score=83.5,
         role="龙头",
         wave_phase=WavePhase.WAVE_3.value,
@@ -961,6 +963,8 @@ def test_strong_leader_soft_release_clears_focus_and_structure_soft_flags() -> N
             "soft:weekly_breakout_not_confirmed",
             "soft:未同时满足核心范围、配置高配与细分赛道龙头闸门",
         ],
+        release_enabled=engine.STRONG_LEADER_SOFT_RELEASE_ENABLED,
+        release_min_score=engine.EXECUTION_ELITE_MIN_BUY_SCORE,
     )
 
     assert score == 101.5
@@ -977,7 +981,7 @@ def test_strong_leader_soft_release_keeps_other_soft_blockers() -> None:
     engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = True
     engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
-    score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
+    score, soft_flags, reasons = apply_strong_leader_soft_release(
         score=96.0,
         role="龙头",
         wave_phase=WavePhase.WAVE_3.value,
@@ -988,6 +992,8 @@ def test_strong_leader_soft_release_keeps_other_soft_blockers() -> None:
             "capture-first: 波段不符，降权保留",
             "soft:未同时满足核心范围、配置高配与细分赛道龙头闸门",
         ],
+        release_enabled=engine.STRONG_LEADER_SOFT_RELEASE_ENABLED,
+        release_min_score=engine.EXECUTION_ELITE_MIN_BUY_SCORE,
     )
 
     assert score == 96.0
@@ -1002,7 +1008,7 @@ def test_strong_leader_soft_release_disabled_by_default() -> None:
     engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = False
     engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
-    score, soft_flags, reasons = engine._apply_strong_leader_soft_release(
+    score, soft_flags, reasons = apply_strong_leader_soft_release(
         score=83.5,
         role="龙头",
         wave_phase=WavePhase.WAVE_3.value,
@@ -1012,6 +1018,8 @@ def test_strong_leader_soft_release_disabled_by_default() -> None:
             "capture-first: 结构未确认，降权保留",
             "capture-first: focus gate 未过，降权保留",
         ],
+        release_enabled=engine.STRONG_LEADER_SOFT_RELEASE_ENABLED,
+        release_min_score=engine.EXECUTION_ELITE_MIN_BUY_SCORE,
     )
 
     assert score == 83.5
@@ -1021,7 +1029,7 @@ def test_strong_leader_soft_release_disabled_by_default() -> None:
     assert not any("capture-first: 高分龙头窄例外放行" in row for row in reasons)
 
 
-def test_get_global_candidates_keeps_short_history_candidate_without_crashing() -> None:
+def test_get_global_candidates_keeps_short_history_candidate_without_crashing(monkeypatch) -> None:
     rows = [
         ("300001", "样本股", "C39", 320e8, 10.0, 3.0, 1e8, 1e7),
     ]
@@ -1045,13 +1053,21 @@ def test_get_global_candidates_keeps_short_history_candidate_without_crashing() 
             for i in range(10)
         ]
     }
-    engine._detect_wave_phase_from_series = lambda closes, highs, lows: (WavePhase.UNKNOWN.value, 0.0)
     engine._resonance_from_closes = lambda closes: 0.5
     engine._weekly_returns_view = lambda code, target_date: {"status": "insufficient"}
-    engine._passes_core_focus_gate = lambda cursor, code, stock_name, role, target_date: (
-        True,
-        ["focus通过"],
-        {"focus_bonus": 0.0},
+    monkeypatch.setattr(
+        lowfreq_engine_module,
+        "detect_wave_phase_from_series",
+        lambda *, closes, highs, lows: (WavePhase.UNKNOWN.value, 0.0),
+    )
+    monkeypatch.setattr(
+        lowfreq_engine_module,
+        "passes_core_focus_gate",
+        lambda cursor, code, stock_name, role, target_date, market_focus_snapshot_loader: (
+            True,
+            ["focus通过"],
+            {"focus_bonus": 0.0},
+        ),
     )
 
     candidates = engine.get_global_candidates(date(2026, 6, 15), top_n=5)

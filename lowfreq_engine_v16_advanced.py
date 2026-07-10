@@ -26,6 +26,11 @@ from neotrade3.decision_engine.formal_front import (
     attach_lowfreq_formal_front_payloads,
     build_lowfreq_formal_front_payload,
 )
+from neotrade3.cycle_intelligence.legacy_recognition import (
+    apply_strong_leader_soft_release,
+    detect_wave_phase_from_series,
+    passes_core_focus_gate,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -1470,106 +1475,6 @@ class LowFreqTradingEngineV16:
         self._market_focus_cache[cache_key] = dict(snapshot)
         return snapshot
 
-    def _passes_core_focus_gate(
-        self,
-        cursor: sqlite3.Cursor,
-        *,
-        code: str,
-        stock_name: str,
-        role: str,
-        target_date: date,
-    ) -> tuple[bool, list[str], dict[str, Any]]:
-        if str(role or "").strip() != "龙头":
-            return False, ["仅允许细分赛道龙头进入正式买入主链"], {
-                "focus_pass": False,
-                "focus_bonus": 0.0,
-            }
-        snapshot = self._market_focus_snapshot(
-            cursor,
-            code=code,
-            stock_name=stock_name,
-            target_date=target_date,
-        )
-        if not bool(snapshot.get("focus_pass")):
-            return False, ["未同时满足核心范围、配置高配与细分赛道龙头闸门"], snapshot
-
-        reasons: list[str] = []
-        if snapshot.get("ai_hits"):
-            reasons.append(f"AI 主线命中：{', '.join(list(snapshot.get('ai_hits') or [])[:3])}")
-        elif snapshot.get("hardtech_hits"):
-            reasons.append(f"硬科技主线命中：{', '.join(list(snapshot.get('hardtech_hits') or [])[:3])}")
-        if snapshot.get("penetration_hits"):
-            reasons.append(
-                f"命中渗透率重点赛道：{', '.join(list(snapshot.get('penetration_hits') or [])[:3])}"
-            )
-        if bool(snapshot.get("etf_index_data_ready")):
-            reasons.append(
-                f"ETF/指数证据通过：ETF持有人{int(snapshot.get('holder_etf_count') or 0)}，指数成分{int(snapshot.get('index_count') or 0)}，配置分{int(snapshot.get('config_score') or 0)}"
-            )
-        else:
-            reasons.append(
-                f"基金配置证据通过：基金数{int(snapshot.get('holder_fund_count') or 0)}，配置分{int(snapshot.get('config_score') or 0)}"
-            )
-        attention_score = int(snapshot.get("attention_score") or 0)
-        if attention_score > 0:
-            reasons.append(f"机构关注增强：关注分{attention_score}")
-        else:
-            reasons.append("机构关注未命中，本次按参考项处理")
-        return True, reasons, snapshot
-
-    def _apply_strong_leader_soft_release(
-        self,
-        *,
-        score: float,
-        role: str,
-        wave_phase: str,
-        soft_flags: list[str],
-        reasons: list[str],
-    ) -> tuple[float, list[str], list[str]]:
-        """Narrow exception: release only strong 1/3-wave leaders blocked by focus/structure soft gates."""
-        if not bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)):
-            return float(score), [str(flag or "").strip() for flag in list(soft_flags or []) if str(flag or "").strip()], list(reasons or [])
-        normalized_role = str(role or "").strip()
-        normalized_wave = str(wave_phase or "").strip()
-        normalized_flags = [str(flag or "").strip() for flag in list(soft_flags or []) if str(flag or "").strip()]
-        if normalized_role != "龙头":
-            return float(score), normalized_flags, list(reasons or [])
-        if normalized_wave not in {WavePhase.WAVE_1.value, WavePhase.WAVE_3.value}:
-            return float(score), normalized_flags, list(reasons or [])
-
-        release_min_score = float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0)
-        if float(score) < float(release_min_score):
-            return float(score), normalized_flags, list(reasons or [])
-
-        allowed_flags = {"focus_soft_fail", "structure_soft_fail"}
-        flag_set = set(normalized_flags)
-        if not flag_set or not flag_set.issubset(allowed_flags):
-            return float(score), normalized_flags, list(reasons or [])
-
-        released_flags = [flag for flag in ("structure_soft_fail", "focus_soft_fail") if flag in flag_set]
-        score_delta = 0.0
-        if "structure_soft_fail" in flag_set:
-            score_delta += 10.0
-        if "focus_soft_fail" in flag_set:
-            score_delta += 8.0
-
-        filtered_reasons: list[str] = []
-        for reason in list(reasons or []):
-            text = str(reason or "")
-            if text == "capture-first: 结构未确认，降权保留" and "structure_soft_fail" in flag_set:
-                continue
-            if text == "capture-first: focus gate 未过，降权保留" and "focus_soft_fail" in flag_set:
-                continue
-            if text.startswith("soft:") and flag_set:
-                continue
-            filtered_reasons.append(text)
-
-        release_note = (
-            f"capture-first: 高分龙头窄例外放行({'+'.join(released_flags)})"
-        )
-        filtered_reasons.append(release_note)
-        return float(score) + float(score_delta), [], filtered_reasons
-
     def _ensure_no_lookahead_trade_dates(
         self, rows: list[tuple], *, target_date: date, trade_date_index: int = 0, context: str
     ) -> None:
@@ -2942,37 +2847,7 @@ class LowFreqTradingEngineV16:
         highs = [r[2] for r in rows if r[2] is not None]
         lows = [r[3] for r in rows if r[3] is not None]
 
-        return self._detect_wave_phase_from_series(closes=closes, highs=highs, lows=lows)
-
-    def _detect_wave_phase_from_series(
-        self,
-        *,
-        closes: list[float],
-        highs: list[float],
-        lows: list[float],
-    ) -> tuple[str, float]:
-        if len(closes) < 30:
-            return WavePhase.UNKNOWN.value, 0.0
-
-        # 找前期高点
-        recent_high = max(highs[:20])
-        recent_low = min(lows[:20])
-        prev_high = max(highs[20:40]) if len(highs) >= 40 else recent_high * 0.9
-
-        current_price = closes[0]
-        price_change_20d = (current_price - closes[19]) / closes[19] * 100 if closes[19] > 0 else 0
-
-        # 判断逻辑
-        if current_price > prev_high * 1.02 and price_change_20d > 10:
-            return WavePhase.WAVE_3.value, 0.8
-        elif current_price > prev_high * 1.05 and price_change_20d > 20:
-            return WavePhase.WAVE_5.value, 0.7
-        elif current_price < recent_low * 1.05 and price_change_20d < -10:
-            return WavePhase.WAVE_B.value, 0.6
-        elif price_change_20d > 5:
-            return WavePhase.WAVE_1.value, 0.5
-        else:
-            return WavePhase.UNKNOWN.value, 0.3
+        return detect_wave_phase_from_series(closes=closes, highs=highs, lows=lows)
 
     def get_hot_sectors(self, target_date: date, top_n: int = 5, cursor: Optional[Any] = None) -> list[SectorHeat]:
         """获取热门板块 - v16增加人气消散过滤"""
@@ -3473,12 +3348,13 @@ class LowFreqTradingEngineV16:
                 score += 8
                 reasons.append("板块中军（多因子）")
 
-            passed_focus, focus_reasons, focus_snapshot = self._passes_core_focus_gate(
+            passed_focus, focus_reasons, focus_snapshot = passes_core_focus_gate(
                 cursor,
                 code=code,
                 stock_name=stock_name,
                 role=role,
                 target_date=target_date,
+                market_focus_snapshot_loader=self._market_focus_snapshot,
             )
             if not passed_focus:
                 soft_flags.append("focus_soft_fail")
@@ -3494,12 +3370,14 @@ class LowFreqTradingEngineV16:
                 score -= 4.0
                 reasons.append("capture-first: 跟随股降权保留")
 
-            score, soft_flags, reasons = self._apply_strong_leader_soft_release(
+            score, soft_flags, reasons = apply_strong_leader_soft_release(
                 score=float(score),
                 role=role,
                 wave_phase=str(item.get("wave_phase") or ""),
                 soft_flags=soft_flags,
                 reasons=reasons,
+                release_enabled=bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)),
+                release_min_score=float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0),
             )
             mkt_cap_yi = float(item.get("mkt_cap") or 0.0) / 1e8
             fundamentals = item.get("fundamentals") or {}
@@ -3679,7 +3557,7 @@ class LowFreqTradingEngineV16:
             wave_closes = [h["close"] for h in history if h.get("close") is not None]
             wave_highs = [h["high"] for h in history if h.get("high") is not None]
             wave_lows = [h["low"] for h in history if h.get("low") is not None]
-            wave_phase, wave_confidence = self._detect_wave_phase_from_series(
+            wave_phase, wave_confidence = detect_wave_phase_from_series(
                 closes=wave_closes,
                 highs=wave_highs,
                 lows=wave_lows,
@@ -3821,12 +3699,13 @@ class LowFreqTradingEngineV16:
                 score += 8
                 reasons.append("板块中军（多因子）")
 
-            passed_focus, focus_reasons, focus_snapshot = self._passes_core_focus_gate(
+            passed_focus, focus_reasons, focus_snapshot = passes_core_focus_gate(
                 cursor,
                 code=code,
                 stock_name=stock_name,
                 role=role,
                 target_date=target_date,
+                market_focus_snapshot_loader=self._market_focus_snapshot,
             )
             if not passed_focus:
                 soft_flags.append("focus_soft_fail")
@@ -3842,12 +3721,14 @@ class LowFreqTradingEngineV16:
                 score -= 4.0
                 reasons.append("capture-first: 跟随股降权保留")
 
-            score, soft_flags, reasons = self._apply_strong_leader_soft_release(
+            score, soft_flags, reasons = apply_strong_leader_soft_release(
                 score=float(score),
                 role=role,
                 wave_phase=str(item.get("wave_phase") or ""),
                 soft_flags=soft_flags,
                 reasons=reasons,
+                release_enabled=bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)),
+                release_min_score=float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0),
             )
             mkt_cap_yi = float(item.get("mkt_cap") or 0.0) / 1e8
             fundamentals = item.get("fundamentals") or {}

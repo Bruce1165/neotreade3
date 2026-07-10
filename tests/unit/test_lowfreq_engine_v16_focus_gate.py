@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16
+from neotrade3.cycle_intelligence.legacy_recognition import passes_core_focus_gate
 
 
 def test_focus_gate_allows_zero_attention_when_other_hard_conditions_hold() -> None:
@@ -18,12 +19,13 @@ def test_focus_gate_allows_zero_attention_when_other_hard_conditions_hold() -> N
         "attention_score": 0,
     }
 
-    passed, reasons, snapshot = engine._passes_core_focus_gate(
+    passed, reasons, snapshot = passes_core_focus_gate(
         None,
         code="000001",
         stock_name="测试龙头",
         role="龙头",
         target_date=date(2026, 6, 18),
+        market_focus_snapshot_loader=engine._market_focus_snapshot,
     )
 
     assert passed is True
@@ -38,12 +40,13 @@ def test_focus_gate_still_blocks_non_leaders() -> None:
         "attention_score": 2,
     }
 
-    passed, reasons, _snapshot = engine._passes_core_focus_gate(
+    passed, reasons, _snapshot = passes_core_focus_gate(
         None,
         code="000001",
         stock_name="测试跟随",
         role="跟随",
         target_date=date(2026, 6, 18),
+        market_focus_snapshot_loader=engine._market_focus_snapshot,
     )
 
     assert passed is False
@@ -58,12 +61,13 @@ def test_focus_gate_skips_snapshot_for_non_leaders() -> None:
 
     engine._market_focus_snapshot = _unexpected_snapshot
 
-    passed, reasons, snapshot = engine._passes_core_focus_gate(
+    passed, reasons, snapshot = passes_core_focus_gate(
         None,
         code="000001",
         stock_name="测试跟随",
         role="跟随",
         target_date=date(2026, 6, 18),
+        market_focus_snapshot_loader=engine._market_focus_snapshot,
     )
 
     assert passed is False

@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from apps.api.main import BootstrapApiService
+import lowfreq_engine_v16_advanced as lowfreq_engine_module
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16
 
 
@@ -218,9 +219,13 @@ def test_get_global_candidates_uses_batch_fundamentals(tmp_path: Path, monkeypat
     monkeypatch.setattr(engine, "get_fundamentals", lambda code, target_date: (_ for _ in ()).throw(AssertionError("should not call per-code get_fundamentals")))
     monkeypatch.setattr(engine, "_structure_confirm", lambda **kwargs: {"passed": True, "reasons": []})
     monkeypatch.setattr(
-        engine,
-        "_passes_core_focus_gate",
-        lambda cursor, code, stock_name, role, target_date: (True, [], {"focus_bonus": 0.0}),
+        lowfreq_engine_module,
+        "passes_core_focus_gate",
+        lambda cursor, code, stock_name, role, target_date, market_focus_snapshot_loader: (
+            True,
+            [],
+            {"focus_bonus": 0.0},
+        ),
     )
     monkeypatch.setattr(engine, "_weekly_returns_view", lambda code, target_date: {"status": "insufficient"})
 
