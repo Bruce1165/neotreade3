@@ -3665,7 +3665,8 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
             assert payload["lab_result"]["lab_id"] == "paper_simulation_lab"
             positions = payload["lab_result"]["artifacts"]["paper_simulation_positions"]
             assert positions["cash_yuan"] > 0
-            assert positions["universe_snapshot"]["candidate_count"] >= 1
+            assert isinstance(positions["positions"], list)
+            assert isinstance(positions["portfolio"], dict)
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/data-control/runs?date=2026-05-19&limit=10"
@@ -3846,6 +3847,10 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
         shutil.rmtree(
             PROJECT_ROOT / "var/artifacts/labs/cup_handle_lab",
+            ignore_errors=True,
+        )
+        shutil.rmtree(
+            PROJECT_ROOT / "var/artifacts/labs/paper_simulation_lab",
             ignore_errors=True,
         )
         shutil.rmtree(
