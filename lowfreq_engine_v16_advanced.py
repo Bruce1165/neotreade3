@@ -40,6 +40,7 @@ from neotrade3.cycle_intelligence.sector_entry_selector import (
     check_weekly_duck_head as check_weekly_duck_head_kernel,
     confirm_structure as confirm_structure_kernel,
 )
+from neotrade3.cycle_intelligence.global_entry_selector import build_global_candidates
 from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -2678,346 +2679,37 @@ class LowFreqTradingEngineV16:
         exclude_codes: Optional[set[str]] = None,
     ) -> list[StockCandidate]:
         """跨板块机会扫描：从全市场（同一市值范围）筛选高分候选，不依赖热门板块列表。"""
-        exclude_sectors = exclude_sectors or set()
-        exclude_codes = exclude_codes or set()
-
         conn = self._conn()
         cursor = conn.cursor()
-        cup_picks = self._cup_handle_picks(target_date) if bool(self.CUP_HANDLE_ENABLED) else set()
-
-        cursor.execute(
-            """
-            SELECT s.code, s.name, s.sector_lv1, s.total_market_cap,
-                   dp.close, dp.pct_change, dp.amount, dp.volume
-            FROM stocks s
-            JOIN daily_prices dp ON s.code = dp.code
-            WHERE dp.trade_date = ?
-              AND s.total_market_cap >= ? AND s.total_market_cap <= ?
-              AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-              AND dp.close > 0
-            ORDER BY dp.pct_change DESC
-            LIMIT ?
-            """,
-            (
-                target_date.isoformat(),
-                self.MARKET_CAP_MIN,
-                self.MARKET_CAP_MAX,
-                int(self.CROSS_SECTOR_SCAN_LIMIT),
-            ),
-        )
-        rows = cursor.fetchall()
-        if not rows:
-            conn.close()
-            return []
-
-        seed_rows: list[dict[str, Any]] = []
-        candidate_codes: list[str] = []
-        for code, name, sector, mkt_cap, close, pct_chg, amount, volume in rows:
-            code_s = str(code or "").strip()
-            sector_s = str(sector or "").strip()
-            if not code_s or not sector_s:
-                continue
-            if code_s in exclude_codes:
-                continue
-            if sector_s in exclude_sectors:
-                continue
-            seed_rows.append(
-                {
-                    "code": code_s,
-                    "name": str(name or ""),
-                    "sector": sector_s,
-                    "mkt_cap": float(mkt_cap or 0.0),
-                    "close": float(close or 0.0),
-                    "pct_chg": float(pct_chg or 0.0),
-                    "amount": float(amount or 0.0),
-                    "volume": float(volume or 0.0),
-                }
-            )
-            candidate_codes.append(code_s)
-
-        if not seed_rows:
-            conn.close()
-            return []
-
-        dedup_codes = list(dict.fromkeys(candidate_codes))
-        fundamentals_by_code = self._get_fundamentals_batch(cursor, dedup_codes, target_date)
-        history_by_code = self._get_recent_price_history_batch(
-            cursor,
-            dedup_codes,
-            target_date=target_date,
-            limit=60,
-        )
-
-        staged: list[dict] = []
-        for seed in seed_rows:
-            code = str(seed["code"])
-            name = str(seed["name"])
-            sector = str(seed["sector"])
-            mkt_cap = float(seed["mkt_cap"])
-            close = float(seed["close"])
-            pct_chg = float(seed["pct_chg"])
-            reasons: list[str] = []
-            base_score = 0.0
-            cup_ok = str(code) in cup_picks
-            soft_flags: list[str] = []
-
-            fundamentals = fundamentals_by_code.get(code) or {
-                "pe_ttm": 0,
-                "profit_growth": 0,
-                "revenue_growth": 0,
-                "roe": 0,
-                "table_exists": False,
-            }
-            fund_passed, fund_score, fund_reasons = self.check_fundamentals(fundamentals)
-            if not fund_passed:
-                soft_flags.append("fundamentals_soft_fail")
-                base_score -= 12.0
-                reasons.append("capture-first: 基本面未过，降权保留")
-                reasons.extend([f"soft:{r}" for r in fund_reasons])
-            else:
-                base_score += float(fund_score) * 0.3
-                reasons.extend(fund_reasons)
-
-            structure = self._structure_confirm(code=str(code), target_date=target_date)
-            if not structure.get("passed"):
-                soft_flags.append("structure_soft_fail")
-                base_score -= 10.0
-                reasons.append("capture-first: 结构未确认，降权保留")
-                reasons.extend([f"soft:{r}" for r in list(structure.get("reasons") or [])])
-            else:
-                reasons.extend(list(structure.get("reasons") or []))
-
-            if cup_ok:
-                base_score += float(self.CUP_HANDLE_SCORE_BONUS)
-                if "杯柄确认（cup_handle_v4）" not in reasons:
-                    reasons.append("杯柄确认（cup_handle_v4）")
-
-            history = history_by_code.get(code) or []
-
-            closes = [h["close"] for h in history[:30] if h.get("close") is not None]
-            vols = [h["volume"] for h in history[:30] if h.get("volume") is not None]
-            if len(history) < 20 or len(closes) < 20:
-                soft_flags.append("history_short")
-                base_score -= 6.0
-                reasons.append("capture-first: 历史样本不足，保留但不做完整结构打分")
-
-            price_position = 50.0
-            if len(closes) >= 20:
-                high_20 = max(closes[:20])
-                low_20 = min(closes[:20])
-                if high_20 > low_20:
-                    price_position = (float(close) - low_20) / (high_20 - low_20) * 100.0
-                if 60 <= price_position <= 90:
-                    base_score += 20
-                    reasons.append(f"价格位置{price_position:.0f}%（突破区间）")
-                elif 40 <= price_position < 60:
-                    base_score += 12
-
-            wave_closes = [h["close"] for h in history if h.get("close") is not None]
-            wave_highs = [h["high"] for h in history if h.get("high") is not None]
-            wave_lows = [h["low"] for h in history if h.get("low") is not None]
-            wave_phase, wave_confidence = detect_wave_phase_from_series(
-                closes=wave_closes,
-                highs=wave_highs,
-                lows=wave_lows,
-            )
-            if wave_phase == WavePhase.WAVE_3.value:
-                base_score += 20
-                reasons.append("3浪主升浪")
-            elif wave_phase == WavePhase.WAVE_1.value:
-                base_score += 15
-                reasons.append("1浪启动")
-            elif len(closes) >= 20:
-                soft_flags.append("wave_uncertain")
-
-            resonance = self._resonance_from_closes(closes)
-            if resonance >= 0.7:
-                base_score += 15
-                reasons.append(f"同频共振{resonance:.0%}")
-            elif resonance >= 0.5:
-                base_score += 8
-                reasons.append(f"共振{resonance:.0%}")
-            else:
-                soft_flags.append("low_resonance")
-                base_score -= 3.0
-                reasons.append(f"capture-first: 共振偏弱{resonance:.0%}，降权保留")
-
-            avg_vol_5d = np.mean(vols[1:6]) if len(vols) >= 6 else (np.mean(vols[1:]) if len(vols) > 1 else 0.0)
-            vol_ratio = float(vols[0]) / float(avg_vol_5d) if len(vols) > 0 and avg_vol_5d > 0 else 1.0
-            if 1.0 < vol_ratio <= 2.0:
-                base_score += 15
-                reasons.append(f"温和放量{vol_ratio:.1f}倍")
-
-            ret_5d = (
-                (float(closes[0]) - float(closes[4])) / float(closes[4]) * 100.0
-                if len(closes) >= 5 and float(closes[4]) > 0
-                else 0.0
-            )
-            if 2 <= ret_5d <= 10:
-                base_score += 10
-                reasons.append(f"5日涨{ret_5d:.1f}%（适中）")
-
-            if len(closes) >= 20:
-                ma5 = np.mean(closes[:5])
-                ma10 = np.mean(closes[:10])
-                ma20 = np.mean(closes[:20])
-                if float(close) > ma5 > ma10 > ma20:
-                    base_score += 10
-                    reasons.append("均线多头排列")
-                elif ma5 > ma10 and float(close) > ma5:
-                    base_score += 6
-
-            mkt_cap_yi = float(mkt_cap) / 1e8
-            if 200 <= mkt_cap_yi <= 300:
-                base_score += 10
-            elif 300 < mkt_cap_yi <= 350:
-                base_score += 7
-
-            weekly_ret = self._weekly_returns_view(code, target_date)
-            if weekly_ret.get("status") == "ok":
-                strength_score = (
-                    float(weekly_ret.get("ret_1w") or 0.0) * 0.45
-                    + float(weekly_ret.get("ret_4w") or 0.0) * 0.35
-                    + float(weekly_ret.get("ret_12w") or 0.0) * 0.2
-                )
-            else:
-                ret_20d = (
-                    (float(closes[0]) - float(closes[19])) / float(closes[19]) * 100.0
-                    if len(closes) >= 20 and float(closes[19]) > 0
-                    else 0.0
-                )
-                strength_score = (
-                    float(pct_chg or 0.0) * 0.45
-                    + float(ret_5d or 0.0) * 0.35
-                    + float(ret_20d or 0.0) * 0.2
-                )
-
-            staged.append(
-                {
-                    "code": code,
-                    "name": str(name or ""),
-                    "sector": sector,
-                    "mkt_cap": float(mkt_cap or 0.0),
-                    "fundamentals": fundamentals,
-                    "base_score": float(base_score),
-                    "reasons": reasons,
-                    "wave_phase": wave_phase,
-                    "ret_5d": float(ret_5d),
-                    "vol_ratio": float(vol_ratio),
-                    "price_position": float(price_position),
-                    "resonance": float(resonance),
-                    "strength_score": float(strength_score),
-                    "cup_ok": bool(cup_ok),
-                    "soft_flags": soft_flags,
-                }
-            )
-
-        if not staged:
-            conn.close()
-            return []
-
-        by_sector: dict[str, list[dict]] = {}
-        for item in staged:
-            by_sector.setdefault(str(item.get("sector") or ""), []).append(item)
-
-        sector_avg_strength: dict[str, float] = {}
-        for sec, items in by_sector.items():
-            sector_avg_strength[str(sec)] = float(
-                np.mean([float(x.get("strength_score") or 0.0) for x in items]) if items else 0.0
-            )
-
-        role_by_code: dict[str, str] = {}
-        for sec, items in by_sector.items():
-            items.sort(key=lambda x: float(x.get("strength_score") or 0.0), reverse=True)
-            for idx, item in enumerate(items):
-                if idx <= 1:
-                    role_by_code[str(item["code"])] = "龙头"
-                elif idx <= 3:
-                    role_by_code[str(item["code"])] = "中军"
-                else:
-                    role_by_code[str(item["code"])] = "跟随"
-
-        candidates: list[StockCandidate] = []
-        for item in staged:
-            code = str(item["code"])
-            stock_name = str(item.get("name") or "")
-            sector = str(item.get("sector") or "")
-            role = role_by_code.get(code) or "跟随"
-            score = float(item.get("base_score") or 0.0)
-            reasons = list(item.get("reasons") or [])
-            soft_flags = list(item.get("soft_flags") or [])
-            rel_delta = float(item.get("strength_score") or 0.0) - float(sector_avg_strength.get(sector) or 0.0)
-            bonus_cap = float(self.RELATIVE_STRENGTH_BONUS_CAP)
-            if bonus_cap > 0 and rel_delta > 0:
-                score += min(bonus_cap, float(rel_delta))
-                reasons.append(f"相对板块强度+{rel_delta:.1f}")
-            if role == "龙头":
-                score += 15
-                reasons.append("板块龙头（多因子）")
-            elif role == "中军":
-                score += 8
-                reasons.append("板块中军（多因子）")
-
-            passed_focus, focus_reasons, focus_snapshot = passes_core_focus_gate(
+        try:
+            return build_global_candidates(
                 cursor,
-                code=code,
-                stock_name=stock_name,
-                role=role,
                 target_date=target_date,
-                market_focus_snapshot_loader=self._market_focus_snapshot,
-            )
-            if not passed_focus:
-                soft_flags.append("focus_soft_fail")
-                score -= 8.0
-                reasons.append("capture-first: focus gate 未过，降权保留")
-                reasons.extend([f"soft:{r}" for r in focus_reasons])
-            else:
-                score += float(focus_snapshot.get("focus_bonus") or 0.0)
-                reasons.extend(focus_reasons)
-
-            if role == "跟随":
-                soft_flags.append("follower_soft")
-                score -= 4.0
-                reasons.append("capture-first: 跟随股降权保留")
-
-            score, soft_flags, reasons = apply_strong_leader_soft_release(
-                score=float(score),
-                role=role,
-                wave_phase=str(item.get("wave_phase") or ""),
-                soft_flags=soft_flags,
-                reasons=reasons,
+                top_n=top_n,
+                market_cap_min=float(self.MARKET_CAP_MIN),
+                market_cap_max=float(self.MARKET_CAP_MAX),
+                cross_sector_scan_limit=int(self.CROSS_SECTOR_SCAN_LIMIT),
+                exclude_sectors=set(exclude_sectors or set()),
+                exclude_codes=set(exclude_codes or set()),
+                cup_handle_enabled=bool(self.CUP_HANDLE_ENABLED),
+                cup_handle_bonus=float(self.CUP_HANDLE_SCORE_BONUS),
+                relative_strength_bonus_cap=float(self.RELATIVE_STRENGTH_BONUS_CAP),
                 release_enabled=bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)),
                 release_min_score=float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0),
+                cup_handle_loader=self._cup_handle_picks,
+                structure_confirm_loader=self._structure_confirm,
+                fundamentals_loader=self._get_fundamentals_batch,
+                check_fundamentals=self.check_fundamentals,
+                history_batch_loader=self._get_recent_price_history_batch,
+                weekly_returns_loader=self._weekly_returns_view,
+                wave_phase_detector=detect_wave_phase_from_series,
+                focus_gate_checker=passes_core_focus_gate,
+                strong_leader_release=apply_strong_leader_soft_release,
+                market_focus_snapshot_loader=self._market_focus_snapshot,
+                stock_candidate_factory=StockCandidate,
             )
-            mkt_cap_yi = float(item.get("mkt_cap") or 0.0) / 1e8
-            fundamentals = item.get("fundamentals") or {}
-            candidates.append(
-                StockCandidate(
-                    code=code,
-                    name=stock_name,
-                    sector=sector,
-                    market_cap_yi=round(mkt_cap_yi, 1),
-                    role=role,
-                    buy_score=float(score),
-                    buy_reasons=reasons,
-                    wave_phase=str(item.get("wave_phase") or ""),
-                    ret_5d=round(float(item.get("ret_5d") or 0.0), 2),
-                    vol_ratio=round(float(item.get("vol_ratio") or 0.0), 2),
-                    price_position=round(float(item.get("price_position") or 0.0), 1),
-                    pe_ttm=fundamentals.get("pe_ttm", 0),
-                    profit_growth=fundamentals.get("profit_growth", 0),
-                    revenue_growth=fundamentals.get("revenue_growth", 0),
-                    roe=fundamentals.get("roe", 0),
-                    sector_resonance=round(float(item.get("resonance") or 0.0), 2),
-                    cup_handle_ok=bool(item.get("cup_ok") or False),
-                    signal_source="cross_sector",
-                    soft_flags=soft_flags,
-                )
-            )
-
-        conn.close()
-        candidates.sort(key=lambda x: x.buy_score, reverse=True)
-        return candidates[: int(top_n)]
+        finally:
+            conn.close()
 
     def _build_signal_structure_payload(
         self,
