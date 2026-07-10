@@ -49,6 +49,10 @@ from neotrade3.cycle_intelligence.market_focus_snapshot import (
 from neotrade3.cycle_intelligence.fundamental_gate import score_fundamentals
 from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
 from neotrade3.cycle_intelligence.weekly_returns import weekly_returns_from_series
+from neotrade3.data_control.financial_report_adapter import (
+    load_fundamentals,
+    load_fundamentals_batch,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -1926,71 +1930,14 @@ class LowFreqTradingEngineV16:
     # v16: 基本面筛选
     # ================================================================
     def _get_fundamentals_batch(self, cursor, codes: list[str], target_date: date) -> dict[str, dict]:
-        codes = [str(c or "").strip() for c in (codes or []) if str(c or "").strip()]
-        if not codes:
-            return {}
-
-        if self._has_financial_reports is None:
-            cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_reports' LIMIT 1"
-            )
-            self._has_financial_reports = bool(cursor.fetchone())
-
-        if not bool(self._has_financial_reports):
-            return {
-                code: {
-                    "pe_ttm": 0,
-                    "profit_growth": 0,
-                    "revenue_growth": 0,
-                    "roe": 0,
-                    "table_exists": False,
-                }
-                for code in codes
-            }
-
-        placeholders = ",".join(["?"] * len(codes))
-        cursor.execute(
-            f"""
-            SELECT
-                code,
-                report_date,
-                ann_date,
-                pe_ttm,
-                profit_growth_yoy,
-                revenue_growth_yoy,
-                roe
-            FROM financial_reports
-            WHERE code IN ({placeholders})
-              AND COALESCE(ann_date, report_date) <= ?
-            ORDER BY code, COALESCE(ann_date, report_date) DESC, report_date DESC
-            """,
-            (*codes, target_date.isoformat()),
+        payload, refreshed_flag = load_fundamentals_batch(
+            cursor,
+            codes,
+            target_date=target_date,
+            has_financial_reports=self._has_financial_reports,
         )
-        rows = cursor.fetchall()
-
-        latest_by_code: dict[str, dict] = {}
-        for code, _report_date, _ann_date, pe_ttm, profit_growth_yoy, revenue_growth_yoy, roe in rows:
-            code_s = str(code or "").strip()
-            if not code_s or code_s in latest_by_code:
-                continue
-            latest_by_code[code_s] = {
-                "pe_ttm": pe_ttm or 0,
-                "profit_growth": profit_growth_yoy or 0,
-                "revenue_growth": revenue_growth_yoy or 0,
-                "roe": roe or 0,
-                "table_exists": True,
-            }
-
-        out: dict[str, dict] = {}
-        for code in codes:
-            out[code] = latest_by_code.get(code) or {
-                "pe_ttm": 0,
-                "profit_growth": 0,
-                "revenue_growth": 0,
-                "roe": 0,
-                "table_exists": False,
-            }
-        return out
+        self._has_financial_reports = refreshed_flag
+        return payload
 
     def _get_recent_price_history_batch(
         self,
@@ -2051,51 +1998,18 @@ class LowFreqTradingEngineV16:
         获取股票基本面数据
         如果financial_reports表不存在，返回空数据（跳过基本面筛选）
         """
-        code = str(code or "").strip()
-        if not code:
-            return {"pe_ttm": 0, "profit_growth": 0, "revenue_growth": 0, "roe": 0, "table_exists": False}
-
-        if self._has_financial_reports is False:
-            return {"pe_ttm": 0, "profit_growth": 0, "revenue_growth": 0, "roe": 0, "table_exists": False}
-
         conn = self._conn()
-        cursor = conn.cursor()
-
-        if self._has_financial_reports is None:
-            cursor.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='financial_reports' LIMIT 1"
-            )
-            self._has_financial_reports = bool(cursor.fetchone())
-
-        if not bool(self._has_financial_reports):
-            conn.close()
-            return {"pe_ttm": 0, "profit_growth": 0, "revenue_growth": 0, "roe": 0, "table_exists": False}
-        
-        # 从financial_reports表获取数据
         try:
-            cursor.execute("""
-                SELECT pe_ttm, profit_growth_yoy, revenue_growth_yoy, roe
-                FROM financial_reports
-                WHERE code = ? AND COALESCE(ann_date, report_date) <= ?
-                ORDER BY COALESCE(ann_date, report_date) DESC, report_date DESC LIMIT 1
-            """, (code, target_date.isoformat()))
-            
-            row = cursor.fetchone()
+            payload, refreshed_flag = load_fundamentals(
+                conn,
+                code,
+                target_date=target_date,
+                has_financial_reports=self._has_financial_reports,
+            )
+            self._has_financial_reports = refreshed_flag
+            return payload
+        finally:
             conn.close()
-            
-            if row:
-                return {
-                    'pe_ttm': row[0] or 0,
-                    'profit_growth': row[1] or 0,
-                    'revenue_growth': row[2] or 0,
-                    'roe': row[3] or 0,
-                    'table_exists': True
-                }
-        except Exception:
-            pass
-        
-        conn.close()
-        return {'pe_ttm': 0, 'profit_growth': 0, 'revenue_growth': 0, 'roe': 0, 'table_exists': False}
 
     def check_fundamentals(self, fundamentals: dict) -> tuple[bool, float, list]:
         """
