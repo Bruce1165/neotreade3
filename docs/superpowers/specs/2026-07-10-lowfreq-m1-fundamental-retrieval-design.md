@@ -165,10 +165,10 @@ This module should own:
 
 Recommended signatures:
 
-- `load_fundamentals_batch(cursor: sqlite3.Cursor, codes: list[str], *, target_date: date, has_financial_reports: bool | None) -> tuple[dict[str, dict[str, Any]], bool]`
-- `load_fundamentals(conn: sqlite3.Connection, code: str, *, target_date: date, has_financial_reports: bool | None) -> tuple[dict[str, Any], bool]`
+- `load_fundamentals_batch(cursor: sqlite3.Cursor, codes: list[str], *, target_date: date, has_financial_reports: bool | None) -> tuple[dict[str, dict[str, Any]], bool | None]`
+- `load_fundamentals(conn: sqlite3.Connection, code: str, *, target_date: date, has_financial_reports: bool | None) -> tuple[dict[str, Any], bool | None]`
 
-The returned `bool` is the refreshed table-presence state so the engine can keep its existing `_has_financial_reports` cache behavior without letting the adapter mutate engine state directly.
+The returned cache flag is the refreshed table-presence state so the engine can keep its existing `_has_financial_reports` cache behavior without letting the adapter mutate engine state directly. It remains `None` for early-return paths that currently do not force cache initialization.
 
 This module should not own:
 

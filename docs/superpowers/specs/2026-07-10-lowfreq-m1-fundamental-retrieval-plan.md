@@ -114,7 +114,8 @@ Implementation rules:
 
 - the module must not import engine state directly
 - table existence detection must be driven by the supplied `has_financial_reports` cache value plus DB inspection when needed
-- the module must return `(payload, refreshed_flag)` instead of mutating engine state
+- the module must return `(payload, refreshed_flag)` instead of mutating engine state directly
+- `refreshed_flag` may remain `None` for early-return paths that currently do not force cache initialization
 - the module must preserve the current SQL ordering and `COALESCE(ann_date, report_date)` visibility rule exactly
 
 Completion check:
