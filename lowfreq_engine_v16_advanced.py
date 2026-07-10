@@ -26,6 +26,7 @@ from neotrade3.decision_engine.formal_front import (
     attach_lowfreq_formal_front_payloads,
     build_lowfreq_formal_front_payload,
 )
+from neotrade3.decision_engine.signal_payload import build_signal_structure_payload
 from neotrade3.cycle_intelligence.legacy_recognition import (
     apply_strong_leader_soft_release,
     detect_wave_phase_from_series,
@@ -2169,27 +2170,11 @@ class LowFreqTradingEngineV16:
         target_date: date,
         market_filter_note: Optional[str],
     ) -> dict[str, Any]:
-        candidate_signals = sorted(
-            deduped_signals.values(),
-            key=lambda x: (float(x.get("buy_score") or 0.0), float(x.get("resonance") or 0.0)),
-            reverse=True,
+        return build_signal_structure_payload(
+            deduped_signals=deduped_signals,
+            target_date=target_date,
+            market_filter_note=market_filter_note,
         )
-        entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
-        return {
-            "buy_signals": list(entry_signals),
-            "candidate_signals": candidate_signals,
-            "entry_signals": entry_signals,
-            "signal_summary": {
-                "candidate_count": len(candidate_signals),
-                "entry_count": len(entry_signals),
-                "soft_retained_count": sum(
-                    1 for sig in candidate_signals if str(sig.get("candidate_tier") or "") == "soft_retained"
-                ),
-            },
-            "date": target_date.isoformat(),
-            "capture_first_mode": True,
-            "market_filter_note": market_filter_note,
-        }
 
     def generate_buy_signals(self, target_date: date) -> dict:
         """生成买入信号 - capture-first: 仅执行安全保持硬性。"""
