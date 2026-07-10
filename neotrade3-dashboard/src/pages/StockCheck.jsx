@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Search, AlertCircle, TrendingUp, Layers, Target } from 'lucide-react';
+import { Search, TrendingUp, Layers, Target } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import BlockMessage from '../components/BlockMessage';
 import DateSelector from '../components/DateSelector';
+import PageHeader from '../components/PageHeader';
 import SemanticBadge from '../components/SemanticBadge';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
@@ -47,11 +49,7 @@ export default function StockCheck() {
       {/* Date Selector */}
       <DateSelector />
 
-      {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900">单股核验</h2>
-        <p className="text-gray-500 mt-1">输入股票代码，核验筛选器 / 热门板块 / 老鸭头 / 确定性</p>
-      </div>
+      <PageHeader title="单股核验" subtitle="输入股票代码，核验筛选器 / 热门板块 / 老鸭头 / 确定性" />
 
       {/* Search Input */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -83,9 +81,8 @@ export default function StockCheck() {
 
         {/* Error Display */}
         {error && (
-          <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700">
-            <AlertCircle size={20} />
-            <span>{error}</span>
+          <div className="mt-4">
+            <BlockMessage tone="red" message={error} />
           </div>
         )}
       </div>
