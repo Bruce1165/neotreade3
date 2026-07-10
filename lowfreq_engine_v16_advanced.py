@@ -26,6 +26,7 @@ from neotrade3.decision_engine.formal_front import (
     attach_lowfreq_formal_front_payloads,
     build_lowfreq_formal_front_payload,
 )
+from neotrade3.decision_engine.signal_dedup import dedupe_signals_by_code
 from neotrade3.decision_engine.signal_payload import build_signal_structure_payload
 from neotrade3.cycle_intelligence.legacy_recognition import (
     apply_strong_leader_soft_release,
@@ -2163,6 +2164,9 @@ class LowFreqTradingEngineV16:
         finally:
             conn.close()
 
+    def _dedupe_signals_by_code(self, *, raw_signals: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        return dedupe_signals_by_code(raw_signals)
+
     def _build_signal_structure_payload(
         self,
         *,
@@ -2277,14 +2281,7 @@ class LowFreqTradingEngineV16:
             except Exception as e:
                 logger.warning(f"跨板块扫描失败: {e}")
 
-        deduped: dict[str, dict[str, Any]] = {}
-        for sig in raw_signals:
-            code = str(sig.get("code") or "").strip()
-            if not code:
-                continue
-            current = deduped.get(code)
-            if current is None or float(sig.get("buy_score") or 0.0) > float(current.get("buy_score") or 0.0):
-                deduped[code] = dict(sig)
+        deduped = self._dedupe_signals_by_code(raw_signals=raw_signals)
 
         signal_payload = self._build_signal_structure_payload(
             deduped_signals=deduped,
