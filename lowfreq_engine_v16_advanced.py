@@ -48,6 +48,7 @@ from neotrade3.cycle_intelligence.market_focus_snapshot import (
 )
 from neotrade3.cycle_intelligence.fundamental_gate import score_fundamentals
 from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
+from neotrade3.cycle_intelligence.weekly_returns import weekly_returns_from_series
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -1678,24 +1679,7 @@ class LowFreqTradingEngineV16:
 
     def _weekly_returns_view(self, code: str, target_date: date) -> dict:
         view = self._weekly_series_view(str(code), target_date)
-        series = view.get("series") or []
-        closes = [float(x["close"]) for x in series if isinstance(x, dict) and x.get("close") is not None]
-        if len(closes) < 16:
-            return {"status": "insufficient", "weeks": len(closes)}
-        t = len(closes) - 1
-        def _ret(k: int) -> float:
-            if t - k < 0:
-                return 0.0
-            base = float(closes[t - k])
-            if base <= 0:
-                return 0.0
-            return (float(closes[t]) / base - 1.0) * 100.0
-        return {
-            "status": "ok",
-            "ret_1w": _ret(1),
-            "ret_4w": _ret(4),
-            "ret_12w": _ret(12),
-        }
+        return weekly_returns_from_series(view)
 
     def _is_return_below_threshold_consecutive(
         self, *, code: str, current_date: date, buy_price: float, threshold_pct: float, days: int

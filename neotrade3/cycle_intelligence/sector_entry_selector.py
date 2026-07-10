@@ -9,6 +9,7 @@ from neotrade3.cycle_intelligence.legacy_recognition import (
     apply_strong_leader_soft_release,
     passes_core_focus_gate,
 )
+from neotrade3.cycle_intelligence.weekly_returns import weekly_returns_from_series
 
 
 def build_sector_candidates(
@@ -588,30 +589,6 @@ def detect_sector_wave_phase(rows60: list[tuple[Any, Any, Any, Any]]) -> tuple[s
     if price_change_20d > 5:
         return "1浪", 0.5
     return "未知", 0.3
-
-
-def weekly_returns_from_series(view: dict[str, Any]) -> dict[str, Any]:
-    series = view.get("series") or []
-    closes = [float(item["close"]) for item in series if isinstance(item, dict) and item.get("close") is not None]
-    if len(closes) < 16:
-        return {"status": "insufficient", "weeks": len(closes)}
-
-    t = len(closes) - 1
-
-    def _ret(window: int) -> float:
-        if t - window < 0:
-            return 0.0
-        base = float(closes[t - window])
-        if base <= 0:
-            return 0.0
-        return (float(closes[t]) / base - 1.0) * 100.0
-
-    return {
-        "status": "ok",
-        "ret_1w": _ret(1),
-        "ret_4w": _ret(4),
-        "ret_12w": _ret(12),
-    }
 
 
 def resonance_from_closes(closes: list[Any]) -> float:
