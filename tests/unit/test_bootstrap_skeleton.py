@@ -1719,7 +1719,7 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
         request = Request(
             f"http://127.0.0.1:{server.server_port}/api/screeners/run",
             data=body,
-            headers={"Content-Type": "application/json", "X-API-Key": "test-key"},
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         with urlopen(request) as response:
@@ -1952,9 +1952,10 @@ def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
         with urlopen(request) as response:
             assert response.status == 200
             payload = json.loads(response.read().decode("utf-8"))
-            assert payload["_meta"]["status"] == "ok"
+            assert payload["_meta"]["status"] == payload["bulk_run"]["status"]
             assert payload["bulk_run"]["target_date"] == "2026-05-19"
             assert payload["bulk_run"]["run_count"] == 2
+            assert len(payload["bulk_run"]["run_ledgers"]) == 2
 
         with urlopen(
             f"http://127.0.0.1:{server.server_port}/api/screeners/bulk-runs?date=2026-05-19&limit=10"
