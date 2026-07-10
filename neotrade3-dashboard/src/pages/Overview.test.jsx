@@ -22,95 +22,135 @@ vi.mock('../components/DateSelector', () => ({
   ),
 }))
 
-function buildOverviewPayloads({ autopilotEnabled = false } = {}) {
+vi.mock('react-router-dom', () => ({
+  Link: ({ to, children, className }) => (
+    <a href={to} className={className}>
+      {children}
+    </a>
+  ),
+}))
+
+function buildWorkbenchPayload() {
   return {
-    '/api/data/status': {
-      latest_available_date: '2026-06-09',
-      tushare: {
-        resources: {
-          concept_theme_cache: {
-            last_failure_at: '2026-06-16T07:30:00Z',
-            last_failure_reason: 'concept_list_unavailable',
-          },
-        },
-      },
+    meta: {
+      as_of_date: '2026-06-09',
+      latest_data_date: '2026-06-09',
+      execution_mode: 'unbounded_opportunity',
+      autopilot_enabled: true,
+      summary_text: '当前处于进攻阶段，操作倾向进攻，风险低，关注机器人，自动执行开启',
+      daily_ops_status: 'ok',
+      daily_ops_status_text: '正常',
+      latest_data_synced: true,
     },
-    '/api/sectors/hot?date=2026-06-09&include_sell_signal=true': {
-      sectors: [
+    market_summary: {
+      phase_label: '进攻阶段',
+      bias_label: '进攻',
+      risk_label: '低',
+      summary_text: '当前处于进攻阶段，操作倾向进攻，风险低，关注机器人，自动执行开启',
+      evidence: ['phase=bull', 'confidence=0.72', 'focus_theme=机器人'],
+    },
+    daily_ops: {
+      available: true,
+      run_date: '2026-06-09',
+      status: 'ok',
+      status_text: '正常',
+      status_kind: 'active',
+      latest_trade_date: '2026-06-09',
+      latest_data_synced: true,
+      latest_data_synced_text: '已追平',
+      provider: 'tushare',
+      overdue_shifted_count: 2,
+      inconsistency_count: 0,
+      pending_intents_after: 3,
+      finished_at: '2026-06-09T15:45:54Z',
+      summary_text: '最近一轮每日任务成功，数据已追平到最新交易日，关键链路正常。',
+      steps: [
         {
-          name: '机器人',
-          code: 'BK001',
-          heat_score: 88.5,
-          leaders: [
-            {
-              code: '600001',
-              name: '领涨一号',
-              buy_signal: true,
-              certainty_prob: 0.82,
-              certainty_samples: 12,
-              risk_level: 'ok',
-            },
-          ],
-          middle: [],
-          followers: [],
+          step_id: 'authoritative_update',
+          step_label: '权威行情更新',
+          status: 'ok',
+          status_text: '正常',
+          status_kind: 'active',
+        },
+        {
+          step_id: 'lowfreq_sim_daily',
+          step_label: '低频日运行',
+          status: 'ok',
+          status_text: '正常',
+          status_kind: 'active',
         },
       ],
-      portfolio: {
-        total_return_pct: 4.56,
-        as_of: '2026-06-09',
-        open_positions: [
-          {
-            code: '600001',
-            name: '领涨一号',
-            sector: '机器人',
-            buy_date: '2026-06-03',
-            unrealized_pnl_pct: 2.34,
-          },
+    },
+    hot_sectors: [
+      {
+        sector_code: 'BK001',
+        sector_name: '机器人',
+        heat_score: 88.5,
+        status: 'active',
+        status_text: '主升',
+        leader_count: 1,
+        middle_count: 1,
+        follower_count: 0,
+        actionable_count: 1,
+        summary_text: '主线#1，趋势rising，主升',
+        representatives: [
+          { name: '领涨一号', role_text: '龙头' },
+          { name: '中军一号', role_text: '中军' },
         ],
       },
-    },
-    '/api/concepts/mainline?date=2026-06-09&limit=10': {
-      concepts: [
-        {
-          concept_code: 'C001',
-          concept_name: '机器人',
-          mainline_rank: 1,
-          mainline_score: 92.1,
-          mainline_streak: 4,
-          risk_level: 'warn',
-        },
-      ],
-    },
-    '/api/lowfreq/execution/queue?date=2026-06-09&ensure_generated=true': {
-      autopilot_enabled: autopilotEnabled,
-      queue: [
-        {
-          intent_id: 'buy-1',
-          intent_type: 'buy_intent',
-          name: '领涨一号',
-          code: '600001',
-          sector: '机器人',
-          execute_date: '2026-06-09',
-          status: 'pending',
-          can_execute: true,
-          certainty_prob: 0.82,
-          certainty_samples: 12,
-          risk_level: 'ok',
-        },
-      ],
-    },
-    '/api/lowfreq/backtest/window-summary?end_date=2026-06-08&window_trading_days=60': {
-      _meta: { status: 'ok' },
-      start_date: '2026-03-15',
-      end_date: '2026-06-08',
-      report: {
-        summary: {
-          total_return_pct: 12.34,
-        },
-        pdf_url: '/reports/demo.pdf',
-        json_url: '/reports/demo.json',
+    ],
+    tracking_list: [
+      {
+        code: '600001',
+        name: '领涨一号',
+        sector: '机器人',
+        role_text: '龙头',
+        certainty_score: 82.0,
+        tracking_stage_text: '建仓层',
+        tracking_status: 'entry_ready',
+        tracking_status_text: '可建仓',
+        summary_text: '突破确认',
+        first_seen_at: '2026-06-09',
+        last_changed_at: '2026-06-09T09:35:00Z',
+        is_new_today: true,
       },
-    },
+    ],
+    positions: [
+      {
+        code: '600001',
+        name: '领涨一号',
+        sector: '机器人',
+        role_text: '龙头',
+        position_status: 'stable',
+        position_status_text: '稳定',
+        buy_price: 10.0,
+        current_price: 10.8,
+        pnl_pct: 8.0,
+        near_top_text: '未见顶',
+        buy_date: '2026-06-03',
+        holding_days: 4,
+        exit_risk: 'low',
+        exit_risk_text: '低',
+        summary_text: '未触发正式退出条件',
+      },
+    ],
+    trade_ledger: [
+      {
+        trade_date: '2026-06-09',
+        action: 'buy',
+        action_text: '买入',
+        code: '600001',
+        name: '领涨一号',
+        sector: '机器人',
+        price: 10.0,
+        size_or_weight: 1000,
+        reason_tag: 'entry_signal',
+        reason_text: 'buy_score=92.0',
+        source: 'auto',
+        source_text: '自动',
+        signal_date: '2026-06-08',
+      },
+    ],
   }
 }
 
@@ -126,196 +166,64 @@ describe('Overview', () => {
     vi.clearAllMocks()
   })
 
-  it('loads overview data and renders key summary blocks', async () => {
-    const payloads = buildOverviewPayloads()
-    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
+  it('loads workbench data from a single endpoint and renders key sections', async () => {
+    mockFetchApi.mockResolvedValue(buildWorkbenchPayload())
 
     render(<Overview />)
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith('/api/data/status', {}, { timeoutMs: 45000 })
-    })
-
-    expect(mockFetchApi).toHaveBeenCalledWith(
-      '/api/lowfreq/backtest/window-summary?end_date=2026-06-08&window_trading_days=60',
-      {},
-      { timeoutMs: 60000 },
-    )
-    expect(screen.getByText('今日总览')).toBeTruthy()
-    expect(screen.getAllByText('2026-06-09').length).toBeGreaterThan(0)
-    expect(screen.getByText('当前 authoritative 口径')).toBeTruthy()
-    expect(screen.getByText('日线主源：Tushare')).toBeTruthy()
-    expect(screen.getByText('safety-net：Tencent')).toBeTruthy()
-    expect(
-      screen.getByText('最近异常：concept_theme_cache @ 2026-06-16T07:30:00Z (concept_list_unavailable)')
-    ).toBeTruthy()
-    expect(screen.getByText('+4.56%')).toBeTruthy()
-    expect(screen.getByText('当前虚拟组合累计收益｜数据日期：2026-06-09')).toBeTruthy()
-    expect(screen.getAllByText('领涨一号').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('机器人').length).toBeGreaterThan(0)
-    expect(screen.getByText('危险状态 1')).toBeTruthy()
-    expect(screen.getByText('窗口回测总收益：')).toBeTruthy()
-    expect(screen.getByText('下载 PDF')).toBeTruthy()
-  })
-
-  it('limits top sectors summary and list to five items', async () => {
-    const payloads = buildOverviewPayloads()
-    payloads['/api/sectors/hot?date=2026-06-09&include_sell_signal=true'] = {
-      sectors: Array.from({ length: 6 }, (_, index) => ({
-        name: `板块${index + 1}`,
-        code: `BK00${index + 1}`,
-        heat_score: 90 - index,
-        leaders: [],
-        middle: [],
-        followers: [],
-      })),
-      portfolio: {
-        total_return_pct: 4.56,
-        as_of: '2026-06-09',
-        open_positions: [],
-      },
-    }
-    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
-
-    render(<Overview />)
-
-    await waitFor(() => {
-      expect(screen.getByText('热门板块 Top5')).toBeTruthy()
-    })
-
-    expect(screen.getByText('5')).toBeTruthy()
-    expect(screen.getByText('板块1')).toBeTruthy()
-    expect(screen.getByText('板块5')).toBeTruthy()
-    expect(screen.queryByText('板块6')).toBeNull()
-  })
-
-  it('hides recovered tushare failures when last_ok_at is newer than last_failure_at', async () => {
-    const payloads = buildOverviewPayloads()
-    payloads['/api/data/status'] = {
-      latest_available_date: '2026-06-09',
-      tushare: {
-        resources: {
-          daily_prices: {
-            last_failure_at: '2026-06-16T11:22:14Z',
-            last_failure_reason: 'tushare_not_installed',
-            last_ok_at: '2026-06-17T01:13:39Z',
-          },
-        },
-      },
-    }
-    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
-
-    render(<Overview />)
-
-    await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledWith('/api/data/status', {}, { timeoutMs: 45000 })
-    })
-
-    expect(screen.getByText('当前 authoritative 口径')).toBeTruthy()
-    expect(screen.queryByText(/最近异常：/)).toBeNull()
-  })
-
-  it('toggles autopilot and refreshes queue data', async () => {
-    let autopilotEnabled = false
-    mockFetchApi.mockImplementation((url, options) => {
-      if (url === '/api/lowfreq/settings/autopilot') {
-        const payload = JSON.parse(options.body)
-        autopilotEnabled = Boolean(payload.enabled)
-        return Promise.resolve({ ok: true })
-      }
-      const payloads = buildOverviewPayloads({ autopilotEnabled })
-      return Promise.resolve(payloads[url])
-    })
-
-    render(<Overview />)
-
-    await waitFor(() => {
-      expect(screen.getByText('当前模式：人工执行队列（方案2）')).toBeTruthy()
-    })
-
-    fireEvent.click(screen.getByRole('checkbox'))
 
     await waitFor(() => {
       expect(mockFetchApi).toHaveBeenCalledWith(
-        '/api/lowfreq/settings/autopilot',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            enabled: true,
-            requested_by: 'dashboard.react',
-          }),
-        },
-        { timeoutMs: 30000 },
+        '/api/lowfreq/workbench?date=2026-06-09&ensure_generated=false',
+        {},
+        { timeoutMs: 60000 },
       )
     })
 
-    await waitFor(() => {
-      expect(screen.getByText('当前模式：自动执行（方案1）')).toBeTruthy()
-    })
+    expect(screen.getByText('今日总览')).toBeTruthy()
+    expect(screen.getByText('今日结论')).toBeTruthy()
+    expect(screen.getByText('风险与阻塞')).toBeTruthy()
+    expect(screen.getByText('建议动作')).toBeTruthy()
+    expect(screen.getByText('重点摘要')).toBeTruthy()
+    expect(screen.getByText('每日运行与数据更新')).toBeTruthy()
+    expect(screen.getByText('大盘阶段判断')).toBeTruthy()
+    expect(screen.getAllByText('当前人气板块').length).toBeGreaterThan(0)
+    expect(screen.getByText('当前跟踪股票池')).toBeTruthy()
+    expect(screen.getByText('当前建仓股票池')).toBeTruthy()
+    expect(screen.getAllByText('交易台账').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('领涨一号').length).toBeGreaterThan(0)
+    expect(screen.getByText('主升')).toBeTruthy()
+    expect(screen.getByText('今日新增')).toBeTruthy()
+    expect(screen.getByText('自动')).toBeTruthy()
+    expect(screen.getByText('已追平')).toBeTruthy()
+    expect(screen.getByText('权威行情更新')).toBeTruthy()
   })
 
-  it('distinguishes concept avoid badges from position exit badges', async () => {
-    const payloads = buildOverviewPayloads()
-    payloads['/api/concepts/mainline?date=2026-06-09&limit=10'] = {
-      concepts: [
-        {
-          concept_code: 'C001',
-          concept_name: '机器人',
-          mainline_rank: 1,
-          mainline_score: 92.1,
-          mainline_streak: 4,
-          risk_level: 'exit',
-        },
-      ],
-    }
-    payloads['/api/lowfreq/execution/queue?date=2026-06-09&ensure_generated=true'] = {
-      autopilot_enabled: false,
-      queue: [
-        {
-          intent_id: 'sell-1',
-          intent_type: 'sell_intent',
-          name: '领涨一号',
-          code: '600001',
-          sector: '机器人',
-          execute_date: '2026-06-09',
-          status: 'pending',
-          can_execute: true,
-          risk_level: 'exit',
-          sell_reason: 'sector_cooldown',
-        },
-      ],
-    }
-    mockFetchApi.mockImplementation((url) => Promise.resolve(payloads[url]))
+  it('shows error banner when workbench request fails', async () => {
+    mockFetchApi.mockRejectedValue(new Error('工作台聚合失败'))
 
     render(<Overview />)
 
     await waitFor(() => {
-      expect(screen.getByText('回避 1')).toBeTruthy()
+      expect(screen.getByText('工作台聚合失败')).toBeTruthy()
     })
 
-    expect(screen.getAllByText('回避')[0].closest('span')?.getAttribute('aria-label')).toContain('一级状态：不满足条件')
-    expect(screen.getAllByText('离场信号')[0].closest('span')?.getAttribute('aria-label')).toContain('一级状态：离场')
+    expect(screen.getAllByText('当前人气板块').length).toBeGreaterThan(0)
+    expect(screen.getByText('暂无人气板块')).toBeTruthy()
   })
 
-  it('keeps overview usable when backtest block times out', async () => {
-    const payloads = buildOverviewPayloads()
-    mockFetchApi.mockImplementation((url) => {
-      if (url === '/api/lowfreq/backtest/window-summary?end_date=2026-06-08&window_trading_days=60') {
-        return Promise.reject(new Error('请求超时：窗口回测过慢'))
-      }
-      return Promise.resolve(payloads[url])
-    })
+  it('refreshes workbench payload when date selector triggers onRefresh', async () => {
+    mockFetchApi.mockResolvedValue(buildWorkbenchPayload())
 
     render(<Overview />)
 
     await waitFor(() => {
-      expect(screen.getByText('当前 authoritative 口径')).toBeTruthy()
+      expect(mockFetchApi).toHaveBeenCalledTimes(1)
     })
 
-    expect(screen.getByText('主线概念（Top10）')).toBeTruthy()
-    expect(screen.getByText('买入 / 卖出 / 调整仓位（执行队列）')).toBeTruthy()
-    expect(screen.getByText('昨日回测（窗口 60 交易日）')).toBeTruthy()
-    expect(screen.getByText('请求超时：窗口回测过慢')).toBeTruthy()
-    expect(screen.queryByText('HTTP 500')).toBeNull()
+    fireEvent.click(screen.getByTestId('date-selector-stub'))
+
+    await waitFor(() => {
+      expect(mockFetchApi).toHaveBeenCalledTimes(2)
+    })
   })
 })

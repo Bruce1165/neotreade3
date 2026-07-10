@@ -1,408 +1,373 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Flame, Target, Wallet, FileText, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertCircle, BarChart3, FileText, Flame, ListChecks, Wallet } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import SemanticBadge from '../components/SemanticBadge';
+import BlockMessage from '../components/BlockMessage';
 import DateSelector from '../components/DateSelector';
+import MetricCard from '../components/MetricCard';
+import PageHeader from '../components/PageHeader';
+import StatusPill from '../components/StatusPill';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
 import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
 
-function SimpleCard({ title, value, subtitle }) {
-  const displayValue = value == null || value === '' ? '--' : value;
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="text-sm font-medium text-gray-500 mb-2">{title}</div>
-      <div className="text-2xl font-bold text-gray-900 mb-1">{displayValue}</div>
-      {subtitle ? <div className="text-sm text-gray-500">{subtitle}</div> : null}
-    </div>
-  );
+function displayText(value) {
+  const text = String(value ?? '').trim();
+  return text || '--';
 }
 
-function BlockMessage({ tone = 'gray', message, onRetry, retryLabel = '重试' }) {
-  const toneClass =
-    tone === 'red'
-      ? 'bg-red-50 border-red-200 text-red-700'
-      : 'bg-gray-50 border-gray-200 text-gray-600';
+function formatScore(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--';
+  }
+  return value.toFixed(1);
+}
+
+function formatPrice(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--';
+  }
+  return `¥${value.toFixed(2)}`;
+}
+
+function formatPercent(value, { signed = false } = {}) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '--';
+  }
+  const prefix = signed && value >= 0 ? '+' : '';
+  return `${prefix}${value.toFixed(2)}%`;
+}
+
+function signedClass(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'text-gray-500';
+  }
+  return value >= 0 ? 'text-red-600' : 'text-green-600';
+}
+
+function ActionCard({ title, description, to, cta }) {
   return (
-    <div className={`rounded-lg border p-4 text-sm flex items-center justify-between gap-3 ${toneClass}`}>
-      <span>{message}</span>
-      {typeof onRetry === 'function' ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="px-3 py-1 rounded bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
+    <div className="bg-white rounded-lg border border-gray-200 p-5 flex flex-col gap-3">
+      <div>
+        <div className="text-sm font-medium text-gray-500">{title}</div>
+        <div className="text-sm text-gray-900 leading-6 mt-2">{description}</div>
+      </div>
+      <div>
+        <Link
+          to={to}
+          className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
         >
-          {retryLabel}
-        </button>
-      ) : null}
+          {cta}
+        </Link>
+      </div>
     </div>
   );
 }
 
-function toLocalDateString(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
-
-function minusDays(isoDate, days) {
-  const [y, m, d] = String(isoDate || '').split('-').map((x) => Number(x));
-  if (!y || !m || !d) return null;
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() - Number(days || 0));
-  return toLocalDateString(dt);
-}
-
-function conceptRiskBadge(v) {
-  const lv = String(v || '').trim().toLowerCase();
-  if (lv === 'exit') return { key: 'not_qualified_avoid', label: '回避' };
-  if (lv === 'warn') return { key: 'risk_warn', label: '危险状态' };
-  if (lv === 'ok') return { key: 'risk_ok', label: '稳定状态' };
-  return null;
-}
-
-function queueStatusBadge(rawStatus, cancelReason) {
-  if (rawStatus === 'executed') return { key: 'queue_executed', label: '已处理' };
-  if (rawStatus === 'cancelled' && cancelReason === 'abandoned') {
-    return { key: 'queue_abandoned', label: '已放弃' };
-  }
-  if (rawStatus === 'cancelled') {
-    return {
-      key: 'queue_cancelled',
-      label: cancelReason ? `已取消（${cancelReason}）` : '已取消',
-    };
-  }
-  return { key: 'queue_pending', label: '待处理' };
-}
-
-function queueRiskBadge(risk, isSell) {
-  const lv = String(risk || '').trim().toLowerCase();
-  if (lv === 'exit') {
-    return { key: isSell ? 'exit_signal' : 'not_qualified_avoid', label: isSell ? '离场信号' : '回避' };
-  }
-  if (lv === 'warn') return { key: 'risk_warn', label: '危险状态' };
-  if (lv === 'ok') return { key: 'risk_ok', label: '稳定状态' };
-  return null;
-}
-
-function findLatestTushareFailure(resources) {
-  if (!resources || typeof resources !== 'object') return null;
-  let latest = null;
-  for (const [resource, payload] of Object.entries(resources)) {
-    if (!payload || typeof payload !== 'object') continue;
-    const lastFailureAt = String(payload.last_failure_at || '').trim();
-    const lastOkAt = String(payload.last_ok_at || '').trim();
-    if (!lastFailureAt) continue;
-    if (lastOkAt && lastOkAt >= lastFailureAt) continue;
-    if (!latest || lastFailureAt > latest.lastFailureAt) {
-      latest = {
-        resource,
-        lastFailureAt,
-        reason: String(payload.last_failure_reason || '').trim(),
-      };
-    }
-  }
-  return latest;
+function isEnvironmentUnavailableMessage(message) {
+  const text = String(message || '').trim();
+  return text.includes('后端不可达') || text.includes('请求超时');
 }
 
 export default function Overview() {
   const { selectedDate } = useApp();
-  const [error, setError] = useState(null);
-  const [mutating, setMutating] = useState(false);
-  const [actionState, setActionState] = useState({ kind: null, intentId: null });
-  const [blocks, setBlocks] = useState({
-    core: createBlockState(),
-    sectors: createBlockState(),
-    queue: createBlockState(),
-    backtest: createBlockState(),
-  });
+  const [block, setBlock] = useState(createBlockState());
 
-  const backtestEndDate = useMemo(() => minusDays(selectedDate, 1) || selectedDate, [selectedDate]);
-
-  const loadCoreBlock = useCallback(async () => {
-    setBlocks((prev) => ({ ...prev, core: startBlock(prev.core, true) }));
+  const fetchData = useCallback(async () => {
+    setBlock((prev) => startBlock(prev, true));
     try {
-      const [dataStatus, conceptsMainline] = await Promise.all([
-        fetchApi('/api/data/status', {}, { timeoutMs: 45000 }),
-        fetchApi(
-          `/api/concepts/mainline?date=${encodeURIComponent(selectedDate)}&limit=10`,
-          {},
-          { timeoutMs: 45000 }
-        ),
-      ]);
-      setBlocks((prev) => ({ ...prev, core: resolveBlock({ dataStatus, conceptsMainline }) }));
-    } catch (e) {
-      setBlocks((prev) => ({ ...prev, core: rejectBlock(prev.core, e, true) }));
-    }
-  }, [selectedDate]);
-
-  const loadSectorsBlock = useCallback(async () => {
-    setBlocks((prev) => ({ ...prev, sectors: startBlock(prev.sectors, true) }));
-    try {
-      const hotSectors = await fetchApi(
-        `/api/sectors/hot?date=${encodeURIComponent(selectedDate)}&include_sell_signal=true`,
-        {},
-        { timeoutMs: 45000 }
-      );
-      setBlocks((prev) => ({ ...prev, sectors: resolveBlock({ hotSectors }) }));
-    } catch (e) {
-      setBlocks((prev) => ({ ...prev, sectors: rejectBlock(prev.sectors, e, true) }));
-    }
-  }, [selectedDate]);
-
-  const loadQueueBlock = useCallback(async () => {
-    setBlocks((prev) => ({ ...prev, queue: startBlock(prev.queue, true) }));
-    try {
-      const executionQueue = await fetchApi(
-        `/api/lowfreq/execution/queue?date=${encodeURIComponent(selectedDate)}&ensure_generated=true`,
-        {},
-        { timeoutMs: 45000 }
-      );
-      setBlocks((prev) => ({ ...prev, queue: resolveBlock({ executionQueue }) }));
-    } catch (e) {
-      setBlocks((prev) => ({ ...prev, queue: rejectBlock(prev.queue, e, true) }));
-    }
-  }, [selectedDate]);
-
-  const loadBacktestBlock = useCallback(async () => {
-    setBlocks((prev) => ({ ...prev, backtest: startBlock(prev.backtest, true) }));
-    try {
-      const backtestWindow = await fetchApi(
-        `/api/lowfreq/backtest/window-summary?end_date=${encodeURIComponent(
-          backtestEndDate
-        )}&window_trading_days=60`,
+      const payload = await fetchApi(
+        `/api/lowfreq/workbench?date=${encodeURIComponent(selectedDate)}&ensure_generated=false`,
         {},
         { timeoutMs: 60000 }
       );
-      setBlocks((prev) => ({ ...prev, backtest: resolveBlock({ backtestWindow }) }));
-    } catch (e) {
-      setBlocks((prev) => ({ ...prev, backtest: rejectBlock(prev.backtest, e, true) }));
+      setBlock(resolveBlock(payload));
+    } catch (error) {
+      setBlock((prev) => rejectBlock(prev, error, true));
     }
-  }, [backtestEndDate]);
-
-  const fetchData = useCallback(async () => {
-    setError(null);
-    await loadCoreBlock();
-    void loadSectorsBlock();
-    void loadQueueBlock();
-    void loadBacktestBlock();
-  }, [loadBacktestBlock, loadCoreBlock, loadQueueBlock, loadSectorsBlock]);
+  }, [selectedDate]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  const corePayload = blocks.core.data || {};
-  const sectorsPayload = blocks.sectors.data || {};
-  const queuePayload = blocks.queue.data || {};
-  const backtestPayload = blocks.backtest.data || {};
-  const loading = Object.values(blocks).some((block) => block.loading);
-  const latestAvailableDate =
-    corePayload.dataStatus?.latest_available_date ||
-    corePayload.dataStatus?.latest_trade_date ||
-    '--';
-  const latestTushareFailure = findLatestTushareFailure(corePayload.dataStatus?.tushare?.resources);
-
-  const sectors = Array.isArray(sectorsPayload.hotSectors?.sectors)
-    ? sectorsPayload.hotSectors.sectors
-    : [];
-  const topSectors = sectors.slice(0, 5);
-  const portfolio = sectorsPayload.hotSectors?.portfolio || null;
-  const mainlineConcepts = Array.isArray(corePayload.conceptsMainline?.concepts)
-    ? corePayload.conceptsMainline.concepts
-    : [];
-  const mainlineRiskCounts = (() => {
-    const counts = { ok: 0, warn: 0, exit: 0 };
-    for (const c of mainlineConcepts) {
-      const lv = String(c?.risk_level || '').trim();
-      if (lv === 'ok' || lv === 'warn' || lv === 'exit') counts[lv] += 1;
-    }
-    return counts;
-  })();
-  const queueItems = Array.isArray(queuePayload.executionQueue?.queue) ? queuePayload.executionQueue.queue : [];
-  const autopilotEnabled = Boolean(queuePayload.executionQueue?.autopilot_enabled);
-  const pageError = error || (!blocks.core.loaded && blocks.core.error ? blocks.core.error : null);
-
-  const postJson = async (url, payload) => {
-    return fetchApi(
-      url,
-      { method: 'POST', body: JSON.stringify(payload) },
-      { timeoutMs: 30000 }
-    );
-  };
-
-  const toggleAutopilot = async (nextEnabled) => {
-    setMutating(true);
-    setError(null);
-    setActionState({ kind: 'autopilot', intentId: null });
-    try {
-      await postJson('/api/lowfreq/settings/autopilot', {
-        enabled: Boolean(nextEnabled),
-        requested_by: 'dashboard.react',
-      });
-      await fetchData();
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setActionState({ kind: null, intentId: null });
-      setMutating(false);
-    }
-  };
-
-  const executeIntent = async (intentId) => {
-    setMutating(true);
-    setError(null);
-    setActionState({ kind: 'execute', intentId: String(intentId || '').trim() });
-    try {
-      await postJson('/api/lowfreq/execution/processed', {
-        intent_id: String(intentId || '').trim(),
-        requested_by: 'dashboard.react',
-      });
-      await fetchData();
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setActionState({ kind: null, intentId: null });
-      setMutating(false);
-    }
-  };
-
-  const markAbandoned = async (intentId) => {
-    setMutating(true);
-    setError(null);
-    setActionState({ kind: 'abandon', intentId: String(intentId || '').trim() });
-    try {
-      await postJson('/api/lowfreq/execution/abandon', {
-        intent_id: String(intentId || '').trim(),
-        reason: 'abandoned',
-        requested_by: 'dashboard.react',
-      });
-      await fetchData();
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setActionState({ kind: null, intentId: null });
-      setMutating(false);
-    }
-  };
-
-  const buySignals = (() => {
-    let cnt = 0;
-    for (const sec of sectors) {
-      const items = []
-        .concat(sec?.leaders || [])
-        .concat(sec?.middle || [])
-        .concat(sec?.followers || []);
-      for (const s of items) {
-        if (s?.buy_signal) cnt += 1;
-      }
-    }
-    return cnt;
-  })();
+  const payload = block.data || {};
+  const meta = payload.meta || {};
+  const marketSummary = payload.market_summary || {};
+  const dailyOps = payload.daily_ops || {};
+  const hotSectors = Array.isArray(payload.hot_sectors) ? payload.hot_sectors : [];
+  const trackingList = Array.isArray(payload.tracking_list) ? payload.tracking_list : [];
+  const positions = Array.isArray(payload.positions) ? payload.positions : [];
+  const tradeLedger = Array.isArray(payload.trade_ledger) ? payload.trade_ledger : [];
+  const loading = block.loading;
+  const pageError = !block.loaded && block.error ? block.error : null;
+  const environmentUnavailable = isEnvironmentUnavailableMessage(pageError);
+  const summaryText = displayText(meta.summary_text || marketSummary.summary_text);
+  const topSector = hotSectors[0] || null;
+  const topTracking = trackingList[0] || null;
+  const suggestedAction = !dailyOps.available
+    ? '先确认每日运行状态，排除阻塞后再继续审阅。'
+    : topSector
+    ? `优先复盘 ${displayText(topSector.sector_name)}，再进入选股工作台确认候选动作。`
+    : trackingList.length
+    ? '优先检查跟踪池和持仓池，确认是否需要人工处理。'
+    : '进入选股工作台补充候选与复盘信息。';
+  const riskSummary = dailyOps.available
+    ? `运行状态 ${displayText(dailyOps.status_text)}，顺延待处理 ${displayText(dailyOps.overdue_shifted_count)}，日后待执行 ${displayText(dailyOps.pending_intents_after)}。`
+    : '每日运行状态尚未确认，建议先检查链路健康与数据更新。';
 
   return (
     <div className="space-y-6">
       <DateSelector onRefresh={fetchData} loading={loading} />
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">今日总览</h2>
-          <div className="text-gray-500 mt-1">聚焦：数据更新、昨日回测、热门板块、入场信号、虚拟持仓</div>
-        </div>
-        <button
-          onClick={fetchData}
-          disabled={loading || mutating}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
-      </div>
+      <PageHeader title="今日总览" subtitle={summaryText} onRefresh={fetchData} loading={loading} />
 
-      {pageError ? (
+      {pageError && !environmentUnavailable ? (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3 text-red-700">
           <AlertCircle size={20} />
           <span>{pageError}</span>
         </div>
       ) : null}
 
+      {environmentUnavailable ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-5">
+          <div className="font-medium text-amber-900">本地服务暂未连接</div>
+          <div className="text-sm text-amber-800 mt-2">
+            当前先展示总览骨架。启动后端服务后刷新页面，即可恢复实时数据。
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SimpleCard title="数据更新到" value={latestAvailableDate} subtitle="本地可用最新日期" />
-        <SimpleCard title="热门板块 Top5" value={String(topSectors.length)} subtitle="板块轮动快照" />
-        <SimpleCard title="买入信号" value={String(buySignals)} subtitle="热门板块内买入信号数量" />
-        <SimpleCard
-          title="虚拟持仓收益"
-          value={
-            portfolio && typeof portfolio.total_return_pct === 'number'
-              ? `${portfolio.total_return_pct >= 0 ? '+' : ''}${portfolio.total_return_pct.toFixed(2)}%`
-              : '--'
-          }
-          subtitle={portfolio?.as_of ? `当前虚拟组合累计收益｜数据日期：${portfolio.as_of}` : '当前虚拟组合累计收益'}
+        <MetricCard title="当前交易日" value={displayText(meta.as_of_date)} subtitle="工作台快照日期" />
+        <MetricCard title="运行状态" value={displayText(dailyOps.status_text)} subtitle="每日任务与数据更新" />
+        <MetricCard title="市场倾向" value={displayText(marketSummary.bias_label)} subtitle={displayText(marketSummary.phase_label)} />
+        <MetricCard title="当前持仓" value={String(positions.length)} subtitle="已建仓股票数" />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <ActionCard
+          title="今日结论"
+          description={summaryText}
+          to="/market-intelligence"
+          cta="查看主线审阅"
+        />
+        <ActionCard
+          title="风险与阻塞"
+          description={riskSummary}
+          to="/ops"
+          cta="查看运维中心"
+        />
+        <ActionCard
+          title="建议动作"
+          description={suggestedAction}
+          to="/lowfreq"
+          cta="进入选股工作台"
         />
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-4 text-sm text-gray-600">
-        <span className="font-medium text-gray-900">当前 authoritative 口径</span>
-        <span className="ml-3">日线主源：Tushare</span>
-        <span className="ml-3">safety-net：Tencent</span>
-        {latestTushareFailure ? (
-          <span className="ml-3 text-red-700">
-            最近异常：{latestTushareFailure.resource} @ {latestTushareFailure.lastFailureAt}
-            {latestTushareFailure.reason ? ` (${latestTushareFailure.reason})` : ''}
-          </span>
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">重点摘要</h3>
+            <div className="text-sm text-gray-500 mt-1">先看结论，再决定进入哪个明细区域。</div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <a href="#hot-sectors-section" className="rounded-full border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">人气板块</a>
+            <a href="#tracking-section" className="rounded-full border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">跟踪池</a>
+            <a href="#positions-section" className="rounded-full border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">持仓池</a>
+            <a href="#ledger-section" className="rounded-full border border-gray-200 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">交易台账</a>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">当前人气板块</div>
+            <div className="text-xl font-semibold text-gray-900">{topSector ? displayText(topSector.sector_name) : '--'}</div>
+            <div className="text-sm text-gray-500 mt-1">{topSector ? displayText(topSector.summary_text) : '暂无板块摘要'}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">重点跟踪股票</div>
+            <div className="text-xl font-semibold text-gray-900">{topTracking ? displayText(topTracking.name) : '--'}</div>
+            <div className="text-sm text-gray-500 mt-1">{topTracking ? displayText(topTracking.summary_text) : '暂无跟踪摘要'}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">跟踪股票数</div>
+            <div className="text-xl font-semibold text-gray-900">{String(trackingList.length)}</div>
+            <div className="text-sm text-gray-500 mt-1">候选与建仓准备池</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">最近交易动作</div>
+            <div className="text-xl font-semibold text-gray-900">{tradeLedger.length ? displayText(tradeLedger[0].action_text) : '--'}</div>
+            <div className="text-sm text-gray-500 mt-1">{tradeLedger.length ? `${displayText(tradeLedger[0].name)} · ${displayText(tradeLedger[0].trade_date)}` : '暂无交易记录'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">每日运行与数据更新</h3>
+            <div className="text-sm text-gray-500 mt-1">{displayText(dailyOps.summary_text)}</div>
+          </div>
+          {dailyOps.available ? (
+            <StatusPill kind={dailyOps.status_kind} label={displayText(dailyOps.status_text)} />
+          ) : (
+            <StatusPill kind="blocked" label="未确认" />
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">最近日任务</div>
+            <div className="text-xl font-semibold text-gray-900">{displayText(dailyOps.run_date)}</div>
+            <div className="text-sm text-gray-500 mt-1">最近一轮 daily pipeline 账本日期</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">数据追平状态</div>
+            <div className="text-xl font-semibold text-gray-900">{displayText(dailyOps.latest_data_synced_text)}</div>
+            <div className="text-sm text-gray-500 mt-1">最新数据日 {displayText(meta.latest_data_date)}</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">顺延待处理</div>
+            <div className="text-xl font-semibold text-gray-900">{displayText(dailyOps.overdue_shifted_count)}</div>
+            <div className="text-sm text-gray-500 mt-1">昨日收口中被顺延到下一交易日的意图数</div>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="text-sm text-gray-500 mb-1">日后待执行</div>
+            <div className="text-xl font-semibold text-gray-900">{displayText(dailyOps.pending_intents_after)}</div>
+            <div className="text-sm text-gray-500 mt-1">低频日运行后仍处于待执行的意图数</div>
+          </div>
+        </div>
+
+        {Array.isArray(dailyOps.steps) && dailyOps.steps.length ? (
+          <div className="mt-4 flex items-center gap-2 flex-wrap">
+            {dailyOps.steps.map((step) => (
+              <span key={step.step_id} className="inline-flex items-center gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-700">
+                <span>{displayText(step.step_label)}</span>
+                <StatusPill kind={step.status_kind} label={displayText(step.status_text)} />
+              </span>
+            ))}
+          </div>
         ) : null}
+
+        <div className="mt-4 text-sm text-gray-500 flex items-center gap-4 flex-wrap">
+          <span>
+            行情来源：
+            <span className="ml-1 text-gray-900 font-medium">{displayText(dailyOps.provider)}</span>
+          </span>
+          <span>
+            收口异常：
+            <span className="ml-1 text-gray-900 font-medium">{displayText(dailyOps.inconsistency_count)}</span>
+          </span>
+          <span>
+            完成时间：
+            <span className="ml-1 text-gray-900 font-medium">{displayText(dailyOps.finished_at)}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 text-sm text-gray-600 flex items-center gap-4 flex-wrap">
+        <span>
+          最新数据：
+          <span className="ml-1 text-gray-900 font-medium">{displayText(meta.latest_data_date)}</span>
+        </span>
+        <span>
+          执行模式：
+          <span className="ml-1 text-gray-900 font-medium">{displayText(meta.execution_mode)}</span>
+        </span>
+        <span>
+          自动执行：
+          <span className="ml-1 text-gray-900 font-medium">{meta.autopilot_enabled ? '开启' : '关闭'}</span>
+        </span>
+        <span>
+          市场倾向：
+          <span className="ml-1 text-gray-900 font-medium">{displayText(marketSummary.bias_label)}</span>
+        </span>
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <Flame size={20} className="text-orange-500" />
-          主线概念（Top10）
+          <BarChart3 size={20} className="text-blue-600" />
+          大盘阶段判断
         </h3>
-        <div className="text-sm text-gray-600 mb-3">
-          风险灯：<span className="text-gray-700 font-semibold">回避 {mainlineRiskCounts.exit}</span>{' '}
-          <span className="text-orange-600 font-semibold">危险状态 {mainlineRiskCounts.warn}</span>{' '}
-          <span className="text-green-700 font-semibold">稳定状态 {mainlineRiskCounts.ok}</span>
-        </div>
-        {blocks.core.loading && !blocks.core.loaded ? (
-          <BlockMessage message="主线概念加载中..." />
-        ) : blocks.core.error && !blocks.core.loaded ? (
-          <BlockMessage tone="red" message={blocks.core.error} onRetry={loadCoreBlock} />
-        ) : mainlineConcepts.length ? (
+        {loading && !block.loaded ? (
+          <BlockMessage message="工作台加载中..." />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-500 mb-1">当前阶段</div>
+              <div className="text-xl font-semibold text-gray-900">{displayText(marketSummary.phase_label)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-500 mb-1">操作倾向</div>
+              <div className="text-xl font-semibold text-gray-900">{displayText(marketSummary.bias_label)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-500 mb-1">风险等级</div>
+              <div className="text-xl font-semibold text-gray-900">{displayText(marketSummary.risk_label)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-500 mb-1">一句解读</div>
+              <div className="text-sm text-gray-900 leading-6">{displayText(marketSummary.summary_text)}</div>
+            </div>
+          </div>
+        )}
+        {Array.isArray(marketSummary.evidence) && marketSummary.evidence.length ? (
+          <div className="mt-4 flex items-center gap-2 flex-wrap">
+            {marketSummary.evidence.map((item) => (
+              <span
+                key={item}
+                className="inline-flex items-center rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div id="hot-sectors-section" className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <Flame size={20} className="text-orange-500" />
+          当前人气板块
+        </h3>
+        {hotSectors.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-500 border-b">
-                  <th className="py-2 pr-4">排名</th>
-                  <th className="py-2 pr-4">概念</th>
-                  <th className="py-2 pr-4">主线分</th>
-                  <th className="py-2 pr-4">持久</th>
-                  <th className="py-2 pr-4">风险</th>
+                  <th className="py-2 pr-4">板块</th>
+                  <th className="py-2 pr-4">热度</th>
+                  <th className="py-2 pr-4">状态</th>
+                  <th className="py-2 pr-4">龙头/中军/跟随</th>
+                  <th className="py-2 pr-4">可建仓</th>
+                  <th className="py-2 pr-4">说明</th>
                 </tr>
               </thead>
               <tbody>
-                {mainlineConcepts.map((c) => (
-                  <tr key={c.concept_code} className="border-b last:border-b-0">
-                    <td className="py-2 pr-4 text-gray-700">{c.mainline_rank}</td>
-                    <td className="py-2 pr-4">
-                      <div className="text-gray-900 font-medium">{c.concept_name}</div>
-                      <div className="text-gray-500">{c.concept_code}</div>
+                {hotSectors.map((sector) => (
+                  <tr key={sector.sector_code} className="border-b last:border-b-0">
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-gray-900">{displayText(sector.sector_name)}</div>
+                      <div className="text-xs text-gray-500">{displayText(sector.sector_code)}</div>
                     </td>
-                    <td className="py-2 pr-4 text-gray-900">
-                      {typeof c.mainline_score === 'number' ? c.mainline_score.toFixed(1) : '--'}
+                    <td className="py-3 pr-4 text-gray-900">{formatScore(sector.heat_score)}</td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={sector.status} label={displayText(sector.status_text)} />
                     </td>
-                    <td className="py-2 pr-4 text-gray-700">
-                      {typeof c.mainline_streak === 'number' ? `${c.mainline_streak}d` : '--'}
-                    </td>
-                    <td className="py-2 pr-4">
-                      {conceptRiskBadge(c.risk_level) ? (
-                        <SemanticBadge
-                          semanticKey={conceptRiskBadge(c.risk_level).key}
-                          label={conceptRiskBadge(c.risk_level).label}
-                        />
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
+                    <td className="py-3 pr-4 text-gray-700">{`${sector.leader_count}/${sector.middle_count}/${sector.follower_count}`}</td>
+                    <td className="py-3 pr-4 text-gray-900">{displayText(sector.actionable_count)}</td>
+                    <td className="py-3 pr-4 text-gray-600">
+                      <div>{displayText(sector.summary_text)}</div>
+                      {Array.isArray(sector.representatives) && sector.representatives.length ? (
+                        <div className="mt-1 text-xs text-gray-500">
+                          代表股：
+                          {sector.representatives
+                            .map((stock) => `${displayText(stock.name)}(${displayText(stock.role_text)})`)
+                            .join('，')}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -410,382 +375,112 @@ export default function Overview() {
             </table>
           </div>
         ) : (
-          <div className="text-sm text-gray-600">暂无主线概念数据</div>
+          <div className="text-sm text-gray-600">暂无人气板块</div>
         )}
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div id="tracking-section" className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <Target size={20} />
-          买入 / 卖出 / 调整仓位（执行队列）
+          <ListChecks size={20} className="text-blue-600" />
+          当前跟踪股票池
         </h3>
-        <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
-          <div className="flex items-center gap-3">
-            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={autopilotEnabled}
-                onChange={(e) => toggleAutopilot(e.target.checked)}
-                disabled={loading || mutating}
-              />
-              自动操盘（自动保存）
-            </label>
-            <span className="text-sm text-gray-500">
-              当前模式：{autopilotEnabled ? '自动执行（方案1）' : '人工执行队列（方案2）'}
-            </span>
-          </div>
-          <div className="text-sm text-gray-500">本机访问默认放行，无需 API Key</div>
-        </div>
-
-        {blocks.queue.loading && !blocks.queue.loaded ? (
-          <BlockMessage message="执行队列加载中..." />
-        ) : blocks.queue.error && !blocks.queue.loaded ? (
-          <BlockMessage tone="red" message={blocks.queue.error} onRetry={loadQueueBlock} />
-        ) : queueItems.length ? (
+        {trackingList.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-500 border-b">
-                  <th className="py-2 pr-4">类型</th>
                   <th className="py-2 pr-4">股票</th>
-                  <th className="py-2 pr-4">执行日</th>
+                  <th className="py-2 pr-4">板块</th>
+                  <th className="py-2 pr-4">角色</th>
+                  <th className="py-2 pr-4">确定性</th>
+                  <th className="py-2 pr-4">层级</th>
                   <th className="py-2 pr-4">状态</th>
                   <th className="py-2 pr-4">说明</th>
-                  <th className="py-2 pr-4">操作</th>
+                  <th className="py-2 pr-4">首次进入</th>
+                  <th className="py-2 pr-4">最近变化</th>
                 </tr>
               </thead>
               <tbody>
-                {queueItems.map((it) => {
-                  const rawStatus = String(it?.status || 'pending');
-                  const cancelReason = String(it?.cancel_reason || '').trim();
-                  const isPending = rawStatus === 'pending';
-                  const isBuy = it?.intent_type === 'buy_intent';
-                  const isSell = it?.intent_type === 'sell_intent';
-                  const isBusy = Boolean(actionState?.intentId) && actionState.intentId === String(it.intent_id);
-                  const typeLabel = isBuy ? '买入' : it?.intent_type === 'sell_intent' ? '卖出' : String(it?.intent_type || '--');
-                  const canExecute =
-                    (it?.can_execute === undefined || Boolean(it?.can_execute)) &&
-                    (!it?.execute_date || String(it.execute_date) <= String(selectedDate));
-                  const blockedReason =
-                    !canExecute && String(it?.blocked_reason || '').trim() === 'execute_date_not_reached'
-                      ? '未到执行日'
-                      : !canExecute
-                      ? '暂不可执行'
-                      : null;
-                  const prob =
-                    typeof it?.certainty_prob === 'number'
-                      ? it.certainty_prob
-                      : typeof it?.confidence_prob === 'number'
-                      ? it.confidence_prob
-                      : null;
-                  const samples =
-                    typeof it?.certainty_samples === 'number'
-                      ? it.certainty_samples
-                      : typeof it?.confidence_samples === 'number'
-                      ? it.confidence_samples
-                      : null;
-                  const certaintyText =
-                    prob !== null ? `确定性=${Math.round(prob * 100)}%${samples !== null ? `（n=${samples}）` : ''}` : '确定性=--';
-                  const noteBase = isBuy ? certaintyText : String(it?.sell_reason || it?.sell_signal || '--');
-                  const note = blockedReason ? `${noteBase}｜${blockedReason}` : noteBase;
-                  const risk = String(it?.risk_level || '').trim();
-                  const statusBadge = queueStatusBadge(rawStatus, cancelReason);
-                  const riskBadge = queueRiskBadge(risk, isSell);
-                  return (
-                    <tr key={it.intent_id} className="border-b last:border-b-0">
-                      <td className="py-2 pr-4 text-gray-700">{typeLabel}</td>
-                      <td className="py-2 pr-4">
-                        <div className="text-gray-900 font-medium">
-                          {it?.name || '--'}{' '}
-                          <StockCodeLink code={it?.code} className="text-gray-500 hover:text-blue-600 hover:underline">
-                            {it?.code || '--'}
-                          </StockCodeLink>
-                        </div>
-                        <div className="text-gray-500">{it?.sector || '--'}</div>
-                      </td>
-                      <td className="py-2 pr-4 text-gray-700">{it?.execute_date || '--'}</td>
-                      <td className="py-2 pr-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <SemanticBadge semanticKey={statusBadge.key} label={statusBadge.label} />
-                          {riskBadge ? (
-                            <SemanticBadge semanticKey={riskBadge.key} label={riskBadge.label} />
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="py-2 pr-4 text-gray-700">{note}</td>
-                      <td className="py-2 pr-4">
-                        <div className="flex items-center gap-2">
-                          <button
-                            className="px-3 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                            disabled={!isPending || !isBuy || !canExecute || loading || mutating}
-                            onClick={() => executeIntent(it.intent_id)}
-                          >
-                            {isBusy && actionState.kind === 'execute' ? '处理中…' : '买入'}
-                          </button>
-                          <button
-                            className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                            disabled={!isPending || !isSell || !canExecute || loading || mutating}
-                            onClick={() => executeIntent(it.intent_id)}
-                          >
-                            {isBusy && actionState.kind === 'execute' ? '处理中…' : '卖出'}
-                          </button>
-                          <button
-                            className="px-3 py-1 rounded bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50"
-                            disabled={!isPending || loading || mutating}
-                            onClick={() => markAbandoned(it.intent_id)}
-                          >
-                            {isBusy && actionState.kind === 'abandon' ? '处理中…' : '放弃'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {trackingList.map((item) => (
+                  <tr key={item.code} className="border-b last:border-b-0">
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-gray-900">
+                        {displayText(item.name)}{' '}
+                        <StockCodeLink code={item.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                          {item.code || '--'}
+                        </StockCodeLink>
+                      </div>
+                      {item.is_new_today ? <div className="text-xs text-blue-600">今日新增</div> : null}
+                    </td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.sector)}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.role_text)}</td>
+                    <td className="py-3 pr-4 text-gray-900">{formatScore(item.certainty_score)}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.tracking_stage_text)}</td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={item.tracking_status} label={displayText(item.tracking_status_text)} />
+                    </td>
+                    <td className="py-3 pr-4 text-gray-600">{displayText(item.summary_text)}</td>
+                    <td className="py-3 pr-4 text-gray-500">{displayText(item.first_seen_at)}</td>
+                    <td className="py-3 pr-4 text-gray-500">{displayText(item.last_changed_at)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="text-sm text-gray-600">暂无执行队列数据</div>
+          <div className="text-sm text-gray-600">暂无跟踪股票</div>
         )}
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <FileText size={20} />
-          昨日回测（窗口 60 交易日）
-        </h3>
-        {blocks.backtest.loading && !blocks.backtest.loaded ? (
-          <BlockMessage message="昨日回测加载中..." />
-        ) : blocks.backtest.error && !blocks.backtest.loaded ? (
-          <BlockMessage tone="red" message={blocks.backtest.error} onRetry={loadBacktestBlock} />
-        ) : backtestPayload.backtestWindow?._meta?.status === 'ok' ? (
-          <div className="flex items-center justify-between gap-3 flex-wrap text-sm">
-            <div className="text-gray-700">
-              窗口：{backtestPayload.backtestWindow.start_date} → {backtestPayload.backtestWindow.end_date}
-            </div>
-            <div className="text-gray-700">
-              窗口回测总收益：
-              {typeof backtestPayload.backtestWindow?.report?.summary?.total_return_pct === 'number' ? (
-                <span className={backtestPayload.backtestWindow.report.summary.total_return_pct >= 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
-                  {backtestPayload.backtestWindow.report.summary.total_return_pct >= 0 ? '+' : ''}
-                  {backtestPayload.backtestWindow.report.summary.total_return_pct.toFixed(2)}%
-                </span>
-              ) : (
-                <span className="text-gray-500">--</span>
-              )}
-            </div>
-            <div className="flex items-center gap-3">
-              {backtestPayload.backtestWindow?.report?.pdf_url ? (
-                <a className="text-blue-600 hover:underline" href={backtestPayload.backtestWindow.report.pdf_url} target="_blank" rel="noreferrer">
-                  下载 PDF
-                </a>
-              ) : null}
-              {backtestPayload.backtestWindow?.report?.json_url ? (
-                <a className="text-blue-600 hover:underline" href={backtestPayload.backtestWindow.report.json_url} target="_blank" rel="noreferrer">
-                  下载 JSON
-                </a>
-              ) : null}
-            </div>
-          </div>
-        ) : (
-          <div className="text-sm text-gray-600">
-            {backtestPayload.backtestWindow?.message || '未生成该窗口回测报告'}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <Flame size={20} className="text-orange-500" />
-          最新热门板块（Top5）
-        </h3>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {blocks.sectors.loading && !blocks.sectors.loaded ? (
-            <BlockMessage message="热门板块加载中..." />
-          ) : blocks.sectors.error && !blocks.sectors.loaded ? (
-            <BlockMessage tone="red" message={blocks.sectors.error} onRetry={loadSectorsBlock} />
-          ) : topSectors.map((sec, idx) => (
-            <div key={idx} className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="text-lg font-semibold text-gray-900">{sec.name}</div>
-                  <div className="text-sm text-gray-500">{sec.code}</div>
-                </div>
-                <div className="flex items-center gap-1 text-orange-500">
-                  <Flame size={18} />
-                  <span className="font-bold">{sec.heat_score?.toFixed(1) || '--'}</span>
-                </div>
-              </div>
-
-              <div className="space-y-3 text-sm">
-                <div>
-                  <div className="text-gray-700 font-medium mb-1">龙头（2）</div>
-                  <div className="space-y-1">
-                    {(sec.leaders || []).slice(0, 2).map((s) => (
-                      <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">
-                          {s.name}{' '}
-                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
-                            {s.code || '--'}
-                          </StockCodeLink>
-                        </div>
-                        <div className="inline-flex items-center gap-3">
-                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
-                            <span className="text-gray-700">
-                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
-                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
-                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
-                              ) : null}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">确定性 —</span>
-                          )}
-                          {conceptRiskBadge(s.risk_level) ? (
-                            <SemanticBadge
-                              semanticKey={conceptRiskBadge(s.risk_level).key}
-                              label={conceptRiskBadge(s.risk_level).label}
-                            />
-                          ) : (
-                            <span className="text-gray-500">—</span>
-                          )}
-                          {s.buy_signal ? (
-                            <div className="inline-flex items-center gap-1">
-                              <Target size={14} className="text-green-700" />
-                              <SemanticBadge semanticKey="entry_ready" label="入场" />
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-          ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 font-medium mb-1">中军（2）</div>
-                  <div className="space-y-1">
-                    {(sec.middle || []).slice(0, 2).map((s) => (
-                      <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">
-                          {s.name}{' '}
-                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
-                            {s.code || '--'}
-                          </StockCodeLink>
-                        </div>
-                        <div className="inline-flex items-center gap-3">
-                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
-                            <span className="text-gray-700">
-                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
-                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
-                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
-                              ) : null}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">确定性 —</span>
-                          )}
-                          {conceptRiskBadge(s.risk_level) ? (
-                            <SemanticBadge
-                              semanticKey={conceptRiskBadge(s.risk_level).key}
-                              label={conceptRiskBadge(s.risk_level).label}
-                            />
-                          ) : (
-                            <span className="text-gray-500">—</span>
-                          )}
-                          {s.buy_signal ? (
-                            <div className="inline-flex items-center gap-1">
-                              <Target size={14} className="text-green-700" />
-                              <SemanticBadge semanticKey="entry_ready" label="入场" />
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-gray-700 font-medium mb-1">跟随（2）</div>
-                  <div className="space-y-1">
-                    {(sec.followers || []).slice(0, 2).map((s) => (
-                      <div key={s.code} className="flex items-center justify-between bg-gray-50 border border-gray-100 rounded px-3 py-2">
-                        <div className="text-gray-900">
-                          {s.name}{' '}
-                          <StockCodeLink code={s.code} className="text-gray-500 hover:text-blue-600 hover:underline">
-                            {s.code || '--'}
-                          </StockCodeLink>
-                        </div>
-                        <div className="inline-flex items-center gap-3">
-                          {typeof (s.certainty_prob ?? s.confidence_prob) === 'number' ? (
-                            <span className="text-gray-700">
-                              确定性 {Math.round((s.certainty_prob ?? s.confidence_prob) * 100)}%
-                              {typeof (s.certainty_samples ?? s.confidence_samples) === 'number' ? (
-                                <span className="text-gray-500">（n={s.certainty_samples ?? s.confidence_samples}）</span>
-                              ) : null}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">确定性 —</span>
-                          )}
-                          {conceptRiskBadge(s.risk_level) ? (
-                            <SemanticBadge
-                              semanticKey={conceptRiskBadge(s.risk_level).key}
-                              label={conceptRiskBadge(s.risk_level).label}
-                            />
-                          ) : (
-                            <span className="text-gray-500">—</span>
-                          )}
-                          {s.buy_signal ? (
-                            <div className="inline-flex items-center gap-1">
-                              <Target size={14} className="text-green-700" />
-                              <SemanticBadge semanticKey="entry_ready" label="入场" />
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        {!sectors.length ? (
-          <div className="text-center py-12 text-gray-500">暂无热门板块数据</div>
-        ) : null}
-      </div>
-
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div id="positions-section" className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <Wallet size={20} />
-          虚拟持仓
+          当前建仓股票池
         </h3>
-        {portfolio?.open_positions?.length ? (
+        {positions.length ? (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">代码</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">名称</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">板块</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">买入日</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">盈亏</th>
+                <tr className="border-b border-gray-200 text-left text-gray-500">
+                  <th className="py-2 pr-4">股票</th>
+                  <th className="py-2 pr-4">板块</th>
+                  <th className="py-2 pr-4">角色</th>
+                  <th className="py-2 pr-4">状态</th>
+                  <th className="py-2 pr-4">买入价</th>
+                  <th className="py-2 pr-4">现价</th>
+                  <th className="py-2 pr-4">浮盈亏</th>
+                  <th className="py-2 pr-4">接近高位</th>
+                  <th className="py-2 pr-4">持有天数</th>
+                  <th className="py-2 pr-4">离场风险</th>
+                  <th className="py-2 pr-4">说明</th>
                 </tr>
               </thead>
               <tbody>
-                {portfolio.open_positions.map((pos) => (
-                  <tr key={pos.code} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">
-                      <StockCodeLink code={pos.code} className="hover:text-blue-600 hover:underline">
-                        {pos.code || '--'}
-                      </StockCodeLink>
+                {positions.map((item) => (
+                  <tr key={item.code} className="border-b border-gray-100 last:border-b-0">
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-gray-900">
+                        {displayText(item.name)}{' '}
+                        <StockCodeLink code={item.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                          {item.code || '--'}
+                        </StockCodeLink>
+                      </div>
+                      <div className="text-xs text-gray-500">建仓日：{displayText(item.buy_date)}</div>
                     </td>
-                    <td className="py-3 px-4 text-gray-900">{pos.name}</td>
-                    <td className="py-3 px-4 text-gray-500">{pos.sector}</td>
-                    <td className="py-3 px-4 text-gray-500">{pos.buy_date || '--'}</td>
-                    <td className="py-3 px-4">
-                      <span className={pos.unrealized_pnl_pct >= 0 ? 'text-red-600' : 'text-green-600'}>
-                        {pos.unrealized_pnl_pct >= 0 ? '+' : ''}
-                        {pos.unrealized_pnl_pct?.toFixed(2)}%
-                      </span>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.sector)}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.role_text)}</td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={item.position_status} label={displayText(item.position_status_text)} />
                     </td>
+                    <td className="py-3 pr-4 text-gray-900">{formatPrice(item.buy_price)}</td>
+                    <td className="py-3 pr-4 text-gray-900">{formatPrice(item.current_price)}</td>
+                    <td className={`py-3 pr-4 ${signedClass(item.pnl_pct)}`}>{formatPercent(item.pnl_pct, { signed: true })}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.near_top_text)}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.holding_days)}</td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={item.exit_risk} label={displayText(item.exit_risk_text)} />
+                    </td>
+                    <td className="py-3 pr-4 text-gray-600">{displayText(item.summary_text)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -793,6 +488,63 @@ export default function Overview() {
           </div>
         ) : (
           <div className="text-sm text-gray-500">当前无持仓</div>
+        )}
+      </div>
+
+      <div id="ledger-section" className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <FileText size={20} />
+          交易台账
+        </h3>
+        {tradeLedger.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-gray-500">
+                  <th className="py-2 pr-4">交易日</th>
+                  <th className="py-2 pr-4">动作</th>
+                  <th className="py-2 pr-4">股票</th>
+                  <th className="py-2 pr-4">板块</th>
+                  <th className="py-2 pr-4">成交价</th>
+                  <th className="py-2 pr-4">数量</th>
+                  <th className="py-2 pr-4">原因</th>
+                  <th className="py-2 pr-4">来源</th>
+                  <th className="py-2 pr-4">对应信号日</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tradeLedger.map((item) => (
+                  <tr key={`${item.action}-${item.code}-${item.trade_date}`} className="border-b border-gray-100 last:border-b-0">
+                    <td className="py-3 pr-4 text-gray-900">{displayText(item.trade_date)}</td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={item.action} label={displayText(item.action_text)} />
+                    </td>
+                    <td className="py-3 pr-4">
+                      <div className="font-medium text-gray-900">
+                        {displayText(item.name)}{' '}
+                        <StockCodeLink code={item.code} className="text-gray-500 hover:text-blue-600 hover:underline">
+                          {item.code || '--'}
+                        </StockCodeLink>
+                      </div>
+                    </td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.sector)}</td>
+                    <td className="py-3 pr-4 text-gray-900">{formatPrice(item.price)}</td>
+                    <td className="py-3 pr-4 text-gray-700">{displayText(item.size_or_weight)}</td>
+                    <td className="py-3 pr-4 text-gray-600">
+                      <div>{displayText(item.reason_text)}</div>
+                      <div className="text-xs text-gray-400">tag: {displayText(item.reason_tag)}</div>
+                    </td>
+                    <td className="py-3 pr-4">
+                      <StatusPill kind={item.source} label={displayText(item.source_text)} />
+                    </td>
+                    <td className="py-3 pr-4 text-gray-500">{displayText(item.signal_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">暂无交易记录</div>
         )}
       </div>
     </div>
