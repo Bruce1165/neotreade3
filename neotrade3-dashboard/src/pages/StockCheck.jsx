@@ -5,6 +5,7 @@ import BlockMessage from '../components/BlockMessage';
 import DateSelector from '../components/DateSelector';
 import PageHeader from '../components/PageHeader';
 import SemanticBadge from '../components/SemanticBadge';
+import { STATUS_COPY } from '../components/statusCopy';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
 
@@ -143,8 +144,20 @@ export default function StockCheck() {
                       <div className="font-medium text-gray-900">{m.sector}</div>
                       <div className="flex items-center gap-2">
                         <SemanticBadge
-                          semanticKey={m.buy_signal === true ? 'entry_ready' : 'watch_follower'}
-                          label={m.buy_signal === true ? '可出手' : '跟踪观察'}
+                          semanticKey={
+                            m.buy_signal === true
+                              ? 'entry_ready'
+                              : (m.role === 'leaders' || m.role === 'leader')
+                                ? 'watch_general'
+                                : 'watch_follower'
+                          }
+                          label={
+                            m.buy_signal === true
+                              ? STATUS_COPY.actionable
+                              : (m.role === 'leaders' || m.role === 'leader')
+                                ? STATUS_COPY.observing
+                                : STATUS_COPY.followerObserving
+                          }
                         />
                         <div className="text-gray-500">{m.role}</div>
                       </div>

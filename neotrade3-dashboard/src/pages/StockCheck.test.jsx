@@ -57,6 +57,18 @@ describe('StockCheck', () => {
               buy_signal: true,
               suggested_entry: '观察回踩',
             },
+            {
+              sector: '算力',
+              role: 'leader',
+              buy_signal: false,
+              suggested_entry: '等待放量',
+            },
+            {
+              sector: '半导体',
+              role: 'follower',
+              buy_signal: false,
+              suggested_entry: '跟随观察',
+            },
           ],
         },
         weekly_duck_head: {
@@ -103,6 +115,8 @@ describe('StockCheck', () => {
     expect(screen.getByText('势盘线')).toBeTruthy()
     expect(screen.getByText('杯柄形态')).toBeTruthy()
     expect(screen.getAllByText('可出手')[0].closest('span')?.getAttribute('aria-label')).toContain('一级状态：建仓')
+    expect(screen.getByText('观察中').closest('span')?.getAttribute('aria-label')).toContain('一级状态：跟踪观察')
+    expect(screen.getByText('跟随观察').closest('span')?.getAttribute('aria-label')).toContain('一级状态：跟踪观察')
     const passBadge = screen
       .getAllByText('通过')
       .find((node) => node.closest('span')?.getAttribute('aria-label'))
