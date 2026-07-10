@@ -35,6 +35,7 @@ from neotrade3.cycle_intelligence.sector_cooldown import (
     confirm_sector_cooldown,
     detect_sector_cooldown as detect_sector_cooldown_kernel,
 )
+from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -2671,112 +2672,28 @@ class LowFreqTradingEngineV16:
         """获取热门板块 - v16增加人气消散过滤"""
         managed = cursor is None
         conn = self._conn() if managed else None
-        cursor = (conn.cursor() if conn is not None else cursor)
-
-        cursor.execute("""
-            SELECT sector_lv1, MAX(sector_lv2) AS sector_name
-            FROM stocks
-            WHERE sector_lv1 IS NOT NULL AND sector_lv2 IS NOT NULL
-            GROUP BY sector_lv1
-        """)
-        sector_name_by_code: dict[str, str] = {}
-        for sec_code, sec_name in cursor.fetchall():
-            sec_code = str(sec_code or "").strip()
-            sec_name = str(sec_name or "").strip()
-            if sec_code and sec_name:
-                sector_name_by_code[sec_code] = sec_name
-
-        recent_avg_by_sector: dict[str, float] = {}
-        if bool(self.SECTOR_ACCEL_BONUS_ENABLED):
-            recent_dates = self._recent_trading_dates(
-                target_date, limit=max(1, int(self.SECTOR_ACCEL_LOOKBACK_TRADING_DAYS))
+        active_cursor = conn.cursor() if conn is not None else cursor
+        try:
+            return build_hot_sectors(
+                active_cursor,
+                target_date=target_date,
+                top_n=top_n,
+                market_cap_min=float(self.MARKET_CAP_MIN),
+                market_cap_max=float(self.MARKET_CAP_MAX),
+                sector_accel_bonus_enabled=bool(self.SECTOR_ACCEL_BONUS_ENABLED),
+                sector_accel_lookback_trading_days=int(self.SECTOR_ACCEL_LOOKBACK_TRADING_DAYS),
+                sector_accel_bonus_high=float(self.SECTOR_ACCEL_BONUS_HIGH),
+                sector_accel_bonus_low=float(self.SECTOR_ACCEL_BONUS_LOW),
+                recent_trading_dates_loader=self._recent_trading_dates,
+                sector_cooldown_loader=self.detect_sector_cooldown,
+                sector_heat_factory=SectorHeat,
+                skip_logger=lambda sector, cooldown_info: logger.info(
+                    f"板块 {sector} 人气消散，跟随股弱势{float(cooldown_info.get('follower_weakness') or 0.0):.0%}"
+                ),
             )
-            if recent_dates:
-                placeholders = ",".join(["?"] * len(recent_dates))
-                args: list[object] = [d.isoformat() for d in recent_dates]
-                args.extend([float(self.MARKET_CAP_MIN), float(self.MARKET_CAP_MAX)])
-                cursor.execute(
-                    f"""
-                    SELECT s.sector_lv1, AVG(dp.pct_change) as avg_change_recent
-                    FROM stocks s
-                    JOIN daily_prices dp ON s.code = dp.code
-                    WHERE dp.trade_date IN ({placeholders})
-                      AND s.total_market_cap >= ? AND s.total_market_cap <= ?
-                      AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-                    GROUP BY s.sector_lv1
-                    """,
-                    tuple(args),
-                )
-                for sec, avg_recent in cursor.fetchall():
-                    if sec:
-                        recent_avg_by_sector[str(sec)] = float(avg_recent or 0.0)
-
-        cursor.execute("""
-            SELECT s.sector_lv1, COUNT(*) as stock_count,
-                   AVG(dp.pct_change) as avg_change,
-                   AVG(dp.volume) as avg_volume,
-                   SUM(dp.amount) as total_amount
-            FROM stocks s
-            JOIN daily_prices dp ON s.code = dp.code
-            WHERE dp.trade_date = ? 
-              AND s.total_market_cap >= ? AND s.total_market_cap <= ?
-              AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-            GROUP BY s.sector_lv1
-            HAVING COUNT(*) >= 3
-            ORDER BY avg_change DESC
-            LIMIT ?
-        """, (target_date.isoformat(), self.MARKET_CAP_MIN, 
-              self.MARKET_CAP_MAX, top_n * 2))
-
-        sectors = []
-        for row in cursor.fetchall():
-            sector, count, avg_change, avg_vol, total_amt = row
-            sector_code = str(sector or "").strip()
-            sector_display = sector_name_by_code.get(sector_code) or sector_code or str(sector)
-            
-            # v16: 检测板块人气消散
-            cooldown_info = self.detect_sector_cooldown(sector, target_date, cursor=cursor)
-            
-            # 如果板块正在人气消散，降低评分或跳过
-            if cooldown_info['cooldown_detected'] and cooldown_info['follower_weakness'] > 0.7:
-                logger.info(f"板块 {sector} 人气消散，跟随股弱势{cooldown_info['follower_weakness']:.0%}")
-                continue
-            
-            # 计算热度分
-            heat_score = 50
-            if avg_change > 2:
-                heat_score += 30
-            elif avg_change > 1:
-                heat_score += 20
-            elif avg_change > 0:
-                heat_score += 10
-            if bool(self.SECTOR_ACCEL_BONUS_ENABLED):
-                avg_change_recent = float(recent_avg_by_sector.get(str(sector)) or 0.0)
-                accel = float(avg_change or 0.0) - float(avg_change_recent)
-                if accel >= 0.8:
-                    heat_score += float(self.SECTOR_ACCEL_BONUS_HIGH)
-                elif accel >= 0.3:
-                    heat_score += float(self.SECTOR_ACCEL_BONUS_LOW)
-            
-            # 共振加分
-            if cooldown_info['trend_state'] == 'rising':
-                heat_score += 15
-            
-            sectors.append(SectorHeat(
-                sector=sector,
-                name=sector_display,
-                heat_score=heat_score,
-                momentum_5d=avg_change or 0,
-                stock_count=count,
-                trend_state=cooldown_info['trend_state'],
-                leader_strength=cooldown_info['leader_strength'],
-                follower_weakness=cooldown_info['follower_weakness']
-            ))
-
-        if conn is not None:
-            conn.close()
-        sectors.sort(key=lambda x: x.heat_score, reverse=True)
-        return sectors[:top_n]
+        finally:
+            if conn is not None:
+                conn.close()
 
     def get_sector_candidates(self, sector: str, target_date: date, top_n: int = 3, cursor: Optional[Any] = None) -> list[StockCandidate]:
         """在热门板块中筛选龙头股 - v16增加基本面和共振检测"""
