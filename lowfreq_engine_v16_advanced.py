@@ -35,6 +35,11 @@ from neotrade3.cycle_intelligence.sector_cooldown import (
     confirm_sector_cooldown,
     detect_sector_cooldown as detect_sector_cooldown_kernel,
 )
+from neotrade3.cycle_intelligence.sector_entry_selector import (
+    build_sector_candidates,
+    check_weekly_duck_head as check_weekly_duck_head_kernel,
+    confirm_structure as confirm_structure_kernel,
+)
 from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -1552,40 +1557,14 @@ class LowFreqTradingEngineV16:
         return out
 
     def _structure_confirm(self, *, code: str, target_date: date) -> dict:
-        mode = str(getattr(self, "STRUCTURE_CONFIRM_MODE", "duck_only") or "duck_only")
-        weekly = self.check_weekly_duck_head(str(code), target_date)
-        duck_ok = bool(weekly.get("passed"))
-
-        cup_ok = False
-        if mode != "duck_only" and bool(self.CUP_HANDLE_ENABLED):
-            cup_picks = self._cup_handle_picks(target_date)
-            cup_ok = str(code) in cup_picks
-
-        if mode == "duck_only":
-            passed = duck_ok
-        elif mode == "cup_only":
-            passed = cup_ok
-        elif mode == "duck_or_cup":
-            passed = duck_ok or cup_ok
-        elif mode == "duck_and_cup":
-            passed = duck_ok and cup_ok
-        else:
-            passed = duck_ok
-
-        reasons: list[str] = []
-        if duck_ok:
-            reasons.append("周线老鸭头确认（MA5/MA10/MA15）")
-        if cup_ok:
-            reasons.append("杯柄确认（cup_handle_v4）")
-
-        return {
-            "passed": bool(passed),
-            "mode": mode,
-            "duck_ok": bool(duck_ok),
-            "cup_ok": bool(cup_ok),
-            "weekly_reason": weekly.get("reason"),
-            "reasons": reasons,
-        }
+        return confirm_structure_kernel(
+            str(code),
+            target_date,
+            structure_confirm_mode=str(getattr(self, "STRUCTURE_CONFIRM_MODE", "duck_only") or "duck_only"),
+            cup_handle_enabled=bool(self.CUP_HANDLE_ENABLED),
+            weekly_duck_head_checker=self.check_weekly_duck_head,
+            cup_handle_loader=self._cup_handle_picks,
+        )
 
     def _recent_trading_dates(self, target_date: date, *, limit: int) -> list[date]:
         if int(limit) <= 0:
@@ -2080,68 +2059,19 @@ class LowFreqTradingEngineV16:
         return None
 
     def check_weekly_duck_head(self, code: str, target_date: date) -> dict:
-        if not bool(self.WEEKLY_DUCK_HEAD_ENABLED):
-            return {"passed": True, "reason": "disabled"}
-
-        view = self._weekly_series_view(str(code), target_date)
-        series = view.get("series") or []
-        closes = [float(x["close"]) for x in series if isinstance(x, dict) and x.get("close") is not None]
-        if len(closes) < int(self.WEEKLY_DUCK_HEAD_MIN_WEEKS):
-            return {"passed": False, "reason": "weekly_insufficient", "weeks": len(closes)}
-
-        t = len(closes) - 1
-        ma_s = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_SHORT), t)
-        ma_m = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_MID), t)
-        ma_l = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_LONG), t)
-        ma_s_prev = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_SHORT), t - 1)
-        ma_m_prev = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_MID), t - 1)
-        if ma_s is None or ma_m is None or ma_l is None or ma_s_prev is None or ma_m_prev is None:
-            return {"passed": False, "reason": "weekly_ma_unavailable"}
-
-        c_t = float(closes[t])
-
-        cond1 = ma_s > ma_m > ma_l
-        if not cond1:
-            return {"passed": False, "reason": "weekly_ma_not_bull", "ma5": ma_s, "ma10": ma_m, "ma15": ma_l}
-
-        cond2 = ma_s > ma_s_prev and ma_m >= ma_m_prev
-        if not cond2:
-            return {"passed": False, "reason": "weekly_turn_not_confirmed", "ma5_slope": ma_s - ma_s_prev, "ma10_slope": ma_m - ma_m_prev}
-
-        pullback_weeks = int(self.WEEKLY_DUCK_HEAD_PULLBACK_WEEKS)
-        start_idx = max(0, t - pullback_weeks + 1)
-        touched = False
-        for i in range(start_idx, t + 1):
-            ma10_i = self._sma_at(closes, int(self.WEEKLY_DUCK_HEAD_MA_MID), i)
-            if ma10_i is None:
-                continue
-            min_close = float(series[i]["min_close"]) if i < len(series) else float(closes[i])
-            if min_close <= float(ma10_i):
-                touched = True
-                break
-        if not touched:
-            return {"passed": False, "reason": "weekly_pullback_missing"}
-        if c_t <= float(ma_m):
-            return {"passed": False, "reason": "weekly_close_below_ma10", "close": c_t, "ma10": ma_m}
-
-        lb = int(self.WEEKLY_DUCK_HEAD_BREAKOUT_LOOKBACK_WEEKS)
-        if lb >= 1 and t - lb >= 0:
-            recent = closes[max(0, t - lb) : t]
-            if recent and c_t < float(max(recent)):
-                return {"passed": False, "reason": "weekly_breakout_not_confirmed"}
-
-        if float(ma_l) > 0:
-            over = (c_t / float(ma_l) - 1.0) * 100.0
-            if over > float(self.WEEKLY_DUCK_HEAD_OVEREXTEND_PCT):
-                return {"passed": False, "reason": "weekly_overextended", "over_ma15_pct": over}
-
-        return {
-            "passed": True,
-            "reason": "weekly_duck_head_confirmed",
-            "ma5": ma_s,
-            "ma10": ma_m,
-            "ma15": ma_l,
-        }
+        return check_weekly_duck_head_kernel(
+            str(code),
+            target_date,
+            weekly_duck_head_enabled=bool(self.WEEKLY_DUCK_HEAD_ENABLED),
+            weekly_duck_head_min_weeks=int(self.WEEKLY_DUCK_HEAD_MIN_WEEKS),
+            weekly_duck_head_ma_short=int(self.WEEKLY_DUCK_HEAD_MA_SHORT),
+            weekly_duck_head_ma_mid=int(self.WEEKLY_DUCK_HEAD_MA_MID),
+            weekly_duck_head_ma_long=int(self.WEEKLY_DUCK_HEAD_MA_LONG),
+            weekly_duck_head_pullback_weeks=int(self.WEEKLY_DUCK_HEAD_PULLBACK_WEEKS),
+            weekly_duck_head_breakout_lookback_weeks=int(self.WEEKLY_DUCK_HEAD_BREAKOUT_LOOKBACK_WEEKS),
+            weekly_duck_head_overextend_pct=float(self.WEEKLY_DUCK_HEAD_OVEREXTEND_PCT),
+            weekly_series_loader=self._weekly_series_view,
+        )
 
     def _weekly_returns_view(self, code: str, target_date: date) -> dict:
         view = self._weekly_series_view(str(code), target_date)
@@ -2699,451 +2629,45 @@ class LowFreqTradingEngineV16:
         """在热门板块中筛选龙头股 - v16增加基本面和共振检测"""
         managed = cursor is None
         conn = self._conn() if managed else None
-        cursor = (conn.cursor() if conn is not None else cursor)
-        cup_picks = self._cup_handle_picks(target_date) if bool(self.CUP_HANDLE_ENABLED) else set()
-
-        cursor.execute("""
-            SELECT s.code, s.name, s.total_market_cap, dp.close, dp.pct_change, dp.amount, dp.volume
-            FROM stocks s
-            JOIN daily_prices dp ON s.code = dp.code
-            WHERE s.sector_lv1 = ? AND dp.trade_date = ?
-              AND s.total_market_cap >= ? AND s.total_market_cap <= ?
-              AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-              AND dp.close > 0
-            ORDER BY dp.pct_change DESC
-            LIMIT 80
-        """, (sector, target_date.isoformat(), self.MARKET_CAP_MIN, self.MARKET_CAP_MAX))
-
-        rows = cursor.fetchall()
-        if not rows:
-            if conn is not None:
-                conn.close()
-            return []
-
-        staged = []
-        top_rows = rows[:80]
-        top_codes: list[str] = []
-        for code, _name, _mkt_cap, _close, _pct_chg, _amount, _volume in top_rows:
-            code_s = str(code or "").strip()
-            if code_s:
-                top_codes.append(code_s)
-
-        fundamentals_by_code = self._get_fundamentals_batch(cursor, top_codes, target_date)
-
-        history_by_code: dict[str, list[tuple[Any, Any, Any, Any]]] = {}
-        wave_phase_by_code: dict[str, tuple[str, float]] = {}
-        rows_by_code: dict[str, list[tuple[Any, Any, Any, Any]]] = {}
-        if top_codes:
-            placeholders = ",".join(["?"] * len(top_codes))
-            cursor.execute(
-                f"""
-                SELECT code, trade_date, close, volume, amount, high, low, rn FROM (
-                    SELECT code, trade_date, close, volume, amount, high, low,
-                           row_number() OVER (PARTITION BY code ORDER BY trade_date DESC) as rn
-                    FROM daily_prices
-                    WHERE trade_date <= ?
-                      AND code IN ({placeholders})
-                )
-                WHERE rn <= 60
-                ORDER BY code, rn
-                """,
-                (target_date.isoformat(), *top_codes),
-            )
-            for code, trade_date, close, volume, amount, high, low, rn in cursor.fetchall():
-                code_s = str(code or "").strip()
-                if not code_s:
-                    continue
-                rows60 = rows_by_code.get(code_s)
-                if rows60 is None:
-                    rows60 = []
-                    rows_by_code[code_s] = rows60
-                if len(rows60) < 60:
-                    rows60.append((close, volume, high, low))
-
-                if int(rn or 0) <= 30:
-                    hist = history_by_code.get(code_s)
-                    if hist is None:
-                        hist = []
-                        history_by_code[code_s] = hist
-                    if len(hist) < 30:
-                        hist.append((trade_date, close, volume, amount))
-
-            for code_s, rows60 in rows_by_code.items():
-                if len(rows60) < 30:
-                    wave_phase_by_code[code_s] = (WavePhase.UNKNOWN.value, 0.0)
-                    continue
-                closes60 = [r[0] for r in rows60 if r[0] is not None]
-                highs60 = [r[2] for r in rows60 if r[2] is not None]
-                lows60 = [r[3] for r in rows60 if r[3] is not None]
-                if len(closes60) < 30 or len(highs60) < 20 or len(lows60) < 20:
-                    wave_phase_by_code[code_s] = (WavePhase.UNKNOWN.value, 0.0)
-                    continue
-                recent_high = max(highs60[:20])
-                recent_low = min(lows60[:20])
-                prev_high = max(highs60[20:40]) if len(highs60) >= 40 else recent_high * 0.9
-                current_price = closes60[0]
-                base_20 = closes60[19]
-                price_change_20d = (current_price - base_20) / base_20 * 100 if base_20 and base_20 > 0 else 0
-                if current_price > prev_high * 1.02 and price_change_20d > 10:
-                    wave_phase_by_code[code_s] = (WavePhase.WAVE_3.value, 0.8)
-                elif current_price > prev_high * 1.05 and price_change_20d > 20:
-                    wave_phase_by_code[code_s] = (WavePhase.WAVE_5.value, 0.7)
-                elif current_price < recent_low * 1.05 and price_change_20d < -10:
-                    wave_phase_by_code[code_s] = (WavePhase.WAVE_B.value, 0.6)
-                elif price_change_20d > 5:
-                    wave_phase_by_code[code_s] = (WavePhase.WAVE_1.value, 0.5)
-                else:
-                    wave_phase_by_code[code_s] = (WavePhase.UNKNOWN.value, 0.3)
-
-        weekly_ret_by_code: dict[str, dict] = {}
-        if top_codes:
-            start_date = target_date - timedelta(days=int(self.WEEKLY_DUCK_HEAD_LOOKBACK_DAYS))
-            placeholders = ",".join(["?"] * len(top_codes))
-            cursor.execute(
-                f"""
-                SELECT code, trade_date, close
-                FROM daily_prices
-                WHERE code IN ({placeholders})
-                  AND trade_date BETWEEN ? AND ?
-                  AND close IS NOT NULL
-                ORDER BY code, trade_date ASC
-                """,
-                (*top_codes, start_date.isoformat(), target_date.isoformat()),
-            )
-            rows_by_code_asc: dict[str, list[tuple[Any, Any]]] = {}
-            for code, trade_date, close in cursor.fetchall():
-                code_s = str(code or "").strip()
-                if not code_s:
-                    continue
-                lst = rows_by_code_asc.get(code_s)
-                if lst is None:
-                    lst = []
-                    rows_by_code_asc[code_s] = lst
-                lst.append((trade_date, close))
-
-            for code_s in top_codes:
-                raw_rows = rows_by_code_asc.get(code_s) or []
-                if raw_rows:
-                    self._ensure_no_lookahead_trade_dates(
-                        raw_rows, target_date=target_date, context=f"_weekly_series_view({code_s})"
-                    )
-
-                buckets: dict[tuple[int, int], dict] = {}
-                for trade_date, close in raw_rows:
-                    d = date.fromisoformat(str(trade_date))
-                    iso = d.isocalendar()
-                    key = (int(iso.year), int(iso.week))
-                    b = buckets.get(key)
-                    if b is None:
-                        b = {"last_date": d, "close": float(close), "min_close": float(close)}
-                        buckets[key] = b
-                    else:
-                        b["last_date"] = d
-                        b["close"] = float(close)
-                        b["min_close"] = min(float(b["min_close"]), float(close))
-
-                weeks = sorted(buckets.keys())
-                series = []
-                for y, w in weeks:
-                    b = buckets[(y, w)]
-                    series.append(
-                        {
-                            "iso_year": int(y),
-                            "iso_week": int(w),
-                            "last_date": b["last_date"].isoformat(),
-                            "close": float(b["close"]),
-                            "min_close": float(b["min_close"]),
-                        }
-                    )
-
-                if series:
-                    self._weekly_duck_head_cache[(str(code_s), target_date.isoformat())] = {
-                        "status": "ok",
-                        "series": series,
-                    }
-
-                closes_w = [
-                    float(x["close"])
-                    for x in series
-                    if isinstance(x, dict) and x.get("close") is not None
-                ]
-                if len(closes_w) < 16:
-                    weekly_ret_by_code[code_s] = {"status": "insufficient", "weeks": len(closes_w)}
-                    continue
-                t = len(closes_w) - 1
-                def _ret(k: int) -> float:
-                    if t - k < 0:
-                        return 0.0
-                    base = float(closes_w[t - k])
-                    if base <= 0:
-                        return 0.0
-                    return (float(closes_w[t]) / base - 1.0) * 100.0
-                weekly_ret_by_code[code_s] = {
-                    "status": "ok",
-                    "ret_1w": _ret(1),
-                    "ret_4w": _ret(4),
-                    "ret_12w": _ret(12),
-                }
-
-        for _i, (code, name, mkt_cap, close, pct_chg, amount, volume) in enumerate(top_rows):
-            reasons = []
-            base_score = 0.0
-            code = str(code or "").strip()
-            cup_ok = code in cup_picks
-            soft_flags: list[str] = []
-
-            # v16: 基本面检查
-            fundamentals = fundamentals_by_code.get(code) or {
-                "pe_ttm": 0,
-                "profit_growth": 0,
-                "revenue_growth": 0,
-                "roe": 0,
-                "table_exists": False,
-            }
-            fund_passed, fund_score, fund_reasons = self.check_fundamentals(fundamentals)
-            if not fund_passed:
-                soft_flags.append("fundamentals_soft_fail")
-                base_score -= 12.0
-                reasons.append("capture-first: 基本面未过，降权保留")
-                reasons.extend([f"soft:{r}" for r in fund_reasons])
-            else:
-                base_score += float(fund_score) * 0.3  # 基本面占30%
-                reasons.extend(fund_reasons)
-
-            structure = self._structure_confirm(code=str(code), target_date=target_date)
-            if not structure.get("passed"):
-                soft_flags.append("structure_soft_fail")
-                base_score -= 10.0
-                reasons.append("capture-first: 结构未确认，降权保留")
-                reasons.extend([f"soft:{r}" for r in list(structure.get("reasons") or [])])
-            else:
-                reasons.extend(list(structure.get("reasons") or []))
-
-            if cup_ok:
-                base_score += float(self.CUP_HANDLE_SCORE_BONUS)
-                if "杯柄确认（cup_handle_v4）" not in reasons:
-                    reasons.append("杯柄确认（cup_handle_v4）")
-
-            history = history_by_code.get(code) or []
-
-            self._ensure_no_lookahead_trade_dates(history, target_date=target_date, context=f"get_sector_candidates.history({code})")
-
-            closes = [h[1] for h in history if h[1] is not None]
-            vols = [h[2] for h in history if h[2] is not None]
-            if len(history) < 20 or len(closes) < 20:
-                soft_flags.append("history_short")
-                reasons.append("capture-first: 历史样本不足，保留但不做完整结构打分")
-                base_score -= 6.0
-
-            # 价格位置
-            price_position = 50
-            if len(closes) >= 20:
-                high_20 = max(closes[:20])
-                low_20 = min(closes[:20])
-                price_position = (close - low_20) / (high_20 - low_20) * 100 if high_20 > low_20 else 50
-
-                if 60 <= price_position <= 90:
-                    base_score += 20
-                    reasons.append(f"价格位置{price_position:.0f}%（突破区间）")
-                elif 40 <= price_position < 60:
-                    base_score += 12
-
-            # 波浪阶段
-            wave_phase, wave_confidence = wave_phase_by_code.get(code) or (WavePhase.UNKNOWN.value, 0.0)
-            if wave_phase == WavePhase.WAVE_3.value:
-                base_score += 20
-                reasons.append(f"3浪主升浪")
-            elif wave_phase == WavePhase.WAVE_1.value:
-                base_score += 15
-                reasons.append(f"1浪启动")
-            elif len(closes) >= 20:
-                soft_flags.append("wave_uncertain")
-
-            # v16: 同频共振检测
-            resonance = 0.5
-            if len(closes) >= 10 and closes[4] and closes[9] and closes[4] > 0 and closes[9] > 0:
-                stock_ret_5d = (closes[0] - closes[4]) / closes[4] * 100
-                stock_ret_10d = (closes[0] - closes[9]) / closes[9] * 100
-                if 2 <= stock_ret_5d <= 15:
-                    resonance += 0.3
-                if 2 <= stock_ret_10d <= 20:
-                    resonance += 0.2
-            resonance = min(1.0, float(resonance))
-            if resonance >= 0.7:
-                base_score += 15
-                reasons.append(f"同频共振{resonance:.0%}")
-            elif resonance >= 0.5:
-                base_score += 8
-                reasons.append(f"共振{resonance:.0%}")
-            else:
-                soft_flags.append("low_resonance")
-                base_score -= 3.0
-                reasons.append(f"capture-first: 共振偏弱{resonance:.0%}，降权保留")
-
-            # 温和放量
-            avg_vol_5d = np.mean(vols[1:6]) if len(vols) >= 6 else (np.mean(vols[1:]) if len(vols) > 1 else 0.0)
-            vol_ratio = float(vols[0]) / avg_vol_5d if len(vols) > 0 and avg_vol_5d > 0 else 1.0
-            if 1.0 < vol_ratio <= 2.0:
-                base_score += 15
-                reasons.append(f"温和放量{vol_ratio:.1f}倍")
-
-            # 5日涨幅
-            ret_5d = (closes[0] - closes[4]) / closes[4] * 100 if len(closes) >= 5 and closes[4] > 0 else 0
-            if 2 <= ret_5d <= 10:
-                base_score += 10
-                reasons.append(f"5日涨{ret_5d:.1f}%（适中）")
-
-            # 均线趋势
-            if len(closes) >= 20:
-                ma5 = np.mean(closes[:5])
-                ma10 = np.mean(closes[:10])
-                ma20 = np.mean(closes[:20])
-                if close > ma5 > ma10 > ma20:
-                    base_score += 10
-                    reasons.append("均线多头排列")
-                elif ma5 > ma10 and close > ma5:
-                    base_score += 6
-
-            # 市值
-            mkt_cap_yi = mkt_cap / 1e8
-            if 200 <= mkt_cap_yi <= 300:
-                base_score += 10
-            elif 300 < mkt_cap_yi <= 350:
-                base_score += 7
-
-            weekly_ret = weekly_ret_by_code.get(str(code)) or self._weekly_returns_view(str(code), target_date)
-            if weekly_ret.get("status") == "ok":
-                strength_score = (
-                    float(weekly_ret.get("ret_1w") or 0.0) * 0.45
-                    + float(weekly_ret.get("ret_4w") or 0.0) * 0.35
-                    + float(weekly_ret.get("ret_12w") or 0.0) * 0.2
-                )
-            else:
-                ret_20d = (closes[0] - closes[19]) / closes[19] * 100 if len(closes) >= 20 and closes[19] > 0 else 0
-                strength_score = (
-                    float(pct_chg or 0.0) * 0.45
-                    + float(ret_5d or 0.0) * 0.35
-                    + float(ret_20d or 0.0) * 0.2
-                )
-
-            staged.append(
-                {
-                    "code": str(code),
-                    "name": str(name),
-                    "mkt_cap": float(mkt_cap or 0.0),
-                    "close": float(close or 0.0),
-                    "pct_chg": float(pct_chg or 0.0),
-                    "fundamentals": fundamentals,
-                    "base_score": float(base_score),
-                    "reasons": reasons,
-                    "wave_phase": wave_phase,
-                    "ret_5d": float(ret_5d),
-                    "vol_ratio": float(vol_ratio),
-                    "price_position": float(price_position),
-                    "resonance": float(resonance),
-                    "strength_score": float(strength_score),
-                    "cup_ok": bool(cup_ok),
-                    "soft_flags": soft_flags,
-                }
-            )
-
-        if not staged:
-            if conn is not None:
-                conn.close()
-            return []
-
-        staged.sort(key=lambda x: float(x.get("strength_score") or 0.0), reverse=True)
-        sector_avg_strength = float(np.mean([float(x.get("strength_score") or 0.0) for x in staged])) if staged else 0.0
-        role_by_code: dict[str, str] = {}
-        for idx, item in enumerate(staged):
-            if idx <= 1:
-                role_by_code[str(item["code"])] = "龙头"
-            elif idx <= 3:
-                role_by_code[str(item["code"])] = "中军"
-            else:
-                role_by_code[str(item["code"])] = "跟随"
-
-        candidates: list[StockCandidate] = []
-        for item in staged:
-            code = str(item["code"])
-            stock_name = str(item.get("name") or "")
-            role = role_by_code.get(code) or "跟随"
-            score = float(item["base_score"] or 0.0)
-            reasons = list(item.get("reasons") or [])
-            soft_flags = list(item.get("soft_flags") or [])
-            rel_delta = float(item.get("strength_score") or 0.0) - float(sector_avg_strength)
-            bonus_cap = float(self.RELATIVE_STRENGTH_BONUS_CAP)
-            if bonus_cap > 0 and rel_delta > 0:
-                score += min(bonus_cap, float(rel_delta))
-                reasons.append(f"相对板块强度+{rel_delta:.1f}")
-            if role == "龙头":
-                score += 15
-                reasons.append("板块龙头（多因子）")
-            elif role == "中军":
-                score += 8
-                reasons.append("板块中军（多因子）")
-
-            passed_focus, focus_reasons, focus_snapshot = passes_core_focus_gate(
-                cursor,
-                code=code,
-                stock_name=stock_name,
-                role=role,
+        active_cursor = conn.cursor() if conn is not None else cursor
+        try:
+            return build_sector_candidates(
+                active_cursor,
+                sector=sector,
                 target_date=target_date,
-                market_focus_snapshot_loader=self._market_focus_snapshot,
-            )
-            if not passed_focus:
-                soft_flags.append("focus_soft_fail")
-                score -= 8.0
-                reasons.append("capture-first: focus gate 未过，降权保留")
-                reasons.extend([f"soft:{r}" for r in focus_reasons])
-            else:
-                score += float(focus_snapshot.get("focus_bonus") or 0.0)
-                reasons.extend(focus_reasons)
-
-            if role == "跟随":
-                soft_flags.append("follower_soft")
-                score -= 4.0
-                reasons.append("capture-first: 跟随股降权保留")
-
-            score, soft_flags, reasons = apply_strong_leader_soft_release(
-                score=float(score),
-                role=role,
-                wave_phase=str(item.get("wave_phase") or ""),
-                soft_flags=soft_flags,
-                reasons=reasons,
+                top_n=top_n,
+                market_cap_min=float(self.MARKET_CAP_MIN),
+                market_cap_max=float(self.MARKET_CAP_MAX),
+                cup_handle_enabled=bool(self.CUP_HANDLE_ENABLED),
+                cup_handle_bonus=float(self.CUP_HANDLE_SCORE_BONUS),
+                relative_strength_bonus_cap=float(self.RELATIVE_STRENGTH_BONUS_CAP),
                 release_enabled=bool(getattr(self, "STRONG_LEADER_SOFT_RELEASE_ENABLED", False)),
                 release_min_score=float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0),
+                structure_confirm_mode=str(getattr(self, "STRUCTURE_CONFIRM_MODE", "duck_only") or "duck_only"),
+                weekly_duck_head_enabled=bool(self.WEEKLY_DUCK_HEAD_ENABLED),
+                weekly_duck_head_min_weeks=int(self.WEEKLY_DUCK_HEAD_MIN_WEEKS),
+                weekly_duck_head_ma_short=int(self.WEEKLY_DUCK_HEAD_MA_SHORT),
+                weekly_duck_head_ma_mid=int(self.WEEKLY_DUCK_HEAD_MA_MID),
+                weekly_duck_head_ma_long=int(self.WEEKLY_DUCK_HEAD_MA_LONG),
+                weekly_duck_head_pullback_weeks=int(self.WEEKLY_DUCK_HEAD_PULLBACK_WEEKS),
+                weekly_duck_head_breakout_lookback_weeks=int(self.WEEKLY_DUCK_HEAD_BREAKOUT_LOOKBACK_WEEKS),
+                weekly_duck_head_overextend_pct=float(self.WEEKLY_DUCK_HEAD_OVEREXTEND_PCT),
+                fundamentals_loader=self._get_fundamentals_batch,
+                check_fundamentals=self.check_fundamentals,
+                weekly_series_loader=self._weekly_series_view,
+                cup_handle_loader=self._cup_handle_picks,
+                ensure_no_lookahead_guard=lambda rows, guard_target_date, trade_date_index, context: self._ensure_no_lookahead_trade_dates(
+                    rows,
+                    target_date=guard_target_date,
+                    trade_date_index=trade_date_index,
+                    context=context,
+                ),
+                market_focus_snapshot_loader=self._market_focus_snapshot,
+                stock_candidate_factory=StockCandidate,
             )
-            mkt_cap_yi = float(item.get("mkt_cap") or 0.0) / 1e8
-            fundamentals = item.get("fundamentals") or {}
-            candidates.append(
-                StockCandidate(
-                    code=code,
-                    name=stock_name,
-                    sector=sector,
-                    market_cap_yi=round(mkt_cap_yi, 1),
-                    role=role,
-                    buy_score=float(score),
-                    buy_reasons=reasons,
-                    wave_phase=str(item.get("wave_phase") or ""),
-                    ret_5d=round(float(item.get("ret_5d") or 0.0), 2),
-                    vol_ratio=round(float(item.get("vol_ratio") or 0.0), 2),
-                    price_position=round(float(item.get("price_position") or 0.0), 1),
-                    pe_ttm=fundamentals.get('pe_ttm', 0),
-                    profit_growth=fundamentals.get('profit_growth', 0),
-                    revenue_growth=fundamentals.get('revenue_growth', 0),
-                    roe=fundamentals.get('roe', 0),
-                    sector_resonance=round(float(item.get("resonance") or 0.0), 2),
-                    cup_handle_ok=bool(item.get("cup_ok") or False),
-                    signal_source="hot_sector",
-                    soft_flags=soft_flags,
-                )
-            )
-
-        if conn is not None:
-            conn.close()
-        candidates.sort(key=lambda x: x.buy_score, reverse=True)
-        return candidates[:top_n]
+        finally:
+            if conn is not None:
+                conn.close()
 
     def get_global_candidates(
         self,
