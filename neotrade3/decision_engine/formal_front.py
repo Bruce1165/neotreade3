@@ -40,6 +40,24 @@ def attach_lowfreq_formal_front_payloads(
     return attached
 
 
+def finalize_lowfreq_formal_front_payload(
+    signal_payload: dict[str, Any],
+    *,
+    formal_payload: dict[str, Any],
+) -> dict[str, Any]:
+    finalized = dict(signal_payload)
+    candidate_signals = attach_lowfreq_formal_front_payloads(
+        list(finalized.get("candidate_signals") or []),
+        formal_by_code=dict(formal_payload.get("items_by_code") or {}),
+    )
+    entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
+    finalized["candidate_signals"] = candidate_signals
+    finalized["entry_signals"] = entry_signals
+    finalized["buy_signals"] = list(entry_signals)
+    finalized["formal"] = formal_payload
+    return finalized
+
+
 def build_lowfreq_formal_front_payload(
     cursor: sqlite3.Cursor,
     *,

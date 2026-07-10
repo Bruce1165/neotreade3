@@ -23,8 +23,8 @@ from typing import Optional, Any
 from enum import Enum
 
 from neotrade3.decision_engine.formal_front import (
-    attach_lowfreq_formal_front_payloads,
     build_lowfreq_formal_front_payload,
+    finalize_lowfreq_formal_front_payload,
 )
 from neotrade3.decision_engine.signal_dedup import dedupe_signals_by_code
 from neotrade3.decision_engine.signal_payload import build_signal_structure_payload
@@ -2180,6 +2180,17 @@ class LowFreqTradingEngineV16:
             market_filter_note=market_filter_note,
         )
 
+    def _finalize_formal_front_payload(
+        self,
+        *,
+        signal_payload: dict[str, Any],
+        formal_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return finalize_lowfreq_formal_front_payload(
+            signal_payload,
+            formal_payload=formal_payload,
+        )
+
     def generate_buy_signals(self, target_date: date) -> dict:
         """生成买入信号 - capture-first: 仅执行安全保持硬性。"""
         market_filter_note: Optional[str] = None
@@ -2301,16 +2312,10 @@ class LowFreqTradingEngineV16:
                 conn.close()
             except Exception:
                 pass
-        candidate_signals = attach_lowfreq_formal_front_payloads(
-            signal_payload.get("candidate_signals") or [],
-            formal_by_code=dict(formal_payload.get("items_by_code") or {}),
+        return self._finalize_formal_front_payload(
+            signal_payload=signal_payload,
+            formal_payload=formal_payload,
         )
-        entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
-        signal_payload["candidate_signals"] = candidate_signals
-        signal_payload["entry_signals"] = entry_signals
-        signal_payload["buy_signals"] = list(entry_signals)
-        signal_payload["formal"] = formal_payload
-        return signal_payload
 
     def _system_exit_attr_names(self, scope: str) -> dict[str, str]:
         base = "market_exit" if str(scope) == "market" else "sector_exit"
