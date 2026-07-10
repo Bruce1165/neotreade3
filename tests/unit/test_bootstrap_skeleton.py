@@ -57,7 +57,7 @@ ORCHESTRATOR_CONFIG = (
 )
 SOURCE_REGISTRY_CONFIG = PROJECT_ROOT / "config/data_control/source_registry.json"
 FEATURE_INVENTORY_FILE = (
-    PROJECT_ROOT / "docs/migration/neotrade2_feature_inventory.v3.json"
+    PROJECT_ROOT / "config/migration/neotrade2_feature_inventory.v3.json"
 )
 
 
