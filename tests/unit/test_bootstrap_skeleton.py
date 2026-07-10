@@ -1335,6 +1335,74 @@ def test_lab_run_view_executes_runtime_and_writes_contract_artifact(
     assert report_payload["candidate_details"][0]["stock_code"] == "000001"
 
 
+def test_orchestration_run_view_uses_shared_status_for_mixed_task_statuses(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    original_require_trading_day = service.require_trading_day
+    original_worker_run = service.worker_app.run
+
+    def _fake_require_trading_day(*, target_date, requested_by="api"):
+        return {"is_trading_day": True, "date": target_date, "source": requested_by}
+
+    def _fake_worker_run(
+        target_date,
+        publish_succeeded,
+        write_outputs,
+        *,
+        requested_by="BootstrapWorkerApp.run",
+        dry_run=False,
+    ):
+        return {
+            "target_date": target_date.isoformat(),
+            "publish_succeeded": bool(publish_succeeded),
+            "requested_publish_succeeded": bool(publish_succeeded),
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "data_control.publish",
+                        "phase": "data_pipeline",
+                        "status": "ok",
+                        "message": "publish ok",
+                        "artifact_refs": [],
+                    },
+                    {
+                        "task_id": "labs.aggregate",
+                        "phase": "lab",
+                        "status": "skipped",
+                        "message": "lab skipped",
+                        "artifact_refs": [],
+                    },
+                ]
+            },
+            "summary": {"planned_task_count": 2},
+        }
+
+    service.require_trading_day = _fake_require_trading_day
+    service.worker_app.run = _fake_worker_run
+    try:
+        payload = service.orchestration_run_view(
+            target_date="2026-05-19",
+            publish_succeeded=False,
+            requested_by="test",
+            dry_run=False,
+        )
+    finally:
+        service.require_trading_day = original_require_trading_day
+        service.worker_app.run = original_worker_run
+
+    ledger_path = tmp_path / "var/ledgers/orchestration_runs/2026-05-19/orchestrator_run.json"
+    artifact_path = tmp_path / "var/artifacts/orchestration_runs/2026-05-19/orchestrator_result.json"
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert payload["_meta"]["status"] == "skipped"
+    assert payload["orchestrator_run"]["status"] == "skipped"
+    assert ledger_payload["status"] == "skipped"
+    assert ledger_payload["status_counts"] == {"ok": 1, "skipped": 1}
+    assert artifact_payload["status"] == "skipped"
+
+
 def test_worker_main_returns_nonzero_for_blocked_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
