@@ -94,6 +94,7 @@ Freeze the output contracts:
   - `revenue_growth`
   - `roe`
   - `table_exists`
+- no-row fallback remains `table_exists: False`
 
 Completion check:
 

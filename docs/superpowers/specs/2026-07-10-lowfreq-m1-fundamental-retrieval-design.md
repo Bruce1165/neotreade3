@@ -204,6 +204,7 @@ This slice must preserve the current semantics exactly:
 - blank single code returns:
   - `{"pe_ttm": 0, "profit_growth": 0, "revenue_growth": 0, "roe": 0, "table_exists": False}`
 - if `financial_reports` does not exist, return the same fallback shape as today
+- if the query returns no visible row, preserve the current fallback shape with `table_exists: False`
 - visibility rule remains:
   - `COALESCE(ann_date, report_date) <= target_date`
 - ordering remains:
@@ -233,6 +234,7 @@ This carrier should directly exercise the new adapter and cover at least:
 - missing-table fallback for single and batch retrieval
 - `ann_date` visibility for single retrieval
 - `ann_date` visibility for batch retrieval
+- no-row fallback preserving the current `table_exists: False` behavior
 - blank/empty input normalization
 
 Focused regression should continue to re-run:
