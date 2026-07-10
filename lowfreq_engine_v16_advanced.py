@@ -46,6 +46,7 @@ from neotrade3.cycle_intelligence.market_focus_snapshot import (
     load_penetration_keywords,
     load_stock_concepts_cache,
 )
+from neotrade3.cycle_intelligence.fundamental_gate import score_fundamentals
 from neotrade3.cycle_intelligence.sector_heat import build_hot_sectors
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -2118,61 +2119,12 @@ class LowFreqTradingEngineV16:
         如果表不存在，自动通过检查
         返回: (是否达标, 基本面得分, 原因列表)
         """
-        # v16: 如果financial_reports表不存在，跳过基本面检查
-        if not fundamentals.get('table_exists', False):
-            return True, 50, ["基本面数据不可用，跳过筛选"]
-        
-        score = 0
-        reasons = []
-        passed = True
-        
-        pe = fundamentals.get('pe_ttm', 0)
-        profit_growth = fundamentals.get('profit_growth', 0)
-        revenue_growth = fundamentals.get('revenue_growth', 0)
-        roe = fundamentals.get('roe', 0)
-        
-        # PE检查
-        if 0 < pe < self.MAX_PE:
-            score += 20
-            reasons.append(f"PE{pe:.1f}合理")
-        elif pe <= 0:
-            # 亏损但高增长也可接受
-            if profit_growth > 30:
-                score += 10
-                reasons.append("亏损但高增长")
-            else:
-                passed = False
-                reasons.append(f"PE无效且无高增长")
-        else:
-            score += 5
-            reasons.append(f"PE{pe:.1f}偏高")
-        
-        # 净利润增速
-        if profit_growth >= self.MIN_PROFIT_GROWTH:
-            score += 30
-            reasons.append(f"净利增{profit_growth:.1f}%")
-        elif profit_growth > 0:
-            score += 15
-            reasons.append(f"净利增{profit_growth:.1f}%（偏低）")
-        else:
-            score += 5
-            reasons.append(f"净利下滑{profit_growth:.1f}%")
-        
-        # 营收增速
-        if revenue_growth >= 10:
-            score += 20
-            reasons.append(f"营收增{revenue_growth:.1f}%")
-        elif revenue_growth > 0:
-            score += 10
-        
-        # ROE
-        if roe >= self.MIN_ROE:
-            score += 30
-            reasons.append(f"ROE{roe:.1f}%")
-        elif roe > 0:
-            score += 15
-        
-        return passed, score, reasons
+        return score_fundamentals(
+            fundamentals,
+            max_pe=self.MAX_PE,
+            min_profit_growth=self.MIN_PROFIT_GROWTH,
+            min_roe=self.MIN_ROE,
+        )
 
     # ================================================================
     # 原有方法（波浪判断、热门板块等）
