@@ -3,6 +3,7 @@ import { AlertCircle, Flame, Link2, Target } from 'lucide-react'
 
 import BlockMessage from '../components/BlockMessage'
 import DateSelector from '../components/DateSelector'
+import MetricCard from '../components/MetricCard'
 import PageHeader from '../components/PageHeader'
 import StockCodeLink from '../components/StockCodeLink'
 import { useApp } from '../context/AppContext'
@@ -189,23 +190,6 @@ function topStockNames(theme, key) {
   return names.slice(0, 3)
 }
 
-function SummaryCard({ title, value, subtitle, kind }) {
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="text-sm font-medium text-gray-500 mb-3">{title}</div>
-      <div
-        className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-semibold ${summaryStateClass(
-          kind,
-          value
-        )}`}
-      >
-        {summaryStateText(kind, value)}
-      </div>
-      <div className="text-sm text-gray-500 mt-3">{subtitle || '--'}</div>
-    </div>
-  )
-}
-
 function SpecialMarkerSection({ markers, notes, compact = false }) {
   const safeMarkers = Array.isArray(markers) ? markers.filter(Boolean) : []
   const safeNotes = Array.isArray(notes) ? notes.filter(Boolean) : []
@@ -334,30 +318,69 @@ export default function MarketIntelligence() {
         <ErrorPanel error={blocks.decisionSummary.error} onRetry={loadDecisionSummaryBlock} />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <SummaryCard
+          <MetricCard
             title="主线集中度"
-            value={summary.mainline_concentration}
+            value={summaryStateText(undefined, summary.mainline_concentration)}
             subtitle={
               focusTheme
                 ? `焦点赛道：${focusTheme.concept_name || '--'}`
                 : '暂无焦点赛道'
             }
+            badge={
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-semibold ${summaryStateClass(
+                  undefined,
+                  summary.mainline_concentration
+                )}`}
+              >
+                {summaryStateText(undefined, summary.mainline_concentration)}
+              </span>
+            }
           />
-          <SummaryCard
+          <MetricCard
             title="AI 聚焦"
-            value={summary.ai_focus}
+            value={summaryStateText(undefined, summary.ai_focus)}
             subtitle={`推荐中 AI 相关 ${counts.recommended_ai ?? 0} / ${counts.recommended ?? 0}`}
+            badge={
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-semibold ${summaryStateClass(
+                  undefined,
+                  summary.ai_focus
+                )}`}
+              >
+                {summaryStateText(undefined, summary.ai_focus)}
+              </span>
+            }
           />
-          <SummaryCard
+          <MetricCard
             title="K 型干扰"
-            value={summary.kshape_interference}
+            value={summaryStateText('kshape', summary.kshape_interference)}
             subtitle={`推荐下行 ${counts.recommended_kshape_down ?? 0}，观察下行 ${counts.watch_kshape_down ?? 0}`}
-            kind="kshape"
+            badge={
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-semibold ${summaryStateClass(
+                  'kshape',
+                  summary.kshape_interference
+                )}`}
+              >
+                {summaryStateText('kshape', summary.kshape_interference)}
+              </span>
+            }
           />
-          <SummaryCard
+          <MetricCard
             title="推荐集中度"
-            value={summary.recommendation_concentration}
+            value={summaryStateText(undefined, summary.recommendation_concentration)}
             subtitle={`推荐 ${counts.recommended ?? 0}，观察 ${counts.watchlist ?? 0}，回避 ${counts.avoid ?? 0}`}
+            badge={
+              <span
+                className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-semibold ${summaryStateClass(
+                  undefined,
+                  summary.recommendation_concentration
+                )}`}
+              >
+                {summaryStateText(undefined, summary.recommendation_concentration)}
+              </span>
+            }
           />
         </div>
       )}
