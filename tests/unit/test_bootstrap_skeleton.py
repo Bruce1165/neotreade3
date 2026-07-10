@@ -1403,6 +1403,40 @@ def test_worker_main_returns_zero_for_ok_snapshot(
     assert payload["status"] == "ok"
 
 
+def test_worker_main_uses_run_ledger_status_when_snapshot_status_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {"target_date": "2026-05-19", "publish_succeeded": False, "dry_run": True},
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _RunLedgerOnlyApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run(self, *, target_date, publish_succeeded, write_outputs):
+            return {
+                "target_date": target_date.isoformat(),
+                "orchestration": {"run_ledger": {"status": "blocked"}},
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _RunLedgerOnlyApp)
+
+    assert worker_main.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "blocked"
+
+
 def test_issue_center_loads_baseline_from_summary_artifact(tmp_path: Path) -> None:
     baseline_date = date(2026, 5, 18)
     summary_path = (
