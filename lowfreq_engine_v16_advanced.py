@@ -31,6 +31,10 @@ from neotrade3.cycle_intelligence.legacy_recognition import (
     detect_wave_phase_from_series,
     passes_core_focus_gate,
 )
+from neotrade3.cycle_intelligence.sector_cooldown import (
+    confirm_sector_cooldown,
+    detect_sector_cooldown as detect_sector_cooldown_kernel,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -2185,30 +2189,14 @@ class LowFreqTradingEngineV16:
         return True
 
     def _sector_cooldown_confirmed(self, sector: str, current_date: date) -> dict:
-        window = int(self.SECTOR_COOLDOWN_CONFIRM_WINDOW)
-        required = int(self.SECTOR_COOLDOWN_CONFIRM_HITS)
-        start = current_date - timedelta(days=40)
-        dates = self._get_trading_dates(start, current_date)
-        tail = dates[-window:] if window > 0 else dates[-3:]
-        hits = 0
-        checked = 0
-        latest: dict | None = None
-        for d in tail:
-            info = self.detect_sector_cooldown(sector, d)
-            latest = info
-            checked += 1
-            if (
-                info.get("cooldown_detected")
-                and float(info.get("follower_weakness") or 0) > 0.6
-                and str(info.get("trend_state") or "") in {"diverging", "falling"}
-            ):
-                hits += 1
-        return {
-            "confirmed": bool(checked > 0 and hits >= required),
-            "hits": hits,
-            "checked": checked,
-            "latest": latest or {},
-        }
+        return confirm_sector_cooldown(
+            sector,
+            current_date,
+            window=int(self.SECTOR_COOLDOWN_CONFIRM_WINDOW),
+            required=int(self.SECTOR_COOLDOWN_CONFIRM_HITS),
+            trading_dates_loader=self._get_trading_dates,
+            cooldown_loader=self.detect_sector_cooldown,
+        )
 
     # ================================================================
     # v16: 市场情绪判断
@@ -2357,192 +2345,22 @@ class LowFreqTradingEngineV16:
     # v16: 板块人气消散检测
     # ================================================================
     def detect_sector_cooldown(self, sector: str, target_date: date, cursor: Optional[Any] = None) -> dict:
-        """
-        检测板块是否开始人气消散
-        
-        逻辑：
-        1. 获取板块内所有股票近5日表现
-        2. 计算跟随股（涨幅后50%）的平均回调幅度
-        3. 计算中军（涨幅中间30%）的稳定性
-        4. 计算龙头（涨幅前20%）的相对强度
-        
-        返回: {
-            'cooldown_detected': bool,
-            'follower_weakness': float,  # 跟随股弱势程度 0-1
-            'leader_strength': float,    # 龙头强度 0-1
-            'trend_state': str           # rising/falling/consolidating
-        }
-        """
-        cache_key = (str(sector or ""), target_date.isoformat())
-        cached = self._sector_cooldown_cache.get(cache_key)
-        if isinstance(cached, dict):
-            return cached
-
         managed = cursor is None
         conn = self._conn() if managed else None
-        cursor = (conn.cursor() if conn is not None else cursor)
-
-        sector_key = str(sector or "").strip()
-        cached_members = self._sector_members_cache.get(sector_key) if sector_key else None
-        if isinstance(cached_members, dict):
-            codes = list(cached_members.get("codes") or [])
-            name_by_code = dict(cached_members.get("name_by_code") or {})
-        else:
-            cursor.execute(
-                """
-                SELECT s.code, s.name
-                FROM stocks s
-                WHERE s.sector_lv1 = ?
-                  AND s.total_market_cap >= ? AND s.total_market_cap <= ?
-                  AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-                """,
-                (sector, self.MARKET_CAP_MIN, self.MARKET_CAP_MAX),
+        active_cursor = conn.cursor() if conn is not None else cursor
+        try:
+            return detect_sector_cooldown_kernel(
+                active_cursor,
+                sector=sector,
+                target_date=target_date,
+                market_cap_min=self.MARKET_CAP_MIN,
+                market_cap_max=self.MARKET_CAP_MAX,
+                sector_members_cache=self._sector_members_cache,
+                sector_cooldown_cache=self._sector_cooldown_cache,
             )
-            stock_rows = cursor.fetchall()
-            if len(stock_rows) < 10:
-                if conn is not None:
-                    conn.close()
-                result = {
-                    "cooldown_detected": False,
-                    "follower_weakness": 0,
-                    "leader_strength": 0.5,
-                    "trend_state": "unknown",
-                }
-                self._sector_cooldown_cache[cache_key] = result
-                return result
-
-            codes = []
-            name_by_code = {}
-            for code, name in stock_rows:
-                code_s = str(code or "").strip()
-                if not code_s:
-                    continue
-                codes.append(code_s)
-                name_by_code[code_s] = str(name or "")
-
-            self._sector_members_cache[sector_key] = {"codes": codes, "name_by_code": name_by_code}
-
-        if len(codes) < 10:
+        finally:
             if conn is not None:
                 conn.close()
-            result = {
-                "cooldown_detected": False,
-                "follower_weakness": 0,
-                "leader_strength": 0.5,
-                "trend_state": "unknown",
-            }
-            self._sector_cooldown_cache[cache_key] = result
-            return result
-
-        if not codes:
-            if conn is not None:
-                conn.close()
-            result = {
-                "cooldown_detected": False,
-                "follower_weakness": 0,
-                "leader_strength": 0.5,
-                "trend_state": "unknown",
-            }
-            self._sector_cooldown_cache[cache_key] = result
-            return result
-
-        placeholders = ",".join(["?"] * len(codes))
-        cursor.execute(
-            f"""
-            SELECT code, close, rn FROM (
-                SELECT code, close,
-                       row_number() OVER (PARTITION BY code ORDER BY trade_date DESC) as rn
-                FROM daily_prices
-                WHERE trade_date <= ?
-                  AND code IN ({placeholders})
-            )
-            WHERE rn <= 5
-            ORDER BY code, rn
-            """,
-            (target_date.isoformat(), *codes),
-        )
-        price_rows = cursor.fetchall()
-        if conn is not None:
-            conn.close()
-
-        closes_by_code: dict[str, list[float]] = {}
-        for code, close, _rn in price_rows:
-            code_s = str(code or "").strip()
-            if not code_s:
-                continue
-            if close is None:
-                continue
-            lst = closes_by_code.get(code_s)
-            if lst is None:
-                lst = []
-                closes_by_code[code_s] = lst
-            if len(lst) >= 5:
-                continue
-            lst.append(float(close))
-
-        returns: list[tuple[str, str, float]] = []
-        for code_s in codes:
-            closes = closes_by_code.get(code_s) or []
-            if len(closes) < 5:
-                continue
-            close_0 = float(closes[0])
-            close_5 = float(closes[4])
-            if close_5 <= 0:
-                continue
-            ret = (close_0 - close_5) / close_5 * 100
-            returns.append((code_s, name_by_code.get(code_s, ""), float(ret)))
-        
-        if len(returns) < 10:
-            result = {
-                "cooldown_detected": False,
-                "follower_weakness": 0,
-                "leader_strength": 0.5,
-                "trend_state": "unknown",
-            }
-            self._sector_cooldown_cache[cache_key] = result
-            return result
-        
-        # 按涨幅排序
-        returns.sort(key=lambda x: x[2], reverse=True)
-        n = len(returns)
-        
-        # 分组：龙头(前20%)、中军(中间30%)、跟随股(后50%)
-        leaders = returns[:max(1, n//5)]
-        middle = returns[max(1, n//5):max(1, n//5)+max(1, n*3//10)]
-        followers = returns[max(1, n//2):]
-        
-        # 计算各组平均涨幅
-        leader_avg = np.mean([r[2] for r in leaders]) if leaders else 0
-        middle_avg = np.mean([r[2] for r in middle]) if middle else 0
-        follower_avg = np.mean([r[2] for r in followers]) if followers else 0
-        
-        # 计算指标
-        leader_strength = min(1.0, max(0, (leader_avg + 10) / 30))  # 归一化到0-1
-        follower_weakness = min(1.0, max(0, (5 - follower_avg) / 15))  # 跟随股越弱值越高
-        
-        # 判断趋势状态
-        if leader_avg > 15 and follower_avg > 5:
-            trend_state = 'rising'
-        elif leader_avg < 5 and follower_avg < -5:
-            trend_state = 'falling'
-        elif follower_avg < -3 and leader_avg > 10:
-            trend_state = 'diverging'  # 分化，危险信号
-        else:
-            trend_state = 'consolidating'
-        
-        # 人气消散判断：跟随股大幅回调 + 龙头仍强 = 早期消散信号
-        cooldown_detected = (follower_weakness > 0.6 and leader_strength > 0.5)
-        
-        result = {
-            "cooldown_detected": cooldown_detected,
-            "follower_weakness": follower_weakness,
-            "leader_strength": leader_strength,
-            "trend_state": trend_state,
-            "leader_avg": leader_avg,
-            "follower_avg": follower_avg,
-        }
-        self._sector_cooldown_cache[cache_key] = result
-        return result
 
     # ================================================================
     # v16: 同频共振检测
