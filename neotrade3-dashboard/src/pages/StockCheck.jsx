@@ -244,7 +244,7 @@ export default function StockCheck() {
           </div>
 
           <details className="bg-white rounded-lg border border-gray-200 p-6">
-            <summary className="text-sm text-gray-600 cursor-pointer">原始返回数据</summary>
+            <summary className="text-sm text-gray-600 cursor-pointer">{STATUS_COPY.debugData}</summary>
             <pre className="mt-3 text-sm text-gray-600 overflow-auto bg-gray-50 p-4 rounded">
               {JSON.stringify(result, null, 2)}
             </pre>

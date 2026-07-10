@@ -114,6 +114,7 @@ describe('StockCheck', () => {
     expect(screen.getByText('周线形态成立')).toBeTruthy()
     expect(screen.getByText('势盘线')).toBeTruthy()
     expect(screen.getByText('杯柄形态')).toBeTruthy()
+    expect(screen.getByText('详细数据（排查用）')).toBeTruthy()
     expect(screen.getAllByText('可出手')[0].closest('span')?.getAttribute('aria-label')).toContain('一级状态：建仓')
     expect(screen.getByText('观察中').closest('span')?.getAttribute('aria-label')).toContain('一级状态：跟踪观察')
     expect(screen.getByText('跟随观察').closest('span')?.getAttribute('aria-label')).toContain('一级状态：跟踪观察')
