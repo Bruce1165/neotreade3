@@ -3,6 +3,7 @@ import { Flame, Target, Calendar, AlertCircle, Loader2, Wallet, ListFilter, File
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
 import SemanticBadge from '../components/SemanticBadge';
+import { STATUS_COPY } from '../components/statusCopy';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
 import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
@@ -1059,7 +1060,7 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
               disabled={running || metaStatus === 'accepted' || jobStatus === 'running'}
               className="px-4 py-2 bg-blue-600 text-white rounded text-sm disabled:opacity-50"
             >
-              {running || metaStatus === 'accepted' || jobStatus === 'running' ? '运行中...' : '运行回测'}
+              {running || metaStatus === 'accepted' || jobStatus === 'running' ? STATUS_COPY.processing : '运行回测'}
             </button>
           </div>
         </div>
@@ -1097,10 +1098,10 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
               </Link>
             ) : null}
             {result?.report_id ? (
-              <span className="text-gray-500">报告编号：{result.report_id}</span>
+              <span className="text-gray-500">{STATUS_COPY.reportNumber}：{result.report_id}</span>
             ) : null}
             {executionMode ? (
-              <span className="text-gray-500">运行方式：{executionMode}</span>
+              <span className="text-gray-500">{STATUS_COPY.runMode}：{executionMode}</span>
             ) : null}
           </div>
         ) : null}
@@ -1112,7 +1113,7 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
           <h3 className="text-lg font-medium text-gray-900 mb-2">报告生成中</h3>
           <p className="text-gray-500">可切换板块，后台会继续生成报告</p>
           {result?.report_id ? (
-            <div className="mt-3 text-sm text-gray-500">报告编号：{result.report_id}</div>
+            <div className="mt-3 text-sm text-gray-500">{STATUS_COPY.reportNumber}：{result.report_id}</div>
           ) : null}
         </div>
       ) : null}
