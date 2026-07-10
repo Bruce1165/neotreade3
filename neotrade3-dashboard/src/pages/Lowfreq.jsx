@@ -1,34 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Flame, Target, Calendar, AlertCircle, Loader2, Wallet, ListFilter, FileText, Filter, Search } from 'lucide-react';
+import BlockMessage from '../components/BlockMessage';
 import { useApp } from '../context/AppContext';
 import DateSelector from '../components/DateSelector';
+import MetricCard from '../components/MetricCard';
+import PageHeader from '../components/PageHeader';
 import SemanticBadge from '../components/SemanticBadge';
 import { STATUS_COPY } from '../components/statusCopy';
 import StockCodeLink from '../components/StockCodeLink';
 import { fetchApi } from '../services/api';
 import { createBlockState, rejectBlock, resolveBlock, startBlock } from '../services/asyncBlocks';
-import { Link } from 'react-router-dom';
-
-function BlockMessage({ tone = 'gray', message, onRetry }) {
-  const toneClass =
-    tone === 'red'
-      ? 'bg-red-50 border-red-200 text-red-700'
-      : 'bg-gray-50 border-gray-200 text-gray-600';
-  return (
-    <div className={`rounded-lg border p-4 text-sm flex items-center justify-between gap-3 ${toneClass}`}>
-      <span>{message}</span>
-      {typeof onRetry === 'function' ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="px-3 py-1 rounded bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-        >
-          重试
-        </button>
-      ) : null}
-    </div>
-  );
-}
 
 function safeNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -77,6 +59,14 @@ function displaySectorName(value) {
   return displayText(value);
 }
 
+function activeModeCopy(activeTab) {
+  if (activeTab === 'today') return '阅读盘面与热点变化'
+  if (activeTab === 'scorePool') return '复盘股票池与交易台账'
+  if (activeTab === 'candidates') return '集中处理人工动作'
+  if (activeTab === 'backtest') return '生成并查看回测报告'
+  return '进入辅助工具排查问题'
+}
+
 function backtestReportDetailPath(reportId) {
   return `/lowfreq/backtest-reports/${encodeURIComponent(String(reportId || '').trim())}`;
 }
@@ -93,7 +83,7 @@ function manualIntentStatusBadge(status, intentType, cancelReason) {
   if (value === 'pending') return { key: 'queue_pending', label: '待处理' };
   if (value === 'executed') return { key: 'queue_executed', label: '已处理' };
   if (value === 'cancelled' && String(cancelReason || '').trim() === 'abandoned') {
-    return { key: 'queue_abandoned', label: '已放弃' };
+    return { key: 'queue_abandoned', label: STATUS_COPY.abandoned };
   }
   if (value === 'cancelled') return { key: 'queue_cancelled', label: '已取消' };
   if (String(intentType || '').trim() === 'sell_intent') {
@@ -134,16 +124,16 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
   const stockStatus = (stock, roleLabel) => {
     const manual = stock?.manual || {};
     if (manual?.abandoned === true) {
-      return { key: 'abandoned', label: '已放弃' };
+      return { key: 'abandoned', label: STATUS_COPY.abandoned };
     }
     if (manual?.buy_intent_pending === true) {
-      return { key: 'entry_queued', label: '已排队' };
+      return { key: 'entry_queued', label: STATUS_COPY.queued };
     }
     if (stock?.buy_signal === true) {
-      return { key: 'entry_ready', label: '可出手' };
+      return { key: 'entry_ready', label: STATUS_COPY.actionable };
     }
     if (roleLabel === '跟随') {
-      return { key: 'watch_follower', label: '跟随观察' };
+      return { key: 'watch_follower', label: STATUS_COPY.followerObserving };
     }
     const gate = stock?.upwave_gate || {};
     if (gate?.market_ok === false) {
@@ -158,7 +148,7 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
     if (stock?.risk_level === 'exit') {
       return { key: 'not_qualified_avoid', label: '回避' };
     }
-    return { key: 'watch_general', label: '观察' };
+    return { key: 'watch_general', label: STATUS_COPY.observing };
   };
 
   const upwavePill = (sec) => {
@@ -183,11 +173,11 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
     const ret20Rank = formatPercentile(scores?.return_20d_rank);
     const buyDisabledReason =
       abandoned
-        ? '已放弃'
+        ? STATUS_COPY.abandoned
         : pending
-          ? '已排队'
+          ? STATUS_COPY.queued
           : roleLabel === '跟随'
-            ? '跟随仅观察'
+            ? STATUS_COPY.followerObserving
             : stock?.buy_signal !== true
               ? '未满足出手条件'
               : null;
@@ -258,7 +248,7 @@ function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, can
             ) : (
                 <SemanticBadge
                   semanticKey={roleLabel === '跟随' ? 'watch_follower' : 'not_qualified_avoid'}
-                  label={roleLabel === '跟随' ? '跟随仅观察' : '未满足出手条件'}
+                  label={roleLabel === '跟随' ? STATUS_COPY.followerObserving : '未满足出手条件'}
                 />
             )}
           </div>
@@ -594,7 +584,7 @@ function ScorePoolPanel({ data, selectedDate }) {
       </div>
     );
   }
-  
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -654,45 +644,45 @@ function ScorePoolPanel({ data, selectedDate }) {
               </thead>
               <tbody>
                 {pool.map((item) => {
-                  const state = stateBadge(item.state);
+                  const state = stateBadge(item.state)
                   const returnValue =
                     String(item.state || '').trim() === '已清仓'
                       ? item.realized_return_pct
-                      : item.current_return_pct;
+                      : item.current_return_pct
                   const priceValue =
                     String(item.state || '').trim() === '已清仓'
                       ? item.sell_price
-                      : item.last_price;
+                      : item.last_price
                   return (
                     <tr key={item.code} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-900">
-                      <StockCodeLink code={item.code} className="hover:text-blue-600 hover:underline">
-                        {item.code || '--'}
-                      </StockCodeLink>
-                    </td>
-                    <td className="py-3 px-4 text-gray-900">{displayText(item.name)}</td>
-                    <td className="py-3 px-4 text-gray-500">{displaySectorName(item)}</td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2 py-1 rounded border text-xs ${state.cls}`}>{state.label}</span>
-                    </td>
-                    <td className="py-3 px-4 text-gray-700">{displayText(item.tracking_since)}</td>
-                    <td className="py-3 px-4 text-gray-700">{displayText(item.buy_date)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(item.buy_price)}</td>
-                    <td className="py-3 px-4 text-gray-900">{formatCurrency(priceValue)}</td>
-                    <td className="py-3 px-4">
-                      <span className={signedNumberClass(returnValue)}>{formatPercent(returnValue, { signed: true })}</span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <button
-                        type="button"
-                        onClick={() => openDetail(item.code)}
-                        className="rounded border border-gray-200 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        查看明细
-                      </button>
-                    </td>
+                      <td className="py-3 px-4 text-gray-900">
+                        <StockCodeLink code={item.code} className="hover:text-blue-600 hover:underline">
+                          {item.code || '--'}
+                        </StockCodeLink>
+                      </td>
+                      <td className="py-3 px-4 text-gray-900">{displayText(item.name)}</td>
+                      <td className="py-3 px-4 text-gray-500">{displaySectorName(item)}</td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2 py-1 rounded border text-xs ${state.cls}`}>{state.label}</span>
+                      </td>
+                      <td className="py-3 px-4 text-gray-700">{displayText(item.tracking_since)}</td>
+                      <td className="py-3 px-4 text-gray-700">{displayText(item.buy_date)}</td>
+                      <td className="py-3 px-4 text-gray-900">{formatCurrency(item.buy_price)}</td>
+                      <td className="py-3 px-4 text-gray-900">{formatCurrency(priceValue)}</td>
+                      <td className="py-3 px-4">
+                        <span className={signedNumberClass(returnValue)}>{formatPercent(returnValue, { signed: true })}</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <button
+                          type="button"
+                          onClick={() => openDetail(item.code)}
+                          className="rounded border border-gray-200 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          查看明细
+                        </button>
+                      </td>
                     </tr>
-                  );
+                  )
                 })}
               </tbody>
             </table>
@@ -770,28 +760,20 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
   }
 
   const candidates = data.candidates;
-  const actionableCandidates = candidates.filter(
-    (candidate) => !candidate.manual?.abandoned && !candidate.manual?.buy_intent_pending
-  );
-  const readyCount = actionableCandidates.filter(
-    (candidate) => candidate.buy_signal === true && candidate.role !== '跟随'
-  ).length;
-  const watchCount = candidates.filter(
-    (candidate) => candidate.buy_signal !== true || candidate.role === '跟随'
-  ).length;
+  const actionableCandidates = candidates.filter((candidate) => !candidate.manual?.abandoned && !candidate.manual?.buy_intent_pending);
+  const readyCount = actionableCandidates.filter((candidate) => candidate.buy_signal === true && candidate.role !== '跟随').length;
+  const watchCount = candidates.filter((candidate) => candidate.buy_signal !== true || candidate.role === '跟随').length;
   const queuedCount = candidates.filter((candidate) => candidate.manual?.buy_intent_pending).length;
   const abandonedCount = candidates.filter((candidate) => candidate.manual?.abandoned).length;
 
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.6fr)_360px]">
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.6fr)_360px] gap-6">
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
           <ListFilter size={20} />
           候选阅读区 ({candidates.length})
         </h3>
-        <p className="text-sm text-gray-500 mb-4">
-          先看角色、状态、分数与涨幅，再决定是否进入人工动作区。
-        </p>
+        <p className="text-sm text-gray-500 mb-4">先看角色、状态、分数与涨幅，再决定是否进入人工动作区。</p>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -818,13 +800,13 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
                   <td className="py-3 px-4 text-gray-500">{candidate.role || '--'}</td>
                   <td className="py-3 px-4">
                     {candidate.manual?.abandoned ? (
-                      <SemanticBadge semanticKey="abandoned" label="已放弃" />
+                      <SemanticBadge semanticKey="abandoned" label={STATUS_COPY.abandoned} />
                     ) : candidate.manual?.buy_intent_pending ? (
-                      <SemanticBadge semanticKey="entry_queued" label="已排队" />
+                      <SemanticBadge semanticKey="entry_queued" label={STATUS_COPY.queued} />
                     ) : candidate.buy_signal ? (
-                      <SemanticBadge semanticKey="entry_ready" label="可出手" />
+                      <SemanticBadge semanticKey="entry_ready" label={STATUS_COPY.actionable} />
                     ) : (
-                      <SemanticBadge semanticKey="watch_general" label="观察" />
+                      <SemanticBadge semanticKey="watch_general" label={STATUS_COPY.observing} />
                     )}
                   </td>
                   <td className="py-3 px-4 text-gray-900">{candidate.buy_score?.toFixed(0)}</td>
@@ -843,30 +825,12 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
       <div className="space-y-4">
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900">人工动作区</h3>
-          <p className="text-sm text-gray-500 mt-2">
-            这里集中处理可买、排队和放弃，避免在阅读流中直接混入操作按钮。
-          </p>
+          <p className="text-sm text-gray-500 mt-2">这里集中处理可买、排队和放弃，避免在阅读流中直接混入操作按钮。</p>
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="text-xs text-gray-500">可出手</div>
-              <div className="mt-1 text-xl font-semibold text-gray-900">{readyCount}</div>
-              <div className="mt-1 text-xs text-gray-500">满足条件且非跟随</div>
-            </div>
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="text-xs text-gray-500">观察</div>
-              <div className="mt-1 text-xl font-semibold text-gray-900">{watchCount}</div>
-              <div className="mt-1 text-xs text-gray-500">仅观察或条件未满足</div>
-            </div>
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="text-xs text-gray-500">已排队</div>
-              <div className="mt-1 text-xl font-semibold text-gray-900">{queuedCount}</div>
-              <div className="mt-1 text-xs text-gray-500">等待执行</div>
-            </div>
-            <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="text-xs text-gray-500">已放弃</div>
-              <div className="mt-1 text-xl font-semibold text-gray-900">{abandonedCount}</div>
-              <div className="mt-1 text-xs text-gray-500">人工明确跳过</div>
-            </div>
+            <MetricCard title={STATUS_COPY.actionable} value={String(readyCount)} subtitle="满足条件且非跟随" />
+            <MetricCard title={STATUS_COPY.observing} value={String(watchCount)} subtitle="仅观察或条件未满足" />
+            <MetricCard title={STATUS_COPY.queued} value={String(queuedCount)} subtitle="等待执行" />
+            <MetricCard title={STATUS_COPY.abandoned} value={String(abandonedCount)} subtitle="人工明确跳过" />
           </div>
         </div>
 
@@ -877,25 +841,20 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
               <div className="text-sm text-gray-500">当前没有需要立即人工处理的候选股。</div>
             ) : (
               actionableCandidates.map((candidate, index) => (
-                <div
-                  key={`${candidate.code || candidate.name || index}-action`}
-                  className="rounded-lg border border-gray-100 p-4"
-                >
+                <div key={`${candidate.code || candidate.name || index}-action`} className="rounded-lg border border-gray-100 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-gray-900">
-                        {displayText(candidate.name)}{' '}
-                        <span className="text-gray-500 font-normal">({displayText(candidate.code)})</span>
+                        {displayText(candidate.name)} <span className="text-gray-500 font-normal">({displayText(candidate.code)})</span>
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分{' '}
-                        {candidate.buy_score?.toFixed(0) || '--'}
+                        {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分 {candidate.buy_score?.toFixed(0) || '--'}
                       </div>
                     </div>
                     {candidate.buy_signal ? (
-                      <SemanticBadge semanticKey="entry_ready" label="可出手" />
+                      <SemanticBadge semanticKey="entry_ready" label={STATUS_COPY.actionable} />
                     ) : (
-                      <SemanticBadge semanticKey="watch_general" label="观察" />
+                      <SemanticBadge semanticKey="watch_general" label={STATUS_COPY.observing} />
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-4">
@@ -904,7 +863,7 @@ function CandidatesPanel({ data, onBuyIntent, onAbandon, posting }) {
                       disabled={posting || candidate.buy_signal !== true || candidate.role === '跟随'}
                       title={
                         candidate.role === '跟随'
-                          ? '跟随仅观察'
+                          ? STATUS_COPY.followerObserving
                           : candidate.buy_signal !== true
                             ? '未满足出手条件'
                             : ''
@@ -978,6 +937,28 @@ function ToolsHubPanel() {
           cta="进入单股核验"
           icon={Search}
         />
+      </div>
+    </div>
+  );
+}
+
+function ModeOverviewPanel({ activeTab }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="text-sm text-gray-500">当前任务模式</div>
+        <div className="text-lg font-semibold text-gray-900 mt-2">{activeModeCopy(activeTab)}</div>
+        <div className="text-sm text-gray-500 mt-2">把阅读、动作和回测分开，减少切换成本。</div>
+      </div>
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="text-sm text-gray-500">阅读优先</div>
+        <div className="text-lg font-semibold text-gray-900 mt-2">先看盘面与池子，再做动作</div>
+        <div className="text-sm text-gray-500 mt-2">避免在浏览信息时被操作按钮持续打断。</div>
+      </div>
+      <div className="bg-white rounded-lg border border-gray-200 p-5">
+        <div className="text-sm text-gray-500">操作提示</div>
+        <div className="text-lg font-semibold text-gray-900 mt-2">本机调用默认放行</div>
+        <div className="text-sm text-gray-500 mt-2">买入、放弃、回测无需额外输入 API Key。</div>
       </div>
     </div>
   );
@@ -1066,26 +1047,26 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
         </div>
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
           <div className="text-sm font-medium text-blue-900">本次回测输出包含什么</div>
-          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {resultGroups.map((group) => (
               <div key={group.key} className="rounded border border-blue-100 bg-white px-3 py-3">
                 <div className="text-sm font-medium text-gray-900">{group.title}</div>
-                <div className="mt-1 text-xs text-gray-500">{group.description}</div>
+                <div className="text-xs text-gray-500 mt-1">{group.description}</div>
               </div>
             ))}
           </div>
         </div>
         {pendingMessage ? (
-          <div className="mt-4 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          <div className="mt-4 text-sm text-blue-700 bg-blue-50 border border-blue-100 rounded px-3 py-2">
             {pendingMessage}（建议稍后再点击下载链接）
           </div>
         ) : null}
         {errorMessage ? (
-          <div className="mt-4 rounded border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-100 rounded px-3 py-2">
             {errorMessage}
           </div>
         ) : null}
-        {(result?.pdf_url || (result?.json_url && result?.report_id)) ? (
+        {(result?.pdf_url || (result?.json_url && result?.report_id)) && (
           <div className="mt-4 flex items-center gap-3 text-sm flex-wrap">
             {result?.pdf_url ? (
               <a className="text-blue-600 hover:underline" href={result.pdf_url} target="_blank" rel="noreferrer">
@@ -1097,17 +1078,15 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
                 查看明细
               </Link>
             ) : null}
-            {result?.report_id ? (
-              <span className="text-gray-500">{STATUS_COPY.reportNumber}：{result.report_id}</span>
-            ) : null}
+            <span className="text-gray-500">{STATUS_COPY.reportNumber}：{result.report_id}</span>
             {executionMode ? (
               <span className="text-gray-500">{STATUS_COPY.runMode}：{executionMode}</span>
             ) : null}
           </div>
-        ) : null}
+        )}
       </div>
 
-      {isRunning ? (
+      {isRunning && (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <FileText size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">报告生成中</h3>
@@ -1116,25 +1095,25 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             <div className="mt-3 text-sm text-gray-500">{STATUS_COPY.reportNumber}：{result.report_id}</div>
           ) : null}
         </div>
-      ) : null}
+      )}
 
-      {!summary && isErrorState ? (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-12 text-center">
+      {!summary && isErrorState && (
+        <div className="bg-white rounded-lg border border-red-200 bg-red-50 p-12 text-center">
           <FileText size={48} className="mx-auto text-red-200 mb-4" />
           <h3 className="text-lg font-medium text-red-900 mb-2">回测状态异常</h3>
           <p className="text-red-700">{errorMessage}</p>
         </div>
-      ) : null}
+      )}
 
-      {!summary && !isRunning && !isErrorState ? (
+      {!summary && !isRunning && !isErrorState && (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <FileText size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">暂无回测结果</h3>
           <p className="text-gray-500">点击“运行回测”生成报告</p>
         </div>
-      ) : null}
+      )}
 
-      {summary ? (
+      {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="text-sm text-gray-500 mb-1">回测总收益</div>
@@ -1150,7 +1129,9 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
           </div>
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="text-sm text-gray-500 mb-1">最大回撤</div>
-            <div className="text-2xl font-bold text-green-600">{formatPercent(summary.max_drawdown_pct)}</div>
+            <div className="text-2xl font-bold text-green-600">
+              {formatPercent(summary.max_drawdown_pct)}
+            </div>
           </div>
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="text-sm text-gray-500 mb-1">夏普比率</div>
@@ -1159,9 +1140,9 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {summary ? (
+      {summary && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">执行摘要</h3>
@@ -1170,7 +1151,7 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
                 {actionEntries.map(([key, value]) => (
                   <div key={key} className="flex items-center justify-between text-sm">
                     <span className="text-gray-500">{displayText(key)}</span>
-                    <span className="font-medium text-gray-900">{value}</span>
+                    <span className="text-gray-900 font-medium">{value}</span>
                   </div>
                 ))}
               </div>
@@ -1184,11 +1165,13 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">观察窗口</span>
-                <span className="font-medium text-gray-900">{displayText(exitQuality.lookahead_trading_days)} 个交易日</span>
+                <span className="text-gray-900 font-medium">
+                  {displayText(exitQuality.lookahead_trading_days)} 个交易日
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">样本数</span>
-                <span className="font-medium text-gray-900">{displayText(exitQuality.count)}</span>
+                <span className="text-gray-900 font-medium">{displayText(exitQuality.count)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">卖出后涨幅 P50</span>
@@ -1218,13 +1201,13 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">下一交易日</span>
-                <span className="font-medium text-gray-900">{displayText(nextSession.next_trading_day)}</span>
+                <span className="text-gray-900 font-medium">{displayText(nextSession.next_trading_day)}</span>
               </div>
               {nextSignalEntries.length > 0 ? (
                 nextSignalEntries.map(([key, value]) => (
                   <div key={key} className="flex items-center justify-between">
                     <span className="text-gray-500">{displayText(key)}</span>
-                    <span className="font-medium text-gray-900">{value}</span>
+                    <span className="text-gray-900 font-medium">{value}</span>
                   </div>
                 ))
               ) : (
@@ -1237,11 +1220,15 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
                 <div className="space-y-2">
                   {nextCandidates.map((candidate) => (
                     <div key={candidate.code} className="rounded border border-gray-100 px-3 py-2">
-                      <div className="text-sm font-medium text-gray-900">
-                        {displayText(candidate.name)} · {displayText(candidate.code)}
-                      </div>
-                      <div className="mt-1 text-xs text-gray-500">
-                        {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分 {safeNumber(candidate.buy_score) == null ? '--' : candidate.buy_score.toFixed(0)}
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {displayText(candidate.name)} · {displayText(candidate.code)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {displaySectorName(candidate)} · {displayText(candidate.role)} · 买入分 {safeNumber(candidate.buy_score) == null ? '--' : candidate.buy_score.toFixed(0)}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1252,9 +1239,9 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {result?.buy_dates?.length > 0 ? (
+      {result?.buy_dates?.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">买点分布</h3>
           <div className="overflow-x-auto">
@@ -1276,7 +1263,7 @@ function BacktestPanel({ result, startDate, endDate, setStartDate, setEndDate, o
             </table>
           </div>
         </div>
-      ) : null}
+      )}
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">最近 10 次回测报告</h3>
@@ -1443,28 +1430,26 @@ export default function Lowfreq() {
         `/api/lowfreq-score/summary?date=${encodeURIComponent(selectedDate)}&limit=12`,
         {},
         { timeoutMs: 45000 }
-      );
+      )
       if (scorePoolRequestIdRef.current !== requestId) {
-        return;
+        return
       }
-      const partialPayload = { summary: summaryPayload };
+      const partialPayload = { summary: summaryPayload }
       setData((prev) => ({ ...prev, scorePool: partialPayload }));
       setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(partialPayload) }));
 
-      const poolPayload = await fetchApi(
-        `/api/lowfreq-score/pool?date=${encodeURIComponent(selectedDate)}&limit=500`,
-        {},
-        { timeoutMs: 45000 }
-      );
+      const [poolPayload] = await Promise.all([
+        fetchApi(`/api/lowfreq-score/pool?date=${encodeURIComponent(selectedDate)}&limit=500`, {}, { timeoutMs: 45000 }),
+      ])
       if (scorePoolRequestIdRef.current !== requestId) {
-        return;
+        return
       }
-      const payload = { pool: poolPayload, summary: summaryPayload };
+      const payload = { pool: poolPayload, summary: summaryPayload }
       setData((prev) => ({ ...prev, scorePool: payload }));
       setBlocks((prev) => ({ ...prev, scorePool: resolveBlock(payload) }));
     } catch (err) {
       if (scorePoolRequestIdRef.current !== requestId) {
-        return;
+        return
       }
       setBlocks((prev) => ({ ...prev, scorePool: rejectBlock(prev.scorePool, err, true) }));
     }
@@ -1690,17 +1675,14 @@ export default function Lowfreq() {
       {/* Date Selector */}
       <DateSelector onRefresh={fetchData} loading={loading} />
 
-      {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900">低频交易</h2>
-        <p className="text-gray-500 mt-1">预判未来20-60个交易日有80%+机会涨幅达到30%以上的股票</p>
-      </div>
+      <PageHeader
+        title="选股工作台"
+        subtitle="聚合盘面复盘、股票池、人工动作、回测和工具入口，不再直接暴露为一级工具导航"
+        onRefresh={fetchData}
+        loading={loading}
+      />
 
-      {(activeTab === 'today' || activeTab === 'candidates' || activeTab === 'backtest') && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="text-sm text-gray-500">操作提示：买入/放弃/回测无需再输入 API Key（本机访问默认放行）</div>
-        </div>
-      )}
+      <ModeOverviewPanel activeTab={activeTab} />
 
       {/* Tabs */}
       <div className="border-b border-gray-200">
