@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { 
+import {
   AlertTriangle,
-  LayoutDashboard, 
-  Filter, 
-  Search, 
+  LayoutDashboard,
   TrendingUp,
   Target,
 } from 'lucide-react';
