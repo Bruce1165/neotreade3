@@ -26,6 +26,10 @@ from neotrade3.decision_engine.formal_front import (
     build_lowfreq_formal_front_payload,
     finalize_lowfreq_formal_front_payload,
 )
+from neotrade3.decision_engine.signal_seed import (
+    build_cross_sector_signal_seed,
+    build_hot_sector_signal_seed,
+)
 from neotrade3.decision_engine.signal_dedup import dedupe_signals_by_code
 from neotrade3.decision_engine.signal_payload import build_signal_structure_payload
 from neotrade3.cycle_intelligence.legacy_recognition import (
@@ -2191,6 +2195,31 @@ class LowFreqTradingEngineV16:
             formal_payload=formal_payload,
         )
 
+    def _build_hot_sector_signal_seed(
+        self,
+        *,
+        candidate: Any,
+        market_filter_note: Optional[str],
+    ) -> dict[str, Any]:
+        return build_hot_sector_signal_seed(
+            candidate,
+            market_filter_note=market_filter_note,
+        )
+
+    def _build_cross_sector_signal_seed(
+        self,
+        *,
+        candidate: Any,
+        market_filter_note: Optional[str],
+        allowed_waves: set[str],
+    ) -> dict[str, Any]:
+        return build_cross_sector_signal_seed(
+            candidate,
+            market_filter_note=market_filter_note,
+            wave3_only=bool(self.CROSS_SECTOR_WAVE3_ONLY),
+            allowed_waves=allowed_waves,
+        )
+
     def generate_buy_signals(self, target_date: date) -> dict:
         """生成买入信号 - capture-first: 仅执行安全保持硬性。"""
         market_filter_note: Optional[str] = None
@@ -2219,27 +2248,12 @@ class LowFreqTradingEngineV16:
                         cursor=cursor,
                     )
                     for c in candidates:
-                        reasons = list(c.buy_reasons)
-                        if market_filter_note:
-                            reasons.append(market_filter_note)
                         raw_signals.append(
                             self._decorate_signal_with_phase1_contracts(
-                                {
-                                    "code": c.code,
-                                    "name": c.name,
-                                    "sector": c.sector,
-                                    "buy_score": float(c.buy_score),
-                                    "market_cap_yi": c.market_cap_yi,
-                                    "wave_phase": c.wave_phase,
-                                    "role": c.role,
-                                    "reasons": reasons,
-                                    "pe": c.pe_ttm,
-                                    "profit_growth": c.profit_growth,
-                                    "resonance": c.sector_resonance,
-                                    "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
-                                    "signal_source": str(getattr(c, "signal_source", "") or "hot_sector"),
-                                    "soft_flags": list(getattr(c, "soft_flags", []) or []),
-                                }
+                                self._build_hot_sector_signal_seed(
+                                    candidate=c,
+                                    market_filter_note=market_filter_note,
+                                )
                             )
                         )
                 except Exception as e:
@@ -2261,32 +2275,13 @@ class LowFreqTradingEngineV16:
                 if bool(getattr(self, "CROSS_SECTOR_ALLOW_WAVE1", True)):
                     allowed_waves.add(WavePhase.WAVE_1.value)
                 for c in global_candidates:
-                    reasons = ["跨板块扫描"] + list(c.buy_reasons)
-                    soft_flags = list(getattr(c, "soft_flags", []) or [])
-                    if self.CROSS_SECTOR_WAVE3_ONLY and str(c.wave_phase) not in allowed_waves:
-                        reasons.append("capture-first: 波段不符，降权保留")
-                        soft_flags.append("wave_uncertain")
-                    if market_filter_note:
-                        reasons.append(market_filter_note)
                     raw_signals.append(
                         self._decorate_signal_with_phase1_contracts(
-                            {
-                                "code": c.code,
-                                "name": c.name,
-                                "sector": c.sector,
-                                "buy_score": float(c.buy_score),
-                                "market_cap_yi": c.market_cap_yi,
-                                "wave_phase": c.wave_phase,
-                                "role": c.role,
-                                "reasons": reasons,
-                                "pe": c.pe_ttm,
-                                "profit_growth": c.profit_growth,
-                                "resonance": c.sector_resonance,
-                                "cross_sector": True,
-                                "cup_handle_ok": bool(getattr(c, "cup_handle_ok", False)),
-                                "signal_source": str(getattr(c, "signal_source", "") or "cross_sector"),
-                                "soft_flags": soft_flags,
-                            }
+                            self._build_cross_sector_signal_seed(
+                                candidate=c,
+                                market_filter_note=market_filter_note,
+                                allowed_waves=allowed_waves,
+                            )
                         )
                     )
             except Exception as e:
