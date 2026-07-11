@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "description": "NeoTrade3 M4 benchmark validation seed registry. Scope: repeatable B1-B4 sample carriers for the lowfreq six-layer validation seed.",
+  "samples": [
+    {
+      "sample_id": "b1_target_opportunity_seed",
+      "fixture_id": "m2_target_opportunity_reference",
+      "stock_code": "600000",
+      "trade_date": "2026-07-07",
+      "sample_bucket": "B1_target_opportunity",
+      "target_state_type": "T3_strong_target",
+      "expected_target_state": {
+        "small_cycle_state": {
+          "allowed": ["S2 Advancing"]
+        },
+        "wave_hypothesis": {
+          "replay_consistency_status": "pending_benchmark"
+        },
+        "fund_cycle": {
+          "allowed": ["advancing", "repairing"]
+        },
+        "industry_cycle": {
+          "allowed": ["advancing", "repairing"]
+        },
+        "cycle_linkage_state": {
+          "supports_continuation": true,
+          "local_end_vs_global_end": [
+            "local_end_only",
+            "needs_global_confirmation"
+          ]
+        },
+        "growth_potential_profile": {
+          "allowed_status": ["promising", "uncertain"]
+        },
+        "top_risk_profile": {
+          "max_risk_level": "watch"
+        }
+      },
+      "evidence_refs": [
+        {
+          "layer": "M2",
+          "focus": "small_cycle_state"
+        },
+        {
+          "layer": "M2",
+          "focus": "cycle_linkage_state"
+        },
+        {
+          "layer": "M2",
+          "focus": "growth_potential_profile"
+        }
+      ],
+      "scenario_tags": ["B1", "target_opportunity", "continuation_candidate"],
+      "note": "首批 B1 replay seed：验证 shadow 输出已具备机会候选成立的最小正向状态组合。",
+      "input_data_version": "m1_phase1.v1",
+      "rule_version": "m4_benchmark_seed.v1alpha1"
+    },
+    {
+      "sample_id": "b2_control_failure_seed",
+      "fixture_id": "m2_control_failure_reference",
+      "stock_code": "600000",
+      "trade_date": "2026-07-07",
+      "sample_bucket": "B2_control_failure",
+      "target_state_type": "T1_prohibition_target",
+      "expected_target_state": {
+        "cycle_linkage_state": {
+          "supports_continuation": true,
+          "local_end_vs_global_end": [
+            "local_end_only",
+            "needs_global_confirmation"
+          ]
+        }
+      },
+      "evidence_refs": [
+        {
+          "layer": "M2",
+          "focus": "cycle_linkage_state"
+        }
+      ],
+      "scenario_tags": ["B2", "control_failure", "continuation_blocked"],
+      "note": "首批 B2 replay seed：验证 continuation 被阻断时不得误译为机会目标。",
+      "input_data_version": "m1_phase1.v1",
+      "rule_version": "m4_benchmark_seed.v1alpha1"
+    },
+    {
+      "sample_id": "b3_boundary_complex_advancing_seed",
+      "fixture_id": "m2_advancing_reference",
+      "stock_code": "600000",
+      "trade_date": "2026-07-07",
+      "sample_bucket": "B3_boundary_complex",
+      "target_state_type": "T2_range_target",
+      "expected_target_state": {
+        "small_cycle_state": {
+          "allowed": ["S2 Advancing"]
+        },
+        "wave_hypothesis": {
+          "replay_consistency_status": "pending_benchmark"
+        },
+        "fund_cycle": {
+          "allowed": ["advancing", "repairing"]
+        },
+        "industry_cycle": {
+          "allowed": ["advancing", "repairing"]
+        },
+        "cycle_linkage_state": {
+          "supports_continuation": true,
+          "local_end_vs_global_end": [
+            "local_end_only",
+            "needs_global_confirmation"
+          ]
+        },
+        "growth_potential_profile": {
+          "allowed_status": ["promising", "uncertain"]
+        },
+        "top_risk_profile": {
+          "max_risk_level": "watch"
+        }
+      },
+      "evidence_refs": [
+        {
+          "layer": "M2",
+          "focus": "cycle_linkage_state"
+        },
+        {
+          "layer": "M2",
+          "focus": "mid_cycle_state"
+        }
+      ],
+      "scenario_tags": ["B3", "boundary_complex", "continuation_check"],
+      "note": "首批 B3 replay seed：验证衔接对象和中周期 shadow 输出是否提供最小解释增益。",
+      "input_data_version": "m1_phase1.v1",
+      "rule_version": "m4_benchmark_seed.v1alpha1"
+    },
+    {
+      "sample_id": "b4_local_global_guardrail_seed",
+      "fixture_id": "m2_local_global_guardrail_reference",
+      "stock_code": "600000",
+      "trade_date": "2026-07-07",
+      "sample_bucket": "B4_interaction_guardrail",
+      "target_state_type": "T1_prohibition_target",
+      "expected_target_state": {
+        "cycle_linkage_state": {
+          "supports_continuation": true,
+          "local_end_vs_global_end": [
+            "local_end_only",
+            "needs_global_confirmation"
+          ]
+        }
+      },
+      "evidence_refs": [
+        {
+          "layer": "M2-M3",
+          "focus": "local_global_end_guardrail"
+        }
+      ],
+      "scenario_tags": ["B4", "guardrail", "local_global_end"],
+      "note": "首批 B4 replay seed：验证局部结束不能被误译为全局结束。",
+      "input_data_version": "m1_phase1.v1",
+      "rule_version": "m4_benchmark_seed.v1alpha1"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "run_id": "validation_seed_v2_batch",
+  "registry_path": "config/benchmark/validation_seed_samples.json",
+  "sample_ids": [
+    "b1_target_opportunity_seed",
+    "b2_control_failure_seed"
+  ],
+  "description": "NeoTrade3 M4 validation seed batch manifest. v2 scope: execute the repeatable B1/B2 benchmark seeds as one batch run."
+}
