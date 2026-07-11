@@ -60,6 +60,9 @@ from neotrade3.decision_engine.system_exit_state_machine import (
 from neotrade3.decision_engine.execution_signal_gate import (
     build_execution_signal_gate_snapshot,
 )
+from neotrade3.decision_engine.elite_execution_candidate import (
+    build_elite_execution_candidate_snapshot,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -3081,45 +3084,25 @@ class LowFreqTradingEngineV16:
 
     def _elite_execution_candidate_snapshot(self, *, sig: dict[str, Any]) -> dict[str, Any]:
         gate = self._execution_signal_gate_snapshot(sig=sig)
-        if bool(gate.get("blocked")):
-            return {
-                "eligible": False,
-                "blocked_reason": "elite_execution_candidate_rejected",
-                "details": str(gate.get("details") or ""),
-                "min_score_required": gate.get("min_score_required"),
-            }
-
-        role = str(sig.get("role") or "").strip()
-        wave_phase = str(sig.get("wave_phase") or "").strip()
-        buy_score = float(sig.get("buy_score") or 0.0)
-        soft_flags = [str(x or "").strip() for x in list(sig.get("soft_flags") or []) if str(x or "").strip()]
-        elite_min_score = float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0)
-        elite_unknown_leader_min_score = float(
-            getattr(self, "EXECUTION_ELITE_UNKNOWN_LEADER_MIN_BUY_SCORE", 90.0) or 90.0
+        return build_elite_execution_candidate_snapshot(
+            gate_blocked=bool(gate.get("blocked")),
+            gate_details=str(gate.get("details") or ""),
+            gate_min_score_required=gate.get("min_score_required"),
+            role=str(sig.get("role") or "").strip(),
+            wave_phase=str(sig.get("wave_phase") or "").strip(),
+            buy_score=float(sig.get("buy_score") or 0.0),
+            soft_flags=[
+                str(x or "").strip()
+                for x in list(sig.get("soft_flags") or [])
+                if str(x or "").strip()
+            ],
+            elite_min_score=float(getattr(self, "EXECUTION_ELITE_MIN_BUY_SCORE", 80.0) or 80.0),
+            elite_unknown_leader_min_score=float(
+                getattr(self, "EXECUTION_ELITE_UNKNOWN_LEADER_MIN_BUY_SCORE", 90.0) or 90.0
+            ),
+            wave1_value=WavePhase.WAVE_1.value,
+            wave3_value=WavePhase.WAVE_3.value,
         )
-
-        reasons: list[str] = []
-        if role != "龙头":
-            reasons.append("非龙头不进入 elite execution 资格")
-        if soft_flags:
-            reasons.append("存在 soft-retained 标记，不进入 elite execution 资格")
-
-        min_score_required = elite_min_score
-        if wave_phase in {WavePhase.WAVE_1.value, WavePhase.WAVE_3.value}:
-            if buy_score < elite_min_score:
-                reasons.append(f"1浪/3浪龙头正式保留至少需要 {elite_min_score:.1f} 分")
-        else:
-            min_score_required = elite_unknown_leader_min_score
-            if buy_score < elite_unknown_leader_min_score:
-                reasons.append(f"未知波段龙头正式保留至少需要 {elite_unknown_leader_min_score:.1f} 分")
-
-        return {
-            "eligible": not bool(reasons),
-            "blocked_reason": "elite_execution_candidate_rejected",
-            "details": "；".join(reasons),
-            "soft_flags": soft_flags,
-            "min_score_required": float(min_score_required),
-        }
 
     def _rotation_candidate_snapshot(
         self,
