@@ -18,8 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
-    resolve_audit_block_reason_text,
     resolve_candidate_only_primary_reason,
+    resolve_execution_audit_primary_reason,
     resolve_not_picked_primary_reason,
     resolve_sell_reason_bucket,
 )
@@ -691,10 +691,6 @@ def _build_buy_signal_audit_index(entries: list[dict[str, Any]]) -> dict[str, li
     return out
 
 
-def _audit_block_reason_text(entry: dict[str, Any]) -> str:
-    return resolve_audit_block_reason_text(entry)
-
-
 def _extract_execution_reason(
     *,
     code: str,
@@ -714,19 +710,13 @@ def _extract_execution_reason(
     if not signal_dates:
         return ""
     first_signal = signal_dates[0]
-    top_key = str(segment_top_date or "").strip()
-    top_audits = [x for x in buy_signal_audits if str(x.get("date") or "") <= top_key] if top_key else list(buy_signal_audits)
-    blocking_audits = [x for x in top_audits if str(x.get("action_type") or "") == "block"]
-    late_trades = [x for x in code_trades if top_key and str(x.get("buy_date") or "") > top_key]
-    if blocking_audits:
-        latest_block = max(blocking_audits, key=lambda x: str(x.get("date") or ""))
-        reason = _audit_block_reason_text(latest_block)
-        if reason:
-            if late_trades:
-                return f"{reason}，见顶后才成交"
-            return reason
-    if late_trades:
-        return "信号存在但见顶后才成交"
+    reason = resolve_execution_audit_primary_reason(
+        buy_signal_audits=buy_signal_audits,
+        code_trades=code_trades,
+        segment_top_date=segment_top_date,
+    )
+    if reason:
+        return reason
     rows = conn.execute(
         """
         SELECT trade_date, pct_change, high, low, close

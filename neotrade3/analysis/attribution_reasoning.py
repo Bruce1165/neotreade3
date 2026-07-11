@@ -22,6 +22,28 @@ def resolve_audit_block_reason_text(entry: dict[str, Any]) -> str:
     return ""
 
 
+def resolve_execution_audit_primary_reason(
+    *,
+    buy_signal_audits: list[dict[str, Any]],
+    code_trades: list[dict[str, Any]],
+    segment_top_date: str,
+) -> str:
+    top_key = str(segment_top_date or "").strip()
+    top_audits = [x for x in buy_signal_audits if str(x.get("date") or "") <= top_key] if top_key else list(buy_signal_audits)
+    blocking_audits = [x for x in top_audits if str(x.get("action_type") or "") == "block"]
+    late_trades = [x for x in code_trades if top_key and str(x.get("buy_date") or "") > top_key]
+    if blocking_audits:
+        latest_block = max(blocking_audits, key=lambda x: str(x.get("date") or ""))
+        reason = resolve_audit_block_reason_text(latest_block)
+        if reason:
+            if late_trades:
+                return f"{reason}，见顶后才成交"
+            return reason
+    if late_trades:
+        return "信号存在但见顶后才成交"
+    return ""
+
+
 def resolve_sell_reason_bucket(sell_reason: str) -> str:
     reason = str(sell_reason or "").strip()
     if reason.startswith("回测结束平仓"):
