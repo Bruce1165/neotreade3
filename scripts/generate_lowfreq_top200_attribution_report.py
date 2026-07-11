@@ -19,6 +19,7 @@ from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_audit_block_reason_text,
+    resolve_sell_reason_bucket,
 )
 from neotrade3.decision_engine.cross_sector_wave_policy import (
     is_cross_sector_wave_mismatch,
@@ -788,16 +789,7 @@ def _extract_execution_reason(
 
 
 def _sell_reason_bucket(sell_reason: str) -> str:
-    reason = str(sell_reason or "").strip()
-    if reason.startswith("回测结束平仓"):
-        return "回测结束平仓"
-    if "板块见顶确认" in reason:
-        return "sector_top_confirmed"
-    if "见顶确认" in reason or "见顶：" in reason:
-        return "market_top_confirmed"
-    if "跌破买入价止损" in reason or "硬证伪退出" in reason:
-        return "thesis_invalidated"
-    return "other"
+    return resolve_sell_reason_bucket(sell_reason)
 
 
 def _not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str:

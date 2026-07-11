@@ -19,3 +19,16 @@ def resolve_audit_block_reason_text(entry: dict[str, Any]) -> str:
     if execution_block_reason == "cash_insufficient":
         return "信号存在但资金不足"
     return ""
+
+
+def resolve_sell_reason_bucket(sell_reason: str) -> str:
+    reason = str(sell_reason or "").strip()
+    if reason.startswith("回测结束平仓"):
+        return "回测结束平仓"
+    if "板块见顶确认" in reason:
+        return "sector_top_confirmed"
+    if "见顶确认" in reason or "见顶：" in reason:
+        return "market_top_confirmed"
+    if "跌破买入价止损" in reason or "硬证伪退出" in reason:
+        return "thesis_invalidated"
+    return "other"
