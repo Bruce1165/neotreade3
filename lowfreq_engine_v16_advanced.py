@@ -72,6 +72,10 @@ from neotrade3.decision_engine.trade_block_reason import (
 from neotrade3.decision_engine.system_exit_application import (
     plan_system_exit_application,
 )
+from neotrade3.decision_engine.rotation_candidate import (
+    build_rotation_candidate_snapshot,
+    select_rotation_candidate,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -3109,7 +3113,9 @@ class LowFreqTradingEngineV16:
         incoming_score = float(incoming_sig.get("buy_score") or 0.0)
         held_score = float(getattr(trade, "buy_score", 0.0) or 0.0)
         score_gap = float(incoming_score) - float(held_score)
-        min_score_margin = float(getattr(self, "EXECUTION_ROTATION_MIN_SCORE_MARGIN", 12.0) or 12.0)
+        min_score_margin = float(
+            getattr(self, "EXECUTION_ROTATION_MIN_SCORE_MARGIN", 12.0) or 12.0
+        )
         if float(score_gap) < float(min_score_margin):
             return None
 
@@ -3154,53 +3160,37 @@ class LowFreqTradingEngineV16:
             if isinstance(rotation_cache, dict):
                 rotation_cache[cache_key] = base_snapshot
 
-        current_return_pct = float(base_snapshot.get("current_return_pct") or 0.0)
-        max_current_return_pct = float(
-            getattr(self, "EXECUTION_ROTATION_MAX_CURRENT_RETURN_PCT", 25.0) or 25.0
+        current_return_pct = (
+            float(base_snapshot.get("current_return_pct") or 0.0)
+            if isinstance(base_snapshot, dict)
+            else 0.0
         )
-        if float(current_return_pct) > float(max_current_return_pct):
-            return None
-
-        market_evidence = int(base_snapshot.get("market_evidence") or 0)
-        sector_evidence = int(base_snapshot.get("sector_evidence") or 0)
-        min_evidence = int(getattr(self, "EXECUTION_ROTATION_MIN_EVIDENCE_COUNT", 2) or 0)
-        watch_active = bool(base_snapshot.get("watch_active"))
-        weakening = bool(base_snapshot.get("weakening"))
-        max_evidence = max(int(market_evidence), int(sector_evidence))
-        if not bool(weakening) and int(max_evidence) < int(min_evidence):
-            return None
-
-        peak_return_pct = float(base_snapshot.get("peak_return_pct") or 0.0)
+        peak_return_pct = (
+            float(base_snapshot.get("peak_return_pct") or 0.0)
+            if isinstance(base_snapshot, dict)
+            else 0.0
+        )
         profit_keep_ratio = self._profit_keep_ratio(
             current_return_pct=float(current_return_pct),
             peak_return_pct=float(peak_return_pct),
         )
-        priority = (
-            float(score_gap)
-            + float(max_evidence) * 10.0
-            + (5.0 if bool(watch_active) else 0.0)
-            + (3.0 if bool(weakening) else 0.0)
-            - max(float(current_return_pct), 0.0) * 0.1
+        return build_rotation_candidate_snapshot(
+            rotation_enabled=bool(getattr(self, "EXECUTION_ROTATION_ENABLED", True)),
+            incoming_score=float(incoming_score),
+            held_score=float(held_score),
+            min_score_margin=float(
+                getattr(self, "EXECUTION_ROTATION_MIN_SCORE_MARGIN", 12.0) or 12.0
+            ),
+            base_snapshot=base_snapshot,
+            max_current_return_pct=float(
+                getattr(self, "EXECUTION_ROTATION_MAX_CURRENT_RETURN_PCT", 25.0) or 25.0
+            ),
+            min_evidence=int(
+                getattr(self, "EXECUTION_ROTATION_MIN_EVIDENCE_COUNT", 2) or 0
+            ),
+            profit_keep_ratio=float(profit_keep_ratio),
+            trade_code=str(trade.code),
         )
-        details = (
-            f"弱化持仓换仓候选 | score_gap={score_gap:.1f} | "
-            f"market_evidence={market_evidence} | sector_evidence={sector_evidence} | "
-            f"current_return={current_return_pct:.1f}% | keep_ratio={profit_keep_ratio:.2f}"
-        )
-        return {
-            "code": str(trade.code),
-            "current_price": float(base_snapshot.get("current_price") or 0.0),
-            "current_return_pct": float(current_return_pct),
-            "peak_return_pct": float(peak_return_pct),
-            "profit_keep_ratio": float(profit_keep_ratio),
-            "market_evidence": int(market_evidence),
-            "sector_evidence": int(sector_evidence),
-            "watch_active": bool(watch_active),
-            "weakening": bool(weakening),
-            "score_gap": float(score_gap),
-            "priority": float(priority),
-            "details": details,
-        }
 
     def _select_rotation_candidate(
         self,
@@ -3211,8 +3201,7 @@ class LowFreqTradingEngineV16:
         incoming_sig: dict[str, Any],
         rotation_cache: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
     ) -> Optional[tuple[str, dict[str, Any]]]:
-        best_code: Optional[str] = None
-        best_snapshot: Optional[dict[str, Any]] = None
+        candidate_snapshots: list[tuple[str, dict[str, Any]]] = []
         for code, trade in positions.items():
             snapshot = self._rotation_candidate_snapshot(
                 cursor=cursor,
@@ -3223,26 +3212,8 @@ class LowFreqTradingEngineV16:
             )
             if not isinstance(snapshot, dict):
                 continue
-            if best_snapshot is None:
-                best_code = str(code)
-                best_snapshot = snapshot
-                continue
-            candidate_key = (
-                float(snapshot.get("priority") or 0.0),
-                float(snapshot.get("score_gap") or 0.0),
-                -float(snapshot.get("current_return_pct") or 0.0),
-            )
-            best_key = (
-                float(best_snapshot.get("priority") or 0.0),
-                float(best_snapshot.get("score_gap") or 0.0),
-                -float(best_snapshot.get("current_return_pct") or 0.0),
-            )
-            if candidate_key > best_key:
-                best_code = str(code)
-                best_snapshot = snapshot
-        if best_code is None or best_snapshot is None:
-            return None
-        return best_code, best_snapshot
+            candidate_snapshots.append((str(code), snapshot))
+        return select_rotation_candidate(candidate_snapshots=candidate_snapshots)
 
     def check_sell_signal_v2(self, trade: TradeRecord, current_date: date) -> Optional[SellSignal]:
         """正式离场主链只保留硬证伪退出、趋势衰竭退出、大盘见顶确认、板块见顶确认。"""
