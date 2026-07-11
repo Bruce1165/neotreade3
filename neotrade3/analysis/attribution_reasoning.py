@@ -64,3 +64,14 @@ def resolve_not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str
     if not reason_counter:
         return "主升段内从未进入候选池"
     return str(reason_counter.most_common(1)[0][0])
+
+
+def resolve_candidate_only_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
+    candidate_hits = [x for x in daily_audits if str(x.get("stage") or "") == "candidate_signal_selected"]
+    if not candidate_hits:
+        return "进入候选池但未进入正式建仓池"
+    first_hit = candidate_hits[0]
+    signal = first_hit.get("signal") if isinstance(first_hit.get("signal"), dict) else {}
+    if str(signal.get("candidate_tier") or "") == "soft_retained":
+        return "进入候选池但被软保留，未进入正式建仓池"
+    return "进入候选池但未进入正式建仓池"

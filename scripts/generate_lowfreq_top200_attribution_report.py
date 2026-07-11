@@ -19,6 +19,7 @@ from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_audit_block_reason_text,
+    resolve_candidate_only_primary_reason,
     resolve_not_picked_primary_reason,
     resolve_sell_reason_bucket,
 )
@@ -798,14 +799,7 @@ def _not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
 
 
 def _candidate_only_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
-    candidate_hits = [x for x in daily_audits if str(x.get("stage") or "") == "candidate_signal_selected"]
-    if not candidate_hits:
-        return "进入候选池但未进入正式建仓池"
-    first_hit = candidate_hits[0]
-    signal = first_hit.get("signal") if isinstance(first_hit.get("signal"), dict) else {}
-    if str(signal.get("candidate_tier") or "") == "soft_retained":
-        return "进入候选池但被软保留，未进入正式建仓池"
-    return "进入候选池但未进入正式建仓池"
+    return resolve_candidate_only_primary_reason(daily_audits)
 
 
 def _analyze_topk(
