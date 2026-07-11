@@ -37,6 +37,13 @@ from neotrade3.decision_engine.phase1_signal_contracts import (
     decorate_signal_with_phase1_contracts,
     tracking_snapshot_from_signal,
 )
+from neotrade3.decision_engine.system_exit_grace import (
+    is_eligible_for_system_exit_grace,
+    is_leader_hold_candidate,
+    profit_keep_ratio,
+    resolve_buy_progress_label,
+    system_exit_grace_thresholds,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2281,44 +2288,43 @@ class LowFreqTradingEngineV16:
         signal: Optional[dict[str, Any]] = None,
         trade: Optional[TradeRecord] = None,
     ) -> str:
-        raw_label = ""
-        if isinstance(signal, dict):
-            raw_label = str(signal.get("buy_progress_label") or "").strip()
-            if raw_label:
-                return raw_label
-            raw_wave_phase = str(signal.get("wave_phase") or "").strip()
-        else:
-            raw_wave_phase = ""
-        if trade is not None:
-            trade_label = str(getattr(trade, "buy_progress_label", "") or "").strip()
-            if trade_label:
-                return trade_label
-            if not raw_wave_phase:
-                raw_wave_phase = str(getattr(trade, "wave_phase", "") or "").strip()
-        if raw_wave_phase == WavePhase.WAVE_1.value:
-            return "前置布局"
-        if raw_wave_phase == WavePhase.WAVE_3.value:
-            return "早窗"
-        return "其它"
+        return resolve_buy_progress_label(
+            signal_label=str(signal.get("buy_progress_label") or "").strip() if isinstance(signal, dict) else "",
+            trade_label=str(getattr(trade, "buy_progress_label", "") or "").strip() if trade is not None else "",
+            signal_wave_phase=str(signal.get("wave_phase") or "").strip() if isinstance(signal, dict) else "",
+            trade_wave_phase=str(getattr(trade, "wave_phase", "") or "").strip() if trade is not None else "",
+            wave1_value=WavePhase.WAVE_1.value,
+            wave3_value=WavePhase.WAVE_3.value,
+        )
 
     def _profit_keep_ratio(self, *, current_return_pct: float, peak_return_pct: float) -> float:
-        if float(peak_return_pct) <= 0.0:
-            return 0.0
-        return float(current_return_pct) / max(float(peak_return_pct), 1e-9)
+        return profit_keep_ratio(
+            current_return_pct=current_return_pct,
+            peak_return_pct=peak_return_pct,
+        )
 
     def _system_exit_grace_thresholds(self, *, scope: str) -> tuple[float, float, float, int]:
-        if str(scope) == "sector":
-            return (
-                float(getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_PEAK_RETURN_PCT", 10.0) or 10.0),
-                float(getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_CURRENT_PROFIT_PCT", 10.0) or 10.0),
-                float(getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_PROFIT_KEEP_RATIO", 0.60) or 0.60),
-                int(getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MAX_HOLD_DAYS", 10) or 0),
-            )
-        return (
-            float(getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_PEAK_RETURN_PCT", 20.0) or 20.0),
-            float(getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_CURRENT_PROFIT_PCT", 10.0) or 10.0),
-            float(getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_PROFIT_KEEP_RATIO", 0.50) or 0.50),
-            0,
+        return system_exit_grace_thresholds(
+            scope=scope,
+            market_min_peak_return_pct=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_PEAK_RETURN_PCT", 20.0) or 20.0
+            ),
+            market_min_current_profit_pct=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_CURRENT_PROFIT_PCT", 10.0) or 10.0
+            ),
+            market_min_profit_keep_ratio=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_MARKET_MIN_PROFIT_KEEP_RATIO", 0.50) or 0.50
+            ),
+            sector_min_peak_return_pct=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_PEAK_RETURN_PCT", 10.0) or 10.0
+            ),
+            sector_min_current_profit_pct=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_CURRENT_PROFIT_PCT", 10.0) or 10.0
+            ),
+            sector_min_profit_keep_ratio=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MIN_PROFIT_KEEP_RATIO", 0.60) or 0.60
+            ),
+            sector_max_hold_days=int(getattr(self, "SYSTEM_EXIT_GRACE_SECTOR_MAX_HOLD_DAYS", 10) or 0),
         )
 
     def _system_exit_expire_date(self, current_date: date, *, window: int) -> str:
@@ -2333,11 +2339,11 @@ class LowFreqTradingEngineV16:
         return future_dates[idx].isoformat()
 
     def _is_leader_hold_candidate(self, trade: TradeRecord) -> bool:
-        if str(getattr(trade, "role", "") or "").strip() != "龙头":
-            return False
-        peak_return_pct = self._peak_return_pct(trade)
-        threshold = float(getattr(self, "LEADER_HOLD_MIN_PEAK_RETURN_PCT", 15.0) or 15.0)
-        return float(peak_return_pct) >= float(threshold)
+        return is_leader_hold_candidate(
+            role=str(getattr(trade, "role", "") or "").strip(),
+            peak_return_pct=self._peak_return_pct(trade),
+            leader_hold_min_peak_return_pct=float(getattr(self, "LEADER_HOLD_MIN_PEAK_RETURN_PCT", 15.0) or 15.0),
+        )
 
     def _record_system_exit_grace_audit_event(
         self,
@@ -2381,47 +2387,33 @@ class LowFreqTradingEngineV16:
         scope: str,
         sell_price: float,
     ) -> bool:
-        if not bool(getattr(self, "SYSTEM_EXIT_GRACE_ENABLED", True)):
-            return False
-        if bool(getattr(trade, "system_exit_grace_used", False)):
-            return False
         grace_scope = str(scope or "")
-        role = str(getattr(trade, "role", "") or "").strip()
-        if grace_scope == "sector":
-            if role not in {"龙头", "中军"}:
-                return False
-        elif not self._is_leader_hold_candidate(trade):
-            return False
-        if float(sell_price or 0.0) <= 0:
-            return False
         peak_return_pct = self._peak_return_pct(trade)
         buy_progress_label = self._resolve_buy_progress_label(trade=trade)
-        if buy_progress_label not in {"早窗", "前置布局"}:
-            return False
         current_return_pct = self._current_return_pct(trade, current_price=float(sell_price))
-        if bool(getattr(self, "SYSTEM_EXIT_GRACE_REQUIRE_POSITIVE_RETURN", True)) and float(current_return_pct) <= 0.0:
-            return False
         min_peak_return_pct, min_current_profit_pct, min_profit_keep_ratio, max_hold_days = self._system_exit_grace_thresholds(
             scope=grace_scope
         )
-        if grace_scope != "sector":
-            min_peak_return_pct = max(
-                float(min_peak_return_pct),
-                float(getattr(self, "SYSTEM_EXIT_GRACE_MIN_PEAK_RETURN_PCT", 20.0) or 20.0),
-            )
-        if float(peak_return_pct) < float(min_peak_return_pct):
-            return False
-        if float(current_return_pct) < float(min_current_profit_pct):
-            return False
-        profit_keep_ratio = self._profit_keep_ratio(
+        return is_eligible_for_system_exit_grace(
+            enabled=bool(getattr(self, "SYSTEM_EXIT_GRACE_ENABLED", True)),
+            grace_used=bool(getattr(trade, "system_exit_grace_used", False)),
+            scope=grace_scope,
+            role=str(getattr(trade, "role", "") or "").strip(),
+            sell_price=float(sell_price),
+            peak_return_pct=float(peak_return_pct),
+            buy_progress_label=buy_progress_label,
             current_return_pct=current_return_pct,
-            peak_return_pct=peak_return_pct,
+            min_peak_return_pct=min_peak_return_pct,
+            legacy_market_min_peak_return_pct=float(
+                getattr(self, "SYSTEM_EXIT_GRACE_MIN_PEAK_RETURN_PCT", 20.0) or 20.0
+            ),
+            min_current_profit_pct=min_current_profit_pct,
+            min_profit_keep_ratio=min_profit_keep_ratio,
+            max_hold_days=max_hold_days,
+            hold_days=int(getattr(trade, "hold_days", 0) or 0),
+            require_positive_return=bool(getattr(self, "SYSTEM_EXIT_GRACE_REQUIRE_POSITIVE_RETURN", True)),
+            leader_hold_candidate=self._is_leader_hold_candidate(trade),
         )
-        if float(profit_keep_ratio) < float(min_profit_keep_ratio):
-            return False
-        if int(max_hold_days) > 0 and int(getattr(trade, "hold_days", 0) or 0) > int(max_hold_days):
-            return False
-        return True
 
     def _market_exit_snapshot(
         self,
