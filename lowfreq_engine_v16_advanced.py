@@ -66,6 +66,9 @@ from neotrade3.decision_engine.elite_execution_candidate import (
 from neotrade3.decision_engine.chase_entry import (
     build_chase_entry_snapshot,
 )
+from neotrade3.decision_engine.trade_block_reason import (
+    resolve_trade_block_reason,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -3362,38 +3365,24 @@ class LowFreqTradingEngineV16:
         cfg = self.config if isinstance(self.config, LowFreqV16Config) else LowFreqV16Config()
         ex = getattr(cfg, "execution", ExecutionConstraints())
         base_ex = ex if isinstance(ex, ExecutionConstraints) else ExecutionConstraints()
-        if not isinstance(bar, dict):
-            return "missing_price_bar"
-        pct = bar.get("pct_change")
-        if pct is not None:
-            limit_up = float(getattr(self, "EXEC_LIMIT_UP_PCT", base_ex.limit_up_pct) or 9.8)
-            limit_down = float(getattr(self, "EXEC_LIMIT_DOWN_PCT", base_ex.limit_down_pct) or -9.8)
-            one_price_only = bool(getattr(self, "EXEC_BLOCK_ONLY_ONE_PRICE_LIMIT", False))
-            high = bar.get("high")
-            low = bar.get("low")
-            close = bar.get("close")
-            is_one_price_board = (
-                isinstance(high, (int, float))
-                and isinstance(low, (int, float))
-                and isinstance(close, (int, float))
-                and abs(float(high) - float(low)) <= 1e-9
-                and abs(float(high) - float(close)) <= 1e-9
-            )
-            buy_limit_hit = float(pct) >= limit_up and (is_one_price_board if one_price_only else True)
-            sell_limit_hit = float(pct) <= limit_down and (is_one_price_board if one_price_only else True)
-            if str(side) == "buy" and bool(getattr(self, "EXEC_BLOCK_ON_LIMIT_UP", base_ex.block_on_limit_up)) and buy_limit_hit:
-                return "limit_up"
-            if str(side) == "sell" and bool(getattr(self, "EXEC_BLOCK_ON_LIMIT_DOWN", base_ex.block_on_limit_down)) and sell_limit_hit:
-                return "limit_down"
-        amount = bar.get("amount")
-        min_amount = float(getattr(self, "EXEC_MIN_AMOUNT_CNY", base_ex.min_amount_cny) or 0.0)
-        if min_amount > 0 and isinstance(amount, (int, float)) and float(amount) < min_amount:
-            return "min_amount"
-        max_pr = float(getattr(self, "EXEC_MAX_PARTICIPATION_RATE", base_ex.max_participation_rate) or 1.0)
-        if max_pr < 1.0 and isinstance(amount, (int, float)) and float(amount) > 0:
-            if float(trade_value) > float(amount) * max_pr:
-                return "participation_rate"
-        return None
+        return resolve_trade_block_reason(
+            bar=bar if isinstance(bar, dict) else None,
+            side=str(side),
+            trade_value=float(trade_value),
+            limit_up_pct=float(getattr(self, "EXEC_LIMIT_UP_PCT", base_ex.limit_up_pct) or 9.8),
+            limit_down_pct=float(getattr(self, "EXEC_LIMIT_DOWN_PCT", base_ex.limit_down_pct) or -9.8),
+            block_on_limit_up=bool(
+                getattr(self, "EXEC_BLOCK_ON_LIMIT_UP", base_ex.block_on_limit_up)
+            ),
+            block_on_limit_down=bool(
+                getattr(self, "EXEC_BLOCK_ON_LIMIT_DOWN", base_ex.block_on_limit_down)
+            ),
+            only_one_price_limit=bool(getattr(self, "EXEC_BLOCK_ONLY_ONE_PRICE_LIMIT", False)),
+            min_amount_cny=float(getattr(self, "EXEC_MIN_AMOUNT_CNY", base_ex.min_amount_cny) or 0.0),
+            max_participation_rate=float(
+                getattr(self, "EXEC_MAX_PARTICIPATION_RATE", base_ex.max_participation_rate) or 1.0
+            ),
+        )
 
     def run_backtest(
         self,
