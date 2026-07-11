@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 
@@ -32,3 +33,34 @@ def resolve_sell_reason_bucket(sell_reason: str) -> str:
     if "跌破买入价止损" in reason or "硬证伪退出" in reason:
         return "thesis_invalidated"
     return "other"
+
+
+def resolve_not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
+    stage_priority = {
+        "market_filtered": 1,
+        "market_candidate_filtered": 2,
+        "sector_filtered": 2,
+        "sector_candidate_filtered": 3,
+        "global_candidate_filtered": 3,
+        "score_below_threshold": 4,
+        "follower_filtered": 4,
+        "resonance_filtered": 4,
+        "global_follower_filtered": 4,
+        "global_resonance_filtered": 4,
+        "global_wave_filtered": 4,
+        "global_score_filtered": 4,
+        "global_cap_filtered": 5,
+        "sector_candidate_not_selected": 5,
+        "candidate_signal_selected": 6,
+        "entry_signal_selected": 7,
+    }
+    if not daily_audits:
+        return "主升段内从未进入候选池"
+    max_priority = max(int(stage_priority.get(str(x.get("stage") or ""), 0)) for x in daily_audits)
+    preferred = [x for x in daily_audits if int(stage_priority.get(str(x.get("stage") or ""), 0)) == max_priority]
+    if not preferred:
+        preferred = daily_audits
+    reason_counter = Counter(str(x.get("reason") or "") for x in preferred if x.get("reason"))
+    if not reason_counter:
+        return "主升段内从未进入候选池"
+    return str(reason_counter.most_common(1)[0][0])
