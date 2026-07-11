@@ -51,6 +51,9 @@ from neotrade3.decision_engine.system_exit_snapshots import (
 from neotrade3.decision_engine.trend_exhaustion import (
     build_trend_exhaustion_snapshot,
 )
+from neotrade3.decision_engine.thesis_invalidation import (
+    build_thesis_invalidation_snapshot,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2638,12 +2641,7 @@ class LowFreqTradingEngineV16:
         current_date: Optional[date] = None,
     ) -> Optional[SellSignal]:
         buy_price = float(getattr(trade, "buy_price", 0.0) or 0.0)
-        if buy_price <= 0:
-            return None
-        current_return = (float(sell_price) - buy_price) / max(buy_price, 1e-9) * 100.0
         stop_loss_pct = float(getattr(self, "STOP_LOSS_PCT", -5.0) or -5.0)
-        if current_return > stop_loss_pct:
-            return None
         hold_days = int(getattr(trade, "hold_days", 0) or 0)
         if hold_days <= 0:
             try:
@@ -2651,17 +2649,22 @@ class LowFreqTradingEngineV16:
                 hold_days = self._count_trading_days(date.fromisoformat(trade.buy_date), target_day)
             except Exception:
                 hold_days = 0
-        invalidated_window = "early" if int(hold_days) < 12 else "late"
-        window_label = "建仓早期" if invalidated_window == "early" else "持仓期"
-        details = f"{window_label}硬证伪退出：跌破买入价{current_return:.1f}%（阈值{stop_loss_pct:.1f}%）"
+        snapshot = build_thesis_invalidation_snapshot(
+            buy_price=buy_price,
+            sell_price=float(sell_price),
+            stop_loss_pct=stop_loss_pct,
+            hold_days=int(hold_days),
+        )
+        if snapshot is None:
+            return None
         return SellSignal(
             "thesis_invalidated",
             0.99,
-            details,
+            str(snapshot.get("details") or ""),
             source_layer="invalidation",
             exit_scope="position_only",
             invalidated_reason="entry_stop_loss",
-            invalidated_window=invalidated_window,
+            invalidated_window=str(snapshot.get("invalidated_window") or ""),
         )
 
     def _entry_stop_loss_signal(
