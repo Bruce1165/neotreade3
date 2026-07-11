@@ -63,6 +63,9 @@ from neotrade3.decision_engine.execution_signal_gate import (
 from neotrade3.decision_engine.elite_execution_candidate import (
     build_elite_execution_candidate_snapshot,
 )
+from neotrade3.decision_engine.chase_entry import (
+    build_chase_entry_snapshot,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2787,57 +2790,15 @@ class LowFreqTradingEngineV16:
         target_date: date,
         ref_price: float,
     ) -> Optional[dict[str, Any]]:
-        if not bool(getattr(self, "CHASE_ENTRY_BLOCK_ENABLED", True)):
-            return None
-        if float(ref_price or 0.0) <= 0:
-            return None
         closes = self._recent_closes_before_date(cursor, code=str(code), target_date=target_date, lookback=10)
-        if len(closes) < 5:
-            return None
-        near_high_ratio = float(getattr(self, "CHASE_ENTRY_NEAR_HIGH_RATIO", 0.98) or 0.98)
-        pre3_threshold = float(getattr(self, "CHASE_ENTRY_PRE3_RUNUP_PCT", 8.0) or 8.0)
-        pre5_threshold = float(getattr(self, "CHASE_ENTRY_PRE5_RUNUP_PCT", 12.0) or 12.0)
-
-        trailing5 = closes[-5:]
-        trailing10 = closes[-10:] if len(closes) >= 10 else closes
-        near_5d_high = bool(trailing5) and float(ref_price) >= max(trailing5) * float(near_high_ratio)
-        near_10d_high = bool(trailing10) and float(ref_price) >= max(trailing10) * float(near_high_ratio)
-
-        pre3_close = closes[-3] if len(closes) >= 3 else None
-        pre5_close = closes[-5] if len(closes) >= 5 else None
-        pre3_return_pct = (
-            (float(ref_price) - float(pre3_close)) / max(float(pre3_close), 1e-9) * 100.0
-            if pre3_close is not None
-            else None
+        return build_chase_entry_snapshot(
+            enabled=bool(getattr(self, "CHASE_ENTRY_BLOCK_ENABLED", True)),
+            closes=[float(close) for close in list(closes or [])],
+            ref_price=float(ref_price),
+            near_high_ratio=float(getattr(self, "CHASE_ENTRY_NEAR_HIGH_RATIO", 0.98) or 0.98),
+            pre3_threshold=float(getattr(self, "CHASE_ENTRY_PRE3_RUNUP_PCT", 8.0) or 8.0),
+            pre5_threshold=float(getattr(self, "CHASE_ENTRY_PRE5_RUNUP_PCT", 12.0) or 12.0),
         )
-        pre5_return_pct = (
-            (float(ref_price) - float(pre5_close)) / max(float(pre5_close), 1e-9) * 100.0
-            if pre5_close is not None
-            else None
-        )
-        near_high_flag = bool(near_5d_high or near_10d_high)
-        recent_runup_flag = bool(
-            (pre3_return_pct is not None and float(pre3_return_pct) >= float(pre3_threshold))
-            or (pre5_return_pct is not None and float(pre5_return_pct) >= float(pre5_threshold))
-        )
-        blocked = bool(near_high_flag and recent_runup_flag)
-        details = (
-            f"追高型买点硬禁：近5日高位={'是' if near_5d_high else '否'} | "
-            f"近10日高位={'是' if near_10d_high else '否'} | "
-            f"前3日涨幅{float(pre3_return_pct):.1f}% | 前5日涨幅{float(pre5_return_pct):.1f}%"
-            if pre3_return_pct is not None and pre5_return_pct is not None
-            else "追高型买点硬禁：历史窗口不足"
-        )
-        return {
-            "blocked": bool(blocked),
-            "near_high_flag": bool(near_high_flag),
-            "recent_runup_flag": bool(recent_runup_flag),
-            "near_5d_high": bool(near_5d_high),
-            "near_10d_high": bool(near_10d_high),
-            "pre3_return_pct": round(float(pre3_return_pct), 2) if pre3_return_pct is not None else None,
-            "pre5_return_pct": round(float(pre5_return_pct), 2) if pre5_return_pct is not None else None,
-            "details": details,
-        }
 
     def _record_buy_signal_audit_event(
         self,
