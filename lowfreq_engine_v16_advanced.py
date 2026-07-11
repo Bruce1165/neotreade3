@@ -26,6 +26,9 @@ from neotrade3.decision_engine.formal_front import (
     build_lowfreq_formal_front_payload,
     finalize_lowfreq_formal_front_payload,
 )
+from neotrade3.decision_engine.market_filter_note import (
+    resolve_capture_first_market_filter_note,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2220,16 +2223,31 @@ class LowFreqTradingEngineV16:
             allowed_waves=allowed_waves,
         )
 
+    def _resolve_market_filter_note(
+        self,
+        *,
+        sentiment: Any,
+        market_score: float,
+    ) -> dict[str, Any]:
+        return resolve_capture_first_market_filter_note(
+            enabled=bool(self.MARKET_FILTER_ENABLED),
+            sentiment=sentiment,
+            market_score=market_score,
+            min_market_score=float(self.MIN_MARKET_SCORE),
+        )
+
     def generate_buy_signals(self, target_date: date) -> dict:
         """生成买入信号 - capture-first: 仅执行安全保持硬性。"""
         market_filter_note: Optional[str] = None
         if self.MARKET_FILTER_ENABLED:
             sentiment, market_score = self.get_market_sentiment(target_date)
-            if market_score < self.MIN_MARKET_SCORE:
-                market_filter_note = f"capture-first: 市场情绪{sentiment.value} ({market_score:.0f}分)，降权但不暂停买入"
-                logger.info(market_filter_note)
-            else:
-                logger.info(f"市场情绪: {sentiment.value} ({market_score:.0f}分)")
+            market_filter_state = self._resolve_market_filter_note(
+                sentiment=sentiment,
+                market_score=market_score,
+            )
+            market_filter_note = market_filter_state["note"]
+            if market_filter_state["log_message"]:
+                logger.info(str(market_filter_state["log_message"]))
         
         raw_signals: list[dict[str, Any]] = []
         hot_sectors = []
