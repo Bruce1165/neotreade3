@@ -17,6 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
+from neotrade3.analysis.attribution_reasoning import (
+    resolve_audit_block_reason_text,
+)
 from neotrade3.decision_engine.cross_sector_wave_policy import (
     is_cross_sector_wave_mismatch,
 )
@@ -686,19 +689,7 @@ def _build_buy_signal_audit_index(entries: list[dict[str, Any]]) -> dict[str, li
 
 
 def _audit_block_reason_text(entry: dict[str, Any]) -> str:
-    blocked_reason = str(entry.get("blocked_reason") or "").strip()
-    execution_block_reason = str(entry.get("execution_block_reason") or "").strip()
-    if blocked_reason == "chase_entry_blocked":
-        return "信号存在但因追高型买点被硬禁"
-    if blocked_reason == "execution_signal_gate_blocked":
-        return "信号存在但因执行信号闸门被阻断"
-    if execution_block_reason == "entry_window_missed":
-        return "信号存在但执行窗口失效"
-    if execution_block_reason == "positions_full":
-        return "信号存在但同期仓位已满"
-    if execution_block_reason == "cash_insufficient":
-        return "信号存在但资金不足"
-    return ""
+    return resolve_audit_block_reason_text(entry)
 
 
 def _extract_execution_reason(
