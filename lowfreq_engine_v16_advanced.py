@@ -23,7 +23,7 @@ from typing import Optional, Any
 from enum import Enum
 
 from neotrade3.decision_engine.formal_front import (
-    build_lowfreq_formal_front_payload,
+    build_lowfreq_formal_front_payload_from_connection,
     finalize_lowfreq_formal_front_payload,
 )
 from neotrade3.decision_engine.market_filter_note import (
@@ -2102,6 +2102,19 @@ class LowFreqTradingEngineV16:
             formal_payload=formal_payload,
         )
 
+    def _build_formal_front_payload(
+        self,
+        *,
+        target_date: date,
+        candidate_signals: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return build_lowfreq_formal_front_payload_from_connection(
+            self._conn,
+            target_date=target_date,
+            candidate_signals=candidate_signals,
+            history_limit=20,
+        )
+
     def _build_hot_sector_signal_seed(
         self,
         *,
@@ -2216,19 +2229,10 @@ class LowFreqTradingEngineV16:
             target_date=target_date,
             market_filter_note=market_filter_note,
         )
-        conn = self._conn()
-        try:
-            formal_payload = build_lowfreq_formal_front_payload(
-                conn.cursor(),
-                target_date=target_date,
-                candidate_signals=signal_payload.get("candidate_signals") or [],
-                history_limit=20,
-            )
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        formal_payload = self._build_formal_front_payload(
+            target_date=target_date,
+            candidate_signals=signal_payload.get("candidate_signals") or [],
+        )
         return self._finalize_formal_front_payload(
             signal_payload=signal_payload,
             formal_payload=formal_payload,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 
 from neotrade3.cycle_intelligence import build_small_cycle_from_m1
 from neotrade3.data_control import project_pf1_trading_profile
@@ -161,3 +161,25 @@ def build_lowfreq_formal_front_payload(
             "error": error_count,
         },
     }
+
+
+def build_lowfreq_formal_front_payload_from_connection(
+    connect: Callable[[], sqlite3.Connection],
+    *,
+    target_date: date,
+    candidate_signals: list[dict[str, Any]],
+    history_limit: int = 20,
+) -> dict[str, Any]:
+    conn = connect()
+    try:
+        return build_lowfreq_formal_front_payload(
+            conn.cursor(),
+            target_date=target_date,
+            candidate_signals=candidate_signals,
+            history_limit=history_limit,
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
