@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-08
+**Last Updated**: 2026-07-11
 
 ---
 
@@ -118,6 +118,34 @@
 - 新会话开始时，优先按本文档和 `docs/handoffs/2026-05-19_session_resume_handoff.md` 恢复上下文。
 - 新会话开始时，若任务与 `M1 Phase 1` 首批正式对象实现相关，优先再阅读：
   - `docs/handoffs/2026-07-07_m1_phase1_formal_objects_handoff.md`
+
+## Document Governance
+
+- 当前文档体系只按 4 层理解：
+  - `PROJECT_STATUS.md`：当前状态真相源
+  - `docs/handoffs/`：活跃续接层
+  - `docs/superpowers/specs/`：design / plan / task-list 层
+  - `docs/archive/`：历史留存层
+- 除 `PROJECT_STATUS.md` 外，任何文档如果没有显式声明自己仍是当前正式口径，则默认不得替代当前状态真相源。
+- 从现在开始，新增或实质更新的第一方 Markdown 文档应补齐最小生命周期头：
+  - `Status`
+  - `Owner`
+  - `Scope`
+  - `Canonical`
+  - `Supersedes`
+  - `Superseded_by`
+  - `Last_reviewed`
+- 从现在开始，新增目录必须同时满足：
+  - 目录下存在 `README.md`
+  - `README.md` 写明 owner、用途、允许文档类型、退出条件
+  - 该目录无法被现有层级承接
+- 任何新文档替代旧文档时，必须在同一刀完成：
+  - 新文档落地
+  - 旧文档标注 `Superseded_by`
+  - 如旧文档不再活跃，则迁入 `docs/archive/`
+  - 更新相关目录索引
+- 当前文档与目录治理规范见：
+  - `docs/governance/document-lifecycle.md`
 
 **Current Handoff**
 - 会话主题：NeoTrade3 已开始首批 3.0 Python 骨架实现
