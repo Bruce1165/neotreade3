@@ -57,6 +57,9 @@ from neotrade3.decision_engine.thesis_invalidation import (
 from neotrade3.decision_engine.system_exit_state_machine import (
     evaluate_system_exit_transition,
 )
+from neotrade3.decision_engine.execution_signal_gate import (
+    build_execution_signal_gate_snapshot,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -3063,38 +3066,18 @@ class LowFreqTradingEngineV16:
         return promoted_entry_signals
 
     def _execution_signal_gate_snapshot(self, *, sig: dict[str, Any]) -> dict[str, Any]:
-        if not bool(getattr(self, "EXECUTION_SIGNAL_GATE_ENABLED", True)):
-            return {"blocked": False}
-
-        role = str(sig.get("role") or "").strip()
-        wave_phase = str(sig.get("wave_phase") or "").strip()
-        buy_score = float(sig.get("buy_score") or 0.0)
-        soft_role_blocked = False
-        soft_wave_blocked = False
-        min_score_required = 0.0
-        reasons: list[str] = []
-
-        follower_min_score = float(getattr(self, "EXECUTION_FOLLOWER_MIN_BUY_SCORE", 75.0) or 75.0)
-        unknown_wave_min_score = float(getattr(self, "EXECUTION_UNKNOWN_WAVE_MIN_BUY_SCORE", 80.0) or 80.0)
-
-        if role == "跟随" and buy_score < follower_min_score:
-            soft_role_blocked = True
-            min_score_required = max(min_score_required, follower_min_score)
-            reasons.append(f"跟随股正式执行至少需要 {follower_min_score:.1f} 分")
-
-        if wave_phase not in {WavePhase.WAVE_1.value, WavePhase.WAVE_3.value} and buy_score < unknown_wave_min_score:
-            soft_wave_blocked = True
-            min_score_required = max(min_score_required, unknown_wave_min_score)
-            reasons.append(f"未知波段正式执行至少需要 {unknown_wave_min_score:.1f} 分")
-
-        return {
-            "blocked": bool(reasons),
-            "blocked_reason": "execution_signal_gate_blocked",
-            "soft_role_blocked": bool(soft_role_blocked),
-            "soft_wave_blocked": bool(soft_wave_blocked),
-            "min_score_required": float(min_score_required),
-            "details": "；".join(reasons),
-        }
+        return build_execution_signal_gate_snapshot(
+            enabled=bool(getattr(self, "EXECUTION_SIGNAL_GATE_ENABLED", True)),
+            role=str(sig.get("role") or "").strip(),
+            wave_phase=str(sig.get("wave_phase") or "").strip(),
+            buy_score=float(sig.get("buy_score") or 0.0),
+            follower_min_score=float(getattr(self, "EXECUTION_FOLLOWER_MIN_BUY_SCORE", 75.0) or 75.0),
+            unknown_wave_min_score=float(
+                getattr(self, "EXECUTION_UNKNOWN_WAVE_MIN_BUY_SCORE", 80.0) or 80.0
+            ),
+            wave1_value=WavePhase.WAVE_1.value,
+            wave3_value=WavePhase.WAVE_3.value,
+        )
 
     def _elite_execution_candidate_snapshot(self, *, sig: dict[str, Any]) -> dict[str, Any]:
         gate = self._execution_signal_gate_snapshot(sig=sig)
