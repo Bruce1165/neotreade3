@@ -92,10 +92,10 @@ def test_plan_system_exit_application_returns_grace_reset_all_plan() -> None:
     assert plan["use_grace"] is True
     assert plan["reset_all_scopes"] is True
     assert plan["grace_values"] == {
-        "system_exit_grace_used": True,
-        "system_exit_grace_date": "2026-06-20",
-        "system_exit_grace_scope": "sector",
-        "system_exit_grace_reason": "创业板见顶确认候选：趋势转弱=是 | 广度转弱=是",
+        "used": True,
+        "date": "2026-06-20",
+        "scope": "sector",
+        "reason": "创业板见顶确认候选：趋势转弱=是 | 广度转弱=是",
     }
     assert plan["sell_signal"] is None
 

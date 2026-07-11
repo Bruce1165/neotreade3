@@ -67,10 +67,10 @@ def plan_system_exit_application(
         plan["use_grace"] = True
         plan["reset_all_scopes"] = True
         plan["grace_values"] = {
-            "system_exit_grace_used": True,
-            "system_exit_grace_date": str(current_key or ""),
-            "system_exit_grace_scope": str(scope or ""),
-            "system_exit_grace_reason": snapshot_details,
+            "used": True,
+            "date": str(current_key or ""),
+            "scope": str(scope or ""),
+            "reason": snapshot_details,
         }
         return plan
 

@@ -2611,7 +2611,7 @@ class LowFreqTradingEngineV16:
             )
             self._reset_system_exit_state(trade, scope)
 
-        if not bool(transition.get("snapshot_pass")):
+        if not bool(application.get("snapshot_pass")):
             return None
 
         if bool(application.get("start_watch")):
@@ -2655,17 +2655,11 @@ class LowFreqTradingEngineV16:
         if bool(transition.get("confirm_signal")):
             if bool(application.get("use_grace")):
                 grace_values = application.get("grace_values") or {}
-                trade.system_exit_grace_used = bool(
-                    grace_values.get("system_exit_grace_used", False)
-                )
-                trade.system_exit_grace_date = str(
-                    grace_values.get("system_exit_grace_date") or ""
-                )
-                trade.system_exit_grace_scope = str(
-                    grace_values.get("system_exit_grace_scope") or ""
-                )
+                trade.system_exit_grace_used = bool(grace_values.get("used", False))
+                trade.system_exit_grace_date = str(grace_values.get("date") or "")
+                trade.system_exit_grace_scope = str(grace_values.get("scope") or "")
                 trade.system_exit_grace_reason = str(
-                    grace_values.get("system_exit_grace_reason") or ""
+                    grace_values.get("reason") or ""
                 )
                 self._record_system_exit_grace_audit_event(
                     event_type="system_exit_downgraded",
