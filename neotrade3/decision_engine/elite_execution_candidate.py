@@ -40,7 +40,7 @@ def build_elite_execution_candidate_snapshot(
     if normalized_role != "龙头":
         reasons.append("非龙头不进入 elite execution 资格")
     if normalized_soft_flags:
-        reasons.append("存在 soft-retained 标记，不进入 elite execution 资格")
+        reasons.append("存在 soft 阻断标记，不进入 elite execution 资格")
 
     min_score_required = normalized_elite_min_score
     if normalized_wave_phase in {normalized_wave1_value, normalized_wave3_value}:

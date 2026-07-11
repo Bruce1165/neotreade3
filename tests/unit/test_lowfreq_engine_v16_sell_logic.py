@@ -219,6 +219,38 @@ def test_market_signal_expires_without_enough_hits() -> None:
     assert trade.market_exit_hits == 0
 
 
+def test_market_signal_expire_then_same_day_hit_restarts_observe() -> None:
+    snapshots = {
+        "2026-06-18": _market_exit_hit_snapshot(),
+        "2026-06-19": None,
+        "2026-06-20": None,
+        "2026-06-21": None,
+        "2026-06-22": None,
+        "2026-06-23": _market_exit_hit_snapshot(),
+    }
+    engine = _make_engine(price=100.0, market_exit_snapshot=None, sector_exit_snapshot=None)
+    engine._market_exit_snapshot = lambda trade, current_date, market_key=None: snapshots.get(current_date.isoformat())
+    trade = _make_trade()
+
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 18)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 19)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 20)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 21)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 22)) is None
+
+    restarted = engine.check_sell_signal_v2(trade, date(2026, 6, 23))
+
+    assert restarted is None
+    assert trade.market_exit_state == "observe"
+    assert trade.market_exit_start_date == "2026-06-23"
+    assert trade.market_exit_expire_date == "2026-06-27"
+    assert trade.market_exit_hits == 1
+    assert trade.market_exit_last_hit_date == "2026-06-23"
+    assert "创业板见顶确认候选" in trade.market_exit_last_reason
+    events = [entry["event"] for entry in engine._sell_signal_audit_current_run]
+    assert events[-2:] == ["market_exit_watch_expired", "market_exit_watch_started"]
+
+
 def test_sector_signal_third_hit_confirms_sell() -> None:
     engine = _make_engine(price=100.0, market_exit_snapshot=None, sector_exit_snapshot=_sector_exit_hit_snapshot())
     trade = _make_trade()

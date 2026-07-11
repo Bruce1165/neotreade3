@@ -815,6 +815,112 @@ def test_run_backtest_expires_reserved_elite_signal_when_slot_never_opens() -> N
     assert reservation_expired["funnel_stage"] == "expired"
 
 
+def test_run_backtest_does_not_reserve_non_elite_signals_when_book_is_full() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn2:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+    day3 = day2 + timedelta(days=1)
+    day4 = day3 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 2
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = True
+    engine.EXECUTION_FOLLOWER_MIN_BUY_SCORE = 75.0
+    engine.EXECUTION_UNKNOWN_WAVE_MIN_BUY_SCORE = 80.0
+    engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
+    engine.EXECUTION_ELITE_UNKNOWN_LEADER_MIN_BUY_SCORE = 90.0
+    engine.EXECUTION_RESERVATION_ENABLED = True
+    engine.EXECUTION_RESERVATION_MEMORY_DAYS = 2
+    engine._conn = lambda: _FakeConn2()
+    engine._get_trading_dates = lambda start, end: [day1, day2, day3, day4]
+    engine._count_trading_days = lambda start, end: 4
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {"close": 10.0, "pct_change": 0.0, "amount": 1e9}
+    engine.get_config_snapshot = lambda: {}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+
+    def _signals(current_date):
+        if current_date == day1:
+            return {
+                "buy_signals": [
+                    {
+                        "code": "600001",
+                        "name": "旧持仓",
+                        "sector": "A",
+                        "buy_score": 88.0,
+                        "wave_phase": "1浪",
+                        "role": "龙头",
+                    }
+                ]
+            }
+        if current_date == day2:
+            return {
+                "buy_signals": [
+                    {
+                        "code": "300001",
+                        "name": "高分跟随",
+                        "sector": "B",
+                        "buy_score": 88.0,
+                        "wave_phase": "3浪",
+                        "role": "跟随",
+                    },
+                    {
+                        "code": "300002",
+                        "name": "带软标记龙头",
+                        "sector": "C",
+                        "buy_score": 95.0,
+                        "wave_phase": "3浪",
+                        "role": "龙头",
+                        "soft_flags": ["history_short"],
+                    },
+                    {
+                        "code": "300003",
+                        "name": "低分未知波段龙头",
+                        "sector": "D",
+                        "buy_score": 85.0,
+                        "wave_phase": "未知",
+                        "role": "龙头",
+                    },
+                ]
+            }
+        return {"buy_signals": []}
+
+    engine.generate_buy_signals = _signals
+
+    result = engine.run_backtest(
+        day1,
+        day4,
+        initial_capital=100000.0,
+        include_trades=True,
+    )
+
+    assert [trade["code"] for trade in result["trades"]] == ["600001"]
+    assert result["trade_blocks"]["buy_reserved_due_to_full_book"] == 0
+    assert result["trade_blocks"]["buy_reserved_expired"] == 0
+    assert result["trade_blocks"]["buy_reserved_released_into_buy"] == 0
+    assert not any(
+        row["event"] == "reservation_created" and row["code"] in {"300001", "300002", "300003"}
+        for row in result["buy_signal_audit"]
+    )
+
+
 def test_run_backtest_uses_end_flattened_cash_for_final_metrics() -> None:
     class _FakeCursor:
         pass
@@ -946,10 +1052,151 @@ def test_run_backtest_unbounded_mode_executes_all_entry_opportunities_without_fu
     assert result["execution_action_summary"]["buy"] == 2
     assert result["config_snapshot"]["execution_mode"] == "unbounded_opportunity"
 
+
+def test_run_backtest_maps_min_amount_block_reason_into_trade_blocks() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn2:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 1
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = False
+    engine.EXECUTION_RESERVATION_ENABLED = False
+    engine.EXEC_MIN_AMOUNT_CNY = 1e6
+    engine.EXEC_MAX_PARTICIPATION_RATE = 1.0
+    engine._conn = lambda: _FakeConn2()
+    engine._get_trading_dates = lambda start, end: [day1, day2]
+    engine._count_trading_days = lambda start, end: 2
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {
+        "close": 10.0,
+        "high": 10.2,
+        "low": 9.8,
+        "pct_change": 1.0,
+        "amount": 5e5,
+    }
+    engine.get_config_snapshot = lambda: {}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+    engine.generate_buy_signals = lambda current_date: (
+        {
+            "buy_signals": [
+                {
+                    "code": "300001",
+                    "name": "低成交额样本",
+                    "sector": "B",
+                    "buy_score": 92.0,
+                    "wave_phase": "3浪",
+                    "role": "龙头",
+                }
+            ]
+        }
+        if current_date == day1
+        else {"buy_signals": []}
+    )
+
+    result = engine.run_backtest(
+        day1,
+        day2,
+        initial_capital=100000.0,
+        include_trades=True,
+    )
+
+    assert result["trades"] == []
+    assert result["trade_blocks"]["buy_min_amount"] == 1
+    assert result["trade_blocks"]["buy_participation_rate"] == 0
+
+
+def test_run_backtest_maps_participation_rate_block_reason_into_trade_blocks() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn2:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.EXECUTION_MODE = "bounded"
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 1
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = False
+    engine.EXECUTION_RESERVATION_ENABLED = False
+    engine.EXEC_MIN_AMOUNT_CNY = 0.0
+    engine.EXEC_MAX_PARTICIPATION_RATE = 0.5
+    engine._conn = lambda: _FakeConn2()
+    engine._get_trading_dates = lambda start, end: [day1, day2]
+    engine._count_trading_days = lambda start, end: 2
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {
+        "close": 10.0,
+        "high": 10.2,
+        "low": 9.8,
+        "pct_change": 1.0,
+        "amount": 1e6,
+    }
+    engine.get_config_snapshot = lambda: {}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+    engine.generate_buy_signals = lambda current_date: (
+        {
+            "buy_signals": [
+                {
+                    "code": "300001",
+                    "name": "高参与率样本",
+                    "sector": "B",
+                    "buy_score": 92.0,
+                    "wave_phase": "3浪",
+                    "role": "龙头",
+                }
+            ]
+        }
+        if current_date == day1
+        else {"buy_signals": []}
+    )
+
+    result = engine.run_backtest(
+        day1,
+        day2,
+        initial_capital=1000000.0,
+        include_trades=True,
+    )
+
+    assert result["trades"] == []
+    assert result["trade_blocks"]["buy_min_amount"] == 0
+    assert result["trade_blocks"]["buy_participation_rate"] == 1
+
+
 def test_strong_leader_soft_release_clears_focus_and_structure_soft_flags() -> None:
+
     engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
     engine.STRONG_LEADER_SOFT_RELEASE_ENABLED = True
-    engine.EXECUTION_ELITE_MIN_BUY_SCORE = 80.0
 
     score, soft_flags, reasons = apply_strong_leader_soft_release(
         score=83.5,
