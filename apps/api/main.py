@@ -59,6 +59,9 @@ from neotrade3.orchestration import load_orchestrator_config
 from neotrade3.orchestration.daily_master_orchestrator import DailyMasterOrchestrator
 from neotrade3.orchestration.models import DailyRunRequest, RunStatus
 from neotrade3.decision_engine import project_lowfreq_formal_front
+from neotrade3.decision_engine.buy_signal_audit_contract import (
+    normalize_execution_block_reason,
+)
 from neotrade3.screeners.registry import load_screener_registry
 from neotrade3.screeners.storage import (
     list_bulk_runs,
@@ -16630,13 +16633,15 @@ class BootstrapApiService:
     @staticmethod
     def _lowfreq_normalize_execution_block_reason(raw_reason: Any) -> str:
         reason = str(raw_reason or "").strip()
-        if reason in {"no_slots", "reserved_due_to_full_book"}:
-            return "positions_full"
-        if reason in {"no_cash"}:
-            return "cash_insufficient"
-        if reason in {"pending_conflict_older_intent_wins"}:
-            return "conflict_with_exit"
-        if reason in {"reservation_expired", "signal_expired"}:
+        if reason in {
+            "no_slots",
+            "reserved_due_to_full_book",
+            "no_cash",
+            "reservation_expired",
+            "pending_conflict_older_intent_wins",
+        }:
+            return normalize_execution_block_reason(reason)
+        if reason == "signal_expired":
             return "entry_window_missed"
         if reason in {"no_open_price", "no_price", "invalid_code", "already_holding", "position_missing", "no_shares", "abandoned"}:
             return "execution_rule_blocked"
