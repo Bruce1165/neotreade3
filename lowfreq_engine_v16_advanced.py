@@ -54,6 +54,9 @@ from neotrade3.decision_engine.trend_exhaustion import (
 from neotrade3.decision_engine.thesis_invalidation import (
     build_thesis_invalidation_snapshot,
 )
+from neotrade3.decision_engine.system_exit_state_machine import (
+    evaluate_system_exit_transition,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2515,33 +2518,79 @@ class LowFreqTradingEngineV16:
         confirm_hits += int(getattr(self, "LEADER_CONFIRM_EXTRA_HITS", 1) or 0) if leader_hold_active else 0
 
         start_value = str(getattr(trade, attrs["start"], "") or "").strip()
+        elapsed: Optional[int] = None
         if start_value:
             try:
                 elapsed = self._count_trading_days(date.fromisoformat(start_value), current_date)
             except Exception:
                 elapsed = window + 1
-            if elapsed > window:
-                self._record_system_exit_audit_event(
-                    scope=scope,
-                    event_type=f"{scope}_exit_watch_expired",
-                    trade=trade,
-                    current_date=current_date,
-                    snapshot=snapshot,
-                    leader_hold_active=leader_hold_active,
-                    confirm_hits_required=confirm_hits,
-                )
-                self._reset_system_exit_state(trade, scope)
+        current_key = current_date.isoformat()
+        transition = evaluate_system_exit_transition(
+            scope=scope,
+            window=window,
+            confirm_hits=confirm_hits,
+            current_key=current_key,
+            start_value=start_value,
+            state_value=str(getattr(trade, attrs["state"], "") or "").strip(),
+            hit_count=int(getattr(trade, attrs["hits"], 0) or 0),
+            last_hit_date=str(getattr(trade, attrs["last_hit"], "") or "").strip(),
+            snapshot=snapshot if isinstance(snapshot, dict) else None,
+            elapsed_watch_days=elapsed,
+            grace_eligible=False,
+            grace_used=bool(getattr(trade, "system_exit_grace_used", False)),
+        )
 
-        if not isinstance(snapshot, dict) or not bool(snapshot.get("condition_pass")):
+        current_return_pct: Optional[float] = None
+        peak_return_pct: Optional[float] = None
+        profit_keep_ratio: Optional[float] = None
+        if bool(transition.get("confirm_signal")):
+            current_return_pct = self._current_return_pct(trade, current_price=float(sell_price))
+            peak_return_pct = self._peak_return_pct(trade)
+            profit_keep_ratio = self._profit_keep_ratio(
+                current_return_pct=current_return_pct,
+                peak_return_pct=peak_return_pct,
+            )
+            transition = evaluate_system_exit_transition(
+                scope=scope,
+                window=window,
+                confirm_hits=confirm_hits,
+                current_key=current_key,
+                start_value=start_value,
+                state_value=str(getattr(trade, attrs["state"], "") or "").strip(),
+                hit_count=int(getattr(trade, attrs["hits"], 0) or 0),
+                last_hit_date=str(getattr(trade, attrs["last_hit"], "") or "").strip(),
+                snapshot=snapshot if isinstance(snapshot, dict) else None,
+                elapsed_watch_days=elapsed,
+                grace_eligible=self._eligible_for_system_exit_grace(
+                    trade,
+                    snapshot=snapshot,
+                    scope=scope,
+                    sell_price=float(sell_price),
+                ),
+                grace_used=bool(getattr(trade, "system_exit_grace_used", False)),
+            )
+
+        if bool(transition.get("expire_existing_watch")):
+            self._record_system_exit_audit_event(
+                scope=scope,
+                event_type=f"{scope}_exit_watch_expired",
+                trade=trade,
+                current_date=current_date,
+                snapshot=snapshot,
+                leader_hold_active=leader_hold_active,
+                confirm_hits_required=confirm_hits,
+            )
+            self._reset_system_exit_state(trade, scope)
+
+        if not bool(transition.get("snapshot_pass")):
             return None
 
-        current_key = current_date.isoformat()
-        if not str(getattr(trade, attrs["start"], "") or "").strip():
+        if bool(transition.get("start_watch")):
             setattr(trade, attrs["state"], "observe")
             setattr(trade, attrs["start"], current_key)
             setattr(trade, attrs["expire"], self._system_exit_expire_date(current_date, window=window))
             setattr(trade, attrs["hits"], 1)
-            setattr(trade, attrs["last_reason"], str(snapshot.get("details") or ""))
+            setattr(trade, attrs["last_reason"], str(transition.get("snapshot_details") or ""))
             setattr(trade, attrs["last_hit"], current_key)
             self._record_system_exit_audit_event(
                 scope=scope,
@@ -2554,13 +2603,13 @@ class LowFreqTradingEngineV16:
             )
             return None
 
-        if str(getattr(trade, attrs["last_hit"], "") or "") != current_key:
-            setattr(trade, attrs["hits"], int(getattr(trade, attrs["hits"], 0) or 0) + 1)
+        if bool(transition.get("increment_hit")):
+            setattr(trade, attrs["hits"], int(transition.get("next_hits") or 0))
             setattr(trade, attrs["last_hit"], current_key)
-        setattr(trade, attrs["last_reason"], str(snapshot.get("details") or ""))
+        setattr(trade, attrs["last_reason"], str(transition.get("snapshot_details") or ""))
         hit_count = int(getattr(trade, attrs["hits"], 0) or 0)
 
-        if hit_count >= 2 and str(getattr(trade, attrs["state"], "") or "") != "review":
+        if bool(transition.get("enter_review")):
             setattr(trade, attrs["state"], "review")
             self._record_system_exit_audit_event(
                 scope=scope,
@@ -2572,23 +2621,12 @@ class LowFreqTradingEngineV16:
                 confirm_hits_required=confirm_hits,
             )
 
-        if hit_count >= confirm_hits:
-            current_return_pct = self._current_return_pct(trade, current_price=float(sell_price))
-            peak_return_pct = self._peak_return_pct(trade)
-            profit_keep_ratio = self._profit_keep_ratio(
-                current_return_pct=current_return_pct,
-                peak_return_pct=peak_return_pct,
-            )
-            if self._eligible_for_system_exit_grace(
-                trade,
-                snapshot=snapshot,
-                scope=scope,
-                sell_price=float(sell_price),
-            ):
+        if bool(transition.get("confirm_signal")):
+            if bool(transition.get("use_grace")):
                 trade.system_exit_grace_used = True
                 trade.system_exit_grace_date = current_key
                 trade.system_exit_grace_scope = str(scope)
-                trade.system_exit_grace_reason = str(snapshot.get("details") or "")
+                trade.system_exit_grace_reason = str(transition.get("snapshot_details") or "")
                 self._record_system_exit_grace_audit_event(
                     event_type="system_exit_downgraded",
                     trade=trade,
@@ -2601,7 +2639,7 @@ class LowFreqTradingEngineV16:
                 )
                 self._reset_all_system_exit_states(trade)
                 return None
-            if bool(getattr(trade, "system_exit_grace_used", False)):
+            if bool(transition.get("emit_grace_then_confirmed_event")):
                 self._record_system_exit_grace_audit_event(
                     event_type="system_exit_downgraded_then_confirmed",
                     trade=trade,
@@ -2622,14 +2660,12 @@ class LowFreqTradingEngineV16:
                 confirm_hits_required=confirm_hits,
             )
             self._reset_system_exit_state(trade, scope)
-            confirmed_details = str(snapshot.get("details") or "").replace("确认候选", "确认")
-            exit_scope = "portfolio" if str(scope) == "market" else "sector_only"
             return SellSignal(
                 str(signal_reason),
                 float(signal_confidence),
-                confirmed_details,
+                str(transition.get("confirmed_details") or ""),
                 source_layer="exit",
-                exit_scope=exit_scope,
+                exit_scope=str(transition.get("exit_scope") or ""),
             )
         return None
 
