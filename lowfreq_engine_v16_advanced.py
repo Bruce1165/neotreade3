@@ -48,6 +48,9 @@ from neotrade3.decision_engine.system_exit_snapshots import (
     build_market_exit_snapshot,
     build_sector_exit_snapshot,
 )
+from neotrade3.decision_engine.trend_exhaustion import (
+    build_trend_exhaustion_snapshot,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2677,50 +2680,23 @@ class LowFreqTradingEngineV16:
         *,
         current_price: float,
     ) -> Optional[dict[str, Any]]:
-        buy_price = float(getattr(trade, "buy_price", 0.0) or 0.0)
-        peak_price = float(getattr(trade, "peak_price", 0.0) or 0.0)
-        if buy_price <= 0 or current_price <= 0:
-            return None
-        if peak_price <= 0:
-            peak_price = float(buy_price)
         try:
             hold_days = int(getattr(trade, "hold_days", 0) or 0)
             if hold_days <= 0:
                 hold_days = self._count_trading_days(date.fromisoformat(trade.buy_date), current_date)
         except Exception:
             hold_days = int(getattr(trade, "hold_days", 0) or 0)
-        peak_return_pct = (float(peak_price) - float(buy_price)) / max(float(buy_price), 1e-9) * 100.0
-        current_return_pct = (float(current_price) - float(buy_price)) / max(float(buy_price), 1e-9) * 100.0
-        drawdown_from_peak_pct = float(current_return_pct) - float(peak_return_pct)
-        armed_level = max(
-            float(getattr(self, "TRAILING_PROFIT_LEVEL", 20.0) or 20.0),
-            float(getattr(self, "PARTIAL_PROFIT_LEVEL", 25.0) or 25.0),
+        return build_trend_exhaustion_snapshot(
+            buy_price=float(getattr(trade, "buy_price", 0.0) or 0.0),
+            peak_price=float(getattr(trade, "peak_price", 0.0) or 0.0),
+            current_price=float(current_price),
+            hold_days=int(hold_days),
+            buy_progress_label=str(getattr(trade, "buy_progress_label", "") or "").strip(),
+            trailing_profit_level=float(getattr(self, "TRAILING_PROFIT_LEVEL", 20.0) or 20.0),
+            partial_profit_level=float(getattr(self, "PARTIAL_PROFIT_LEVEL", 25.0) or 25.0),
+            trailing_stop_pct=float(getattr(self, "TRAILING_STOP_PCT", -5.0) or -5.0),
+            min_hold_days=max(int(getattr(self, "MIN_HOLD_DAYS", 15) or 0), 0),
         )
-        drawdown_trigger = float(getattr(self, "TRAILING_STOP_PCT", -5.0) or -5.0)
-        min_hold_days = max(int(getattr(self, "MIN_HOLD_DAYS", 15) or 0), 0)
-        buy_progress_label = str(getattr(trade, "buy_progress_label", "") or "").strip()
-        armed = float(peak_return_pct) > float(armed_level)
-        drawdown_triggered = float(drawdown_from_peak_pct) <= float(drawdown_trigger)
-        hold_ready = int(hold_days) >= int(min_hold_days)
-        current_profit_positive = float(current_return_pct) > 0.0
-        early_quality_entry = buy_progress_label in {"早窗", "前置布局"}
-        condition_pass = bool(armed and drawdown_triggered and hold_ready and current_profit_positive and not early_quality_entry)
-        details = (
-            f"趋势衰竭候选：峰值收益{peak_return_pct:.1f}% | 当前收益{current_return_pct:.1f}% | "
-            f"距峰值回撤{drawdown_from_peak_pct:.1f}pct | 最小持有{hold_days}天"
-        )
-        return {
-            "armed": bool(armed),
-            "hold_ready": bool(hold_ready),
-            "current_profit_positive": bool(current_profit_positive),
-            "early_quality_entry": bool(early_quality_entry),
-            "drawdown_from_peak_triggered": bool(drawdown_triggered),
-            "condition_pass": bool(condition_pass),
-            "peak_return_pct": round(float(peak_return_pct), 2),
-            "current_return_pct": round(float(current_return_pct), 2),
-            "drawdown_from_peak_pct": round(float(drawdown_from_peak_pct), 2),
-            "details": details,
-        }
 
     def _trend_exhaustion_signal(self, trade: TradeRecord, current_date: date, *, sell_price: float) -> Optional[SellSignal]:
         snapshot = self._trend_exhaustion_snapshot(trade, current_date, current_price=float(sell_price))
