@@ -29,6 +29,9 @@ from neotrade3.decision_engine.formal_front import (
 from neotrade3.decision_engine.market_filter_note import (
     resolve_capture_first_market_filter_note,
 )
+from neotrade3.decision_engine.cross_sector_wave_policy import (
+    build_cross_sector_allowed_waves,
+)
 from neotrade3.decision_engine.signal_seed import (
     build_cross_sector_signal_seed,
     build_hot_sector_signal_seed,
@@ -2289,9 +2292,9 @@ class LowFreqTradingEngineV16:
                     exclude_sectors=hot_sector_set,
                     exclude_codes=existing_codes,
                 )
-                allowed_waves = {WavePhase.WAVE_3.value}
-                if bool(getattr(self, "CROSS_SECTOR_ALLOW_WAVE1", True)):
-                    allowed_waves.add(WavePhase.WAVE_1.value)
+                allowed_waves = build_cross_sector_allowed_waves(
+                    allow_wave1=bool(getattr(self, "CROSS_SECTOR_ALLOW_WAVE1", True))
+                )
                 for c in global_candidates:
                     raw_signals.append(
                         self._decorate_signal_with_phase1_contracts(

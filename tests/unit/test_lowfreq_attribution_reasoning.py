@@ -141,6 +141,55 @@ def test_audit_daily_reason_keeps_formal_tracking_in_candidate_bucket() -> None:
     assert candidate_audit["signal"]["candidate_tier"] == "soft_retained"
 
 
+def test_audit_daily_reason_marks_cross_sector_wave_filter_stage() -> None:
+    class _Ctx:
+        def market_filter_state(self, _target_date):
+            return {"filtered": False, "sentiment": "normal", "score": 72.0}
+
+        def entry_signals(self, _target_date):
+            return {}
+
+        def candidate_signals(self, _target_date):
+            return {}
+
+        def hot_sectors(self, _target_date):
+            return []
+
+        def global_seed_codes(self, _target_date):
+            return {"300308"}
+
+        def global_candidates(self, _target_date):
+            return {
+                "300308": SimpleNamespace(
+                    code="300308",
+                    wave_phase="2浪",
+                    role="龙头",
+                    sector_resonance=0.85,
+                    buy_score=98.0,
+                    cup_handle_ok=True,
+                )
+            }
+
+    audit = ATTR_MODULE._audit_daily_reason(
+        engine=SimpleNamespace(
+            MIN_RESONANCE=0.7,
+            CROSS_SECTOR_WAVE3_ONLY=True,
+            CROSS_SECTOR_ALLOW_WAVE1=True,
+            BUY_THRESHOLD=85.0,
+            CROSS_SECTOR_SCORE_MARGIN=8.0,
+            CUP_HANDLE_NONCONFIRM_THRESHOLD_BONUS=0.0,
+        ),
+        ctx=_Ctx(),
+        code="300308",
+        name="中际旭创",
+        sector="光模块",
+        target_date=date(2025, 6, 18),
+    )
+
+    assert audit["stage"] == "global_wave_filtered"
+    assert audit["reason"] == "跨板块分支波段不符（2浪）"
+
+
 def test_analyze_topk_aggregates_candidate_without_entry(monkeypatch) -> None:
     ranking = [
         {

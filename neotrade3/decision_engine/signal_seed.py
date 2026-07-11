@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .cross_sector_wave_policy import is_cross_sector_wave_mismatch
+
 
 def build_hot_sector_signal_seed(candidate: Any, *, market_filter_note: str | None) -> dict[str, Any]:
     reasons = list(candidate.buy_reasons)
@@ -36,7 +38,11 @@ def build_cross_sector_signal_seed(
     reasons = ["跨板块扫描"] + list(candidate.buy_reasons)
     soft_flags = list(getattr(candidate, "soft_flags", []) or [])
 
-    if wave3_only and str(candidate.wave_phase) not in allowed_waves:
+    if is_cross_sector_wave_mismatch(
+        candidate.wave_phase,
+        wave3_only=wave3_only,
+        allow_wave1="1浪" in allowed_waves,
+    ):
         reasons.append("capture-first: 波段不符，降权保留")
         soft_flags.append("wave_uncertain")
 

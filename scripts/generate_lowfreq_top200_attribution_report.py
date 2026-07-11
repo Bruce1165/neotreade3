@@ -17,6 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
+from neotrade3.decision_engine.cross_sector_wave_policy import (
+    is_cross_sector_wave_mismatch,
+)
 from neotrade3.decision_engine import project_lowfreq_formal_front
 
 
@@ -610,10 +613,11 @@ def _audit_daily_reason(
             "stage": "global_resonance_filtered",
             "reason": f"跨板块分支共振不足（{cand.sector_resonance:.0%} < {engine.MIN_RESONANCE:.0%}）",
         }
-    allowed_waves = {"3浪"}
-    if bool(getattr(engine, "CROSS_SECTOR_ALLOW_WAVE1", True)):
-        allowed_waves.add("1浪")
-    if bool(engine.CROSS_SECTOR_WAVE3_ONLY) and str(cand.wave_phase) not in allowed_waves:
+    if is_cross_sector_wave_mismatch(
+        cand.wave_phase,
+        wave3_only=bool(engine.CROSS_SECTOR_WAVE3_ONLY),
+        allow_wave1=bool(getattr(engine, "CROSS_SECTOR_ALLOW_WAVE1", True)),
+    ):
         return {
             "date": target_date.isoformat(),
             "stage": "global_wave_filtered",
