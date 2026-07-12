@@ -18,6 +18,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
+from neotrade3.analysis.attribution_daily_audit_payload import (
+    build_candidate_signal_selected_audit,
+    build_entry_signal_selected_audit,
+)
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from neotrade3.analysis.attribution_report_row import (
     build_attribution_report_row,
@@ -453,35 +457,12 @@ def _audit_daily_reason(
     entry_signals = ctx.entry_signals(target_date)
     if str(code) in entry_signals:
         sig = entry_signals[str(code)]
-        return {
-            "date": target_date.isoformat(),
-            "stage": "entry_signal_selected",
-            "reason": "进入正式建仓池",
-            "signal": {
-                "buy_score": float(sig.get("buy_score") or 0.0),
-                "role": str(sig.get("role") or ""),
-                "wave_phase": str(sig.get("wave_phase") or ""),
-                "candidate_tier": str(sig.get("candidate_tier") or ""),
-                "reasons": list(sig.get("reasons") or []),
-            },
-        }
+        return build_entry_signal_selected_audit(audit_date=target_date.isoformat(), signal=sig)
 
     candidate_signals = ctx.candidate_signals(target_date)
     if str(code) in candidate_signals:
         sig = candidate_signals[str(code)]
-        return {
-            "date": target_date.isoformat(),
-            "stage": "candidate_signal_selected",
-            "reason": "进入候选池，但未进入正式建仓池",
-            "signal": {
-                "buy_score": float(sig.get("buy_score") or 0.0),
-                "role": str(sig.get("role") or ""),
-                "wave_phase": str(sig.get("wave_phase") or ""),
-                "candidate_tier": str(sig.get("candidate_tier") or ""),
-                "entry_ready": bool(sig.get("entry_ready")),
-                "reasons": list(sig.get("reasons") or []),
-            },
-        }
+        return build_candidate_signal_selected_audit(audit_date=target_date.isoformat(), signal=sig)
 
     hot_sectors = set(ctx.hot_sectors(target_date))
     sector_str = str(sector or "").strip()
