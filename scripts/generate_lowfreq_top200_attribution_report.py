@@ -68,6 +68,9 @@ from neotrade3.orchestration.report_runner_cli_summary import (
 from neotrade3.orchestration.report_runner_run_context import (
     build_lowfreq_report_run_context,
 )
+from neotrade3.orchestration.report_runner_analysis_engine import (
+    prepare_lowfreq_report_analysis_engine,
+)
 from neotrade3.orchestration.report_runner_backtest_source import (
     load_lowfreq_report_backtest_payload,
 )
@@ -900,9 +903,10 @@ def main() -> int:
                 total_trades=(summary.get("total_trades") if isinstance(summary, dict) else None),
             ),
         )
-        engine = service._lowfreq_engine_v16()
-        if args.max_positions_override is not None:
-            engine.MAX_POSITIONS = int(args.max_positions_override)
+        engine = prepare_lowfreq_report_analysis_engine(
+            service=service,
+            max_positions_override=args.max_positions_override,
+        )
         segments, attribution_rows, aggregate = _analyze_topk(
             engine=engine,
             conn=conn,
