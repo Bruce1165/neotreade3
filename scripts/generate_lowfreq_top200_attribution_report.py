@@ -17,7 +17,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
-from neotrade3.analysis.attribution_artifact_payload import build_attribution_artifact_payload
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_daily_audit_payload import (
     build_candidate_signal_selected_audit,
@@ -25,7 +24,6 @@ from neotrade3.analysis.attribution_daily_audit_payload import (
     build_simple_stage_audit,
 )
 from neotrade3.analysis.attribution_execution_limit_window import is_execution_limit_up_window
-from neotrade3.analysis.attribution_markdown_report import build_attribution_markdown_report
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from neotrade3.analysis.attribution_ranking_payload import build_attribution_ranking_row
 from neotrade3.analysis.attribution_report_row import (
@@ -55,7 +53,6 @@ from neotrade3.decision_engine.cross_sector_wave_policy import (
 from neotrade3.orchestration.report_runner_status import (
     build_analysis_ready_report_status,
     build_backtest_ready_report_status,
-    build_done_report_status,
     build_initializing_report_status,
     build_ranking_ready_report_status,
 )
@@ -70,6 +67,9 @@ from neotrade3.orchestration.report_runner_run_context import (
 )
 from neotrade3.orchestration.report_runner_analysis_engine import (
     prepare_lowfreq_report_analysis_engine,
+)
+from neotrade3.orchestration.report_runner_artifact_writes import (
+    write_lowfreq_report_artifacts,
 )
 from neotrade3.orchestration.report_runner_backtest_source import (
     load_lowfreq_report_backtest_payload,
@@ -819,29 +819,6 @@ def _analyze_topk(
     return segments, report_rows, aggregate
 
 
-def _write_markdown_report(
-    *,
-    output_path: Path,
-    year: int,
-    limit: int,
-    ranking: list[dict[str, Any]],
-    aggregate: dict[str, Any],
-    attribution_rows: list[dict[str, Any]],
-    backtest_payload: dict[str, Any],
-) -> None:
-    output_path.write_text(
-        build_attribution_markdown_report(
-            year=int(year),
-            limit=int(limit),
-            ranking=ranking,
-            aggregate=aggregate,
-            attribution_rows=attribution_rows,
-            backtest_payload=backtest_payload,
-        ),
-        encoding="utf-8",
-    )
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate lowfreq model TopK scorecard, wave segments, and attribution report.")
     parser.add_argument("--year", type=int, default=2025)
@@ -936,35 +913,21 @@ def main() -> int:
     report_path = Path(artifact_paths["report_path"])
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    ranking_path.write_text(json.dumps(ranking, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    attribution_payload = build_attribution_artifact_payload(
+    write_lowfreq_report_artifacts(
+        output_dir=output_dir,
         report_id=report_id,
-        generated_at=generated_at,
         year=int(args.year),
         limit=int(args.limit),
-        aggregate=aggregate,
-        items=attribution_rows,
-    )
-    attribution_path.write_text(json.dumps(attribution_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _write_markdown_report(
-        output_path=report_path,
-        year=int(args.year),
-        limit=int(args.limit),
+        ranking_path=ranking_path,
+        segments_path=segments_path,
+        attribution_path=attribution_path,
+        report_path=report_path,
         ranking=ranking,
+        segments=segments,
         aggregate=aggregate,
         attribution_rows=attribution_rows,
         backtest_payload=backtest_payload,
-    )
-    _write_status(
-        output_dir,
-        **build_done_report_status(
-            report_id=report_id,
-            ranking_path=ranking_path,
-            segments_path=segments_path,
-            attribution_path=attribution_path,
-            report_path=report_path,
-        ),
+        generated_at=generated_at,
     )
 
     print(
