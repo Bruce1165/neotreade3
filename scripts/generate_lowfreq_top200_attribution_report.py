@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.api.main import BootstrapApiService
+from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from neotrade3.analysis.attribution_signal_pick_summary import build_attribution_signal_pick_summary
@@ -860,15 +861,7 @@ def _analyze_topk(
             }
         )
 
-    aggregate = {
-        "count": len(report_rows),
-        "candidate_picked_count": int(sum(1 for x in report_rows if x.get("candidate_picked"))),
-        "entry_picked_count": int(sum(1 for x in report_rows if x.get("entry_picked"))),
-        "picked_count": int(sum(1 for x in report_rows if x.get("entry_picked"))),
-        "bought_count": int(sum(1 for x in report_rows if x.get("bought"))),
-        "held_to_top_count": int(sum(1 for x in report_rows if x.get("held_to_top"))),
-        "reason_buckets": dict(summary_counters),
-    }
+    aggregate = build_attribution_aggregate_summary(report_rows, dict(summary_counters))
     return segments, report_rows, aggregate
 
 
