@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.api.main import BootstrapApiService
+from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
@@ -604,18 +605,7 @@ def _load_trading_dates(conn: sqlite3.Connection, *, start_date: date, end_date:
 
 
 def _build_buy_signal_audit_index(entries: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        code = str(entry.get("code") or "").strip()
-        if not code:
-            continue
-        out[code].append(dict(entry))
-    for code, items in out.items():
-        items.sort(key=lambda x: (str(x.get("date") or ""), str(x.get("event") or "")))
-        out[code] = items
-    return out
+    return build_buy_signal_audit_index(entries)
 
 
 def _extract_execution_reason(
