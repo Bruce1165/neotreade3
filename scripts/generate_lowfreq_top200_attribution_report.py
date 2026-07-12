@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
+from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
@@ -575,20 +576,7 @@ def _audit_daily_reason(
 
 
 def _build_positions_timeline(trades: list[dict[str, Any]], trading_dates: list[str]) -> dict[str, set[str]]:
-    out: dict[str, set[str]] = {d: set() for d in trading_dates}
-    for t in trades:
-        code = str(t.get("code") or "").strip()
-        buy_date = str(t.get("buy_date") or "").strip()
-        sell_date = str(t.get("sell_date") or "").strip()
-        if not code or not buy_date or buy_date not in out:
-            continue
-        for d in trading_dates:
-            if d < buy_date:
-                continue
-            if sell_date and d >= sell_date:
-                break
-            out[d].add(code)
-    return out
+    return build_positions_timeline(trades, trading_dates)
 
 
 def _load_trading_dates(conn: sqlite3.Connection, *, start_date: date, end_date: date) -> list[str]:
