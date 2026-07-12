@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
+from neotrade3.analysis.attribution_signal_pick_summary import build_attribution_signal_pick_summary
 from neotrade3.analysis.attribution_trade_window import build_attribution_trade_window
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
@@ -768,8 +769,6 @@ def _analyze_topk(
         top_idx = int(date_to_idx.get(top_key, start_idx))
         segment_dates = trading_dates[start_idx : top_idx + 1]
         daily_audits: list[dict[str, Any]] = []
-        candidate_dates: list[str] = []
-        entry_dates: list[str] = []
         for d_key in segment_dates:
             audit = _audit_daily_reason(
                 engine=engine,
@@ -780,10 +779,9 @@ def _analyze_topk(
                 target_date=date.fromisoformat(d_key),
             )
             daily_audits.append(audit)
-            if audit.get("stage") in {"candidate_signal_selected", "entry_signal_selected"}:
-                candidate_dates.append(d_key)
-            if audit.get("stage") == "entry_signal_selected":
-                entry_dates.append(d_key)
+        signal_pick_summary = build_attribution_signal_pick_summary(daily_audits)
+        candidate_dates = list(signal_pick_summary["candidate_dates"])
+        entry_dates = list(signal_pick_summary["entry_dates"])
 
         trade_window = build_attribution_trade_window(
             trades_by_code.get(code, []),
@@ -795,8 +793,8 @@ def _analyze_topk(
         bought = bool(trade_window["bought"])
         held_to_top = bool(trade_window["held_to_top"])
 
-        first_candidate_date = candidate_dates[0] if candidate_dates else ""
-        first_entry_date = entry_dates[0] if entry_dates else ""
+        first_candidate_date = str(signal_pick_summary["first_candidate_date"] or "")
+        first_entry_date = str(signal_pick_summary["first_entry_date"] or "")
         first_buy_date = str(trade_window["first_buy_date"] or "")
         first_sell_date = str(trade_window["first_sell_date"] or "")
         latest_exit_reason = str(trade_window["latest_exit_reason"] or "")
@@ -842,15 +840,15 @@ def _analyze_topk(
                 "segment_start_date": start_key,
                 "segment_top_date": top_key,
                 "segment_return_pct": float(segment["segment_return_pct"]),
-                "candidate_picked": bool(candidate_dates),
-                "entry_picked": bool(entry_dates),
-                "picked": bool(entry_dates),
+                "candidate_picked": bool(signal_pick_summary["candidate_picked"]),
+                "entry_picked": bool(signal_pick_summary["entry_picked"]),
+                "picked": bool(signal_pick_summary["picked"]),
                 "first_candidate_date": first_candidate_date,
-                "candidate_signal_count_in_segment": len(candidate_dates),
+                "candidate_signal_count_in_segment": int(signal_pick_summary["candidate_signal_count_in_segment"]),
                 "first_entry_date": first_entry_date,
-                "first_signal_date": first_entry_date,
-                "entry_signal_count_in_segment": len(entry_dates),
-                "signal_count_in_segment": len(entry_dates),
+                "first_signal_date": str(signal_pick_summary["first_signal_date"] or ""),
+                "entry_signal_count_in_segment": int(signal_pick_summary["entry_signal_count_in_segment"]),
+                "signal_count_in_segment": int(signal_pick_summary["signal_count_in_segment"]),
                 "bought": bought,
                 "first_buy_date": first_buy_date,
                 "first_sell_date": first_sell_date,
