@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -74,23 +74,13 @@ from neotrade3.orchestration.report_runner_artifact_writes import (
 from neotrade3.orchestration.report_runner_backtest_source import (
     load_lowfreq_report_backtest_payload,
 )
+from neotrade3.orchestration.report_runner_status_writer import (
+    write_lowfreq_report_status,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
 DB_PATH = PROJECT_ROOT / "var/db/stock_data.db"
-
-
-def _write_status(output_dir: Path, *, stage: str, **extra: Any) -> None:
-    payload = {
-        "stage": str(stage),
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    if extra:
-        payload.update(extra)
-    (output_dir / "status.json").write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -845,7 +835,7 @@ def main() -> int:
     report_id = str(run_context["report_id"])
     output_dir = Path(run_context["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_status(
+    write_lowfreq_report_status(
         output_dir,
         **build_initializing_report_status(
             year=int(args.year),
@@ -857,7 +847,7 @@ def main() -> int:
     conn = sqlite3.connect(str(DB_PATH))
     try:
         ranking = _load_top_ranking(conn, year=int(args.year), limit=int(args.limit))
-        _write_status(
+        write_lowfreq_report_status(
             output_dir,
             **build_ranking_ready_report_status(ranking_count=len(ranking)),
         )
@@ -872,7 +862,7 @@ def main() -> int:
             generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
         summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
-        _write_status(
+        write_lowfreq_report_status(
             output_dir,
             **build_backtest_ready_report_status(
                 ranking_count=len(ranking),
@@ -892,7 +882,7 @@ def main() -> int:
             year=int(args.year),
             execution_one_price_limit_only=bool(args.execution_one_price_limit_only),
         )
-        _write_status(
+        write_lowfreq_report_status(
             output_dir,
             **build_analysis_ready_report_status(
                 ranking_count=len(ranking),
