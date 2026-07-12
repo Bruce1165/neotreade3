@@ -153,7 +153,12 @@ def test_trend_exhausted_triggers_for_profitable_trade_after_peak_drawdown() -> 
     assert position_snapshot["exit_ready"] is True
     assert position_snapshot["exit_scope"] == "position_only"
     assert position_snapshot["exit_reason_type"] == "trend_exhausted"
-    assert position_snapshot["current_stage"] == "exit"
+    assert position_snapshot["local_exit_semantics"] == "local_end_only"
+    assert (
+        position_snapshot["global_thesis_end_semantics"]
+        == "needs_global_confirmation"
+    )
+    assert position_snapshot["current_stage"] == "exit_ready"
     assert position_snapshot["decision"] == "exit"
 
 
@@ -611,6 +616,8 @@ def test_position_contract_snapshot_marks_trend_exhausted_exit_bucket() -> None:
     assert snapshot["exit_reason_type"] == "trend_exhausted"
     assert snapshot["exit_attribution_bucket"] == "trend_exhaustion_exit"
     assert snapshot["exit_scope"] == "position_only"
+    assert snapshot["local_exit_semantics"] == "local_end_only"
+    assert snapshot["global_thesis_end_semantics"] == "needs_global_confirmation"
 
 
 def test_sector_exit_snapshot_requires_trend_and_follower_weakness_to_confirm() -> None:
@@ -684,5 +691,10 @@ def test_sell_signal_audit_records_observe_review_confirm() -> None:
     assert confirmed_snapshot["exit_ready"] is True
     assert confirmed_snapshot["exit_scope"] == "portfolio"
     assert confirmed_snapshot["exit_reason_type"] == "market_top_confirmed"
+    assert confirmed_snapshot["local_exit_semantics"] == "local_end_only"
+    assert (
+        confirmed_snapshot["global_thesis_end_semantics"]
+        == "needs_global_confirmation"
+    )
     assert confirmed_snapshot["current_stage"] == "exit_ready"
     assert confirmed_snapshot["decision"] == "exit"

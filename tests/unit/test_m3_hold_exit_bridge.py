@@ -70,3 +70,8 @@ def test_build_m3_hold_exit_bridge_maps_exit_ready_snapshot() -> None:
     assert bridge["exit_state"]["exit_ready"] is True
     assert bridge["exit_state"]["exit_scope"] == "portfolio"
     assert bridge["exit_state"]["exit_reason_type"] == "trend_exhausted"
+    assert bridge["exit_state"]["local_exit_semantics"] == "local_end_only"
+    assert (
+        bridge["exit_state"]["global_thesis_end_semantics"]
+        == "needs_global_confirmation"
+    )

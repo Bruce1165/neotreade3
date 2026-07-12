@@ -312,6 +312,8 @@ def build_exit_state(
     exit_scope: str,
     exit_reason_type: str,
     exit_attribution_bucket: str,
+    local_exit_semantics: str,
+    global_thesis_end_semantics: str,
     evidence_ref: Mapping[str, Any] | None = None,
     m2_cycle_ref: Mapping[str, Any] | None = None,
     m1_constraints_ref: Mapping[str, Any] | None = None,
@@ -331,6 +333,14 @@ def build_exit_state(
         exit_attribution_bucket=_require_text(
             exit_attribution_bucket,
             field_name="exit_attribution_bucket",
+        ),
+        local_exit_semantics=_require_text(
+            local_exit_semantics,
+            field_name="local_exit_semantics",
+        ),
+        global_thesis_end_semantics=_require_text(
+            global_thesis_end_semantics,
+            field_name="global_thesis_end_semantics",
         ),
         evidence_ref=_copy_mapping(evidence_ref),
         m2_cycle_ref=_copy_mapping(m2_cycle_ref),

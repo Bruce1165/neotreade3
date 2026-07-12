@@ -159,6 +159,8 @@ class ExitState:
     exit_scope: str
     exit_reason_type: str
     exit_attribution_bucket: str
+    local_exit_semantics: str
+    global_thesis_end_semantics: str
     evidence_ref: dict[str, Any]
     m2_cycle_ref: dict[str, Any]
     m1_constraints_ref: dict[str, Any]
@@ -176,6 +178,8 @@ class ExitState:
             "exit_scope": self.exit_scope,
             "exit_reason_type": self.exit_reason_type,
             "exit_attribution_bucket": self.exit_attribution_bucket,
+            "local_exit_semantics": self.local_exit_semantics,
+            "global_thesis_end_semantics": self.global_thesis_end_semantics,
             "evidence_ref": _copy_mapping(self.evidence_ref),
             "m2_cycle_ref": _copy_mapping(self.m2_cycle_ref),
             "m1_constraints_ref": _copy_mapping(self.m1_constraints_ref),

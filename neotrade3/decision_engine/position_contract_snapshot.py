@@ -127,6 +127,8 @@ def build_position_contract_snapshot(
             "exit_ready": True,
             "exit_scope": exit_scope,
             "exit_reason_type": exit_reason_type,
+            "local_exit_semantics": "local_end_only",
+            "global_thesis_end_semantics": "needs_global_confirmation",
             "exit_evidence_bundle": evidence + [exit_detail],
             **exit_contract,
         }
@@ -186,6 +188,8 @@ def build_position_contract_snapshot(
         "exit_ready": False,
         "exit_scope": "",
         "exit_reason_type": "",
+        "local_exit_semantics": "",
+        "global_thesis_end_semantics": "",
         "exit_evidence_bundle": list(evidence),
         **hold_contract,
     }

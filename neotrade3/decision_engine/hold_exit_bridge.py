@@ -73,6 +73,13 @@ def build_m3_hold_exit_bridge(
             exit_attribution_bucket=str(
                 snapshot.get("exit_attribution_bucket") or "exit_other"
             ).strip(),
+            local_exit_semantics=str(
+                snapshot.get("local_exit_semantics") or "local_end_only"
+            ).strip(),
+            global_thesis_end_semantics=str(
+                snapshot.get("global_thesis_end_semantics")
+                or "needs_global_confirmation"
+            ).strip(),
             evidence_ref={
                 "warning_flags": warning_flags,
                 "exit_evidence_bundle": exit_evidence_bundle,
