@@ -10,11 +10,23 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
-from .contracts import SmallCycle
+from .contracts import (
+    CycleLinkageState,
+    GrowthPotentialProfile,
+    MidCycleState,
+    SmallCycle,
+    SmallCycleWaveHypothesis,
+    TopRiskProfile,
+)
 
 
 DEFAULT_SMALL_CYCLE_INPUT_DATA_VERSION = "m1_phase1.v1"
 DEFAULT_SMALL_CYCLE_RULE_VERSION = "m2_small_cycle.v1alpha1"
+DEFAULT_MID_CYCLE_RULE_VERSION = "m2_mid_cycle_shadow.v1alpha1"
+DEFAULT_WAVE_HYPOTHESIS_RULE_VERSION = "m2_wave_hypothesis_shadow.v1alpha1"
+DEFAULT_CYCLE_LINKAGE_RULE_VERSION = "m2_cycle_linkage.v1alpha1"
+DEFAULT_GROWTH_POTENTIAL_RULE_VERSION = "m2_growth_potential_shadow.v1alpha1"
+DEFAULT_TOP_RISK_RULE_VERSION = "m2_top_risk_shadow.v1alpha1"
 
 
 def _require_text(value: object, *, field_name: str) -> str:
@@ -56,6 +68,48 @@ def _normalize_positive_days(value: object) -> Optional[int]:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return None
+
+
+def _copy_text_list(value: Iterable[object] | None) -> list[str]:
+    if value is None:
+        return []
+    result: list[str] = []
+    for item in value:
+        normalized = str(item).strip()
+        if normalized:
+            result.append(normalized)
+    return result
+
+
+def _build_mid_cycle_state_value(
+    *,
+    cycle_state: str,
+    return_20d: float | None,
+    positive_days_5d: int | None,
+) -> str:
+    if cycle_state == "S2 Advancing" and isinstance(return_20d, float) and return_20d > 0:
+        return "advancing"
+    if isinstance(return_20d, float) and return_20d < 0:
+        return "weakening"
+    if isinstance(positive_days_5d, int) and positive_days_5d <= 2:
+        return "weakening"
+    if isinstance(return_20d, float) and return_20d >= 0:
+        return "repairing"
+    return "neutral"
+
+
+def _build_risk_level(
+    *,
+    return_20d: float | None,
+    positive_days_5d: int | None,
+) -> str:
+    if (isinstance(return_20d, float) and return_20d < 0) or (
+        isinstance(positive_days_5d, int) and positive_days_5d <= 1
+    ):
+        return "high"
+    if isinstance(positive_days_5d, int) and positive_days_5d <= 3:
+        return "watch"
+    return "low"
 
 
 def _trading_profile_window_ready(profile: PF1TradingProfile | None) -> bool:
@@ -297,3 +351,264 @@ def build_small_cycle(
         ),
         rule_version=_require_text(rule_version, field_name="rule_version"),
     )
+
+
+def build_mid_cycle_states_from_m1(
+    *,
+    cycle: SmallCycle,
+    security_master: D7SecurityMasterMinimal | None,
+    trading_profile: PF1TradingProfile | None,
+    rule_version: str = DEFAULT_MID_CYCLE_RULE_VERSION,
+) -> dict[str, MidCycleState]:
+    """Build the minimal shadow mid-cycle states needed by current M4 consumers."""
+
+    return_20d = _as_float(getattr(trading_profile, "return_20d", None))
+    positive_days_5d = _normalize_positive_days(
+        getattr(trading_profile, "positive_days_5d", None)
+    )
+    sector_lv1 = str(getattr(security_master, "sector_lv1", "") or "").strip()
+    sector_lv2 = str(getattr(security_master, "sector_lv2", "") or "").strip()
+    fund_state = _build_mid_cycle_state_value(
+        cycle_state=cycle.cycle_state,
+        return_20d=return_20d,
+        positive_days_5d=positive_days_5d,
+    )
+    industry_state = _build_mid_cycle_state_value(
+        cycle_state=cycle.cycle_state,
+        return_20d=return_20d,
+        positive_days_5d=positive_days_5d,
+    )
+    confidence = {
+        "level": "medium" if fund_state in {"advancing", "repairing"} else "low",
+        "return_20d": return_20d,
+        "positive_days_5d": positive_days_5d,
+    }
+
+    return {
+        "fund_cycle": MidCycleState(
+            stock_code=cycle.stock_code,
+            trade_date=cycle.trade_date,
+            scope="fund_cycle",
+            state=fund_state,
+            confidence=confidence,
+            evidence_bundle={
+                "small_cycle_state": cycle.cycle_state,
+                "sector_lv1": sector_lv1,
+                "source": "small_cycle_plus_pf1",
+            },
+            rule_version=rule_version,
+        ),
+        "industry_cycle": MidCycleState(
+            stock_code=cycle.stock_code,
+            trade_date=cycle.trade_date,
+            scope="industry_cycle",
+            state=industry_state,
+            confidence=confidence,
+            evidence_bundle={
+                "small_cycle_state": cycle.cycle_state,
+                "sector_lv2": sector_lv2,
+                "source": "small_cycle_plus_pf1",
+            },
+            rule_version=rule_version,
+        ),
+    }
+
+
+def build_small_cycle_wave_hypothesis_from_formal_inputs(
+    *,
+    cycle: SmallCycle,
+    rule_version: str = DEFAULT_WAVE_HYPOTHESIS_RULE_VERSION,
+) -> SmallCycleWaveHypothesis:
+    """Build the minimal shadow wave hypothesis used by M4 benchmark."""
+
+    return SmallCycleWaveHypothesis(
+        stock_code=cycle.stock_code,
+        trade_date=cycle.trade_date,
+        replay_consistency_status="pending_benchmark",
+        wave_label_candidate=(
+            "advance_wave" if cycle.cycle_state == "S2 Advancing" else "unclassified_wave"
+        ),
+        evidence_bundle={
+            "small_cycle_state": cycle.cycle_state,
+            "state_stability_level": cycle.state_stability_level,
+        },
+        rule_version=rule_version,
+    )
+
+
+def build_cycle_linkage_state(
+    *,
+    stock_code: str,
+    trade_date: str,
+    small_cycle_ref: Mapping[str, Any] | None,
+    mid_cycle_ref: Mapping[str, Any] | None,
+    linkage_phase: str,
+    supports_continuation: bool,
+    local_end_vs_global_end: str,
+    confidence: Mapping[str, Any] | None = None,
+    evidence_bundle: Mapping[str, Any] | None = None,
+    rule_version: str = DEFAULT_CYCLE_LINKAGE_RULE_VERSION,
+) -> CycleLinkageState:
+    """Build the minimal shadow cycle linkage object."""
+
+    return CycleLinkageState(
+        stock_code=_require_text(stock_code, field_name="stock_code"),
+        trade_date=_require_text(trade_date, field_name="trade_date"),
+        small_cycle_ref=_copy_mapping(small_cycle_ref),
+        mid_cycle_ref=_copy_mapping(mid_cycle_ref),
+        linkage_phase=_require_text(linkage_phase, field_name="linkage_phase"),
+        supports_continuation=bool(supports_continuation),
+        local_end_vs_global_end=_require_text(
+            local_end_vs_global_end,
+            field_name="local_end_vs_global_end",
+        ),
+        confidence=_copy_mapping(confidence),
+        evidence_bundle=_copy_mapping(evidence_bundle),
+        rule_version=_require_text(rule_version, field_name="rule_version"),
+    )
+
+
+def build_growth_potential_profile_from_formal_inputs(
+    *,
+    cycle: SmallCycle,
+    fund_cycle_state: MidCycleState,
+    industry_cycle_state: MidCycleState,
+    rule_version: str = DEFAULT_GROWTH_POTENTIAL_RULE_VERSION,
+) -> GrowthPotentialProfile:
+    """Build the minimal shadow growth-potential profile used by M4 benchmark."""
+
+    states = {fund_cycle_state.state, industry_cycle_state.state}
+    if "weakening" in states:
+        status = "negative"
+    elif states <= {"advancing", "repairing"} and cycle.cycle_state == "S2 Advancing":
+        status = "promising"
+    else:
+        status = "uncertain"
+    return GrowthPotentialProfile(
+        stock_code=cycle.stock_code,
+        trade_date=cycle.trade_date,
+        status=status,
+        confidence={
+            "level": "medium" if status in {"promising", "uncertain"} else "low",
+            "fund_cycle_state": fund_cycle_state.state,
+            "industry_cycle_state": industry_cycle_state.state,
+        },
+        evidence_bundle={
+            "small_cycle_state": cycle.cycle_state,
+            "fund_cycle_state": fund_cycle_state.state,
+            "industry_cycle_state": industry_cycle_state.state,
+        },
+        rule_version=rule_version,
+    )
+
+
+def build_top_risk_profile_from_formal_inputs(
+    *,
+    cycle: SmallCycle,
+    fund_cycle_state: MidCycleState,
+    industry_cycle_state: MidCycleState,
+    trading_profile: PF1TradingProfile | None = None,
+    rule_version: str = DEFAULT_TOP_RISK_RULE_VERSION,
+) -> TopRiskProfile:
+    """Build the minimal shadow top-risk profile used by M4 benchmark."""
+
+    return_20d = _as_float(getattr(trading_profile, "return_20d", None))
+    positive_days_5d = _normalize_positive_days(
+        getattr(trading_profile, "positive_days_5d", None)
+    )
+    risk_level = _build_risk_level(
+        return_20d=return_20d,
+        positive_days_5d=positive_days_5d,
+    )
+    risk_flags: list[str] = []
+    if fund_cycle_state.state == "weakening":
+        risk_flags.append("fund_cycle_weakening")
+    if industry_cycle_state.state == "weakening":
+        risk_flags.append("industry_cycle_weakening")
+    if risk_level == "high":
+        risk_flags.append("momentum_breakdown")
+    elif risk_level == "watch":
+        risk_flags.append("momentum_watch")
+    return TopRiskProfile(
+        stock_code=cycle.stock_code,
+        trade_date=cycle.trade_date,
+        risk_level=risk_level,
+        risk_flags=risk_flags,
+        evidence_bundle={
+            "small_cycle_state": cycle.cycle_state,
+            "fund_cycle_state": fund_cycle_state.state,
+            "industry_cycle_state": industry_cycle_state.state,
+            "return_20d": return_20d,
+            "positive_days_5d": positive_days_5d,
+        },
+        rule_version=rule_version,
+    )
+
+
+def build_shadow_cycle_intelligence_from_m1(
+    *,
+    cycle: SmallCycle,
+    security_master: D7SecurityMasterMinimal | None,
+    trading_profile: PF1TradingProfile | None,
+) -> dict[str, Any]:
+    """Build the minimum M2 shadow bundle required by current benchmark consumers."""
+
+    mid_cycle_states = build_mid_cycle_states_from_m1(
+        cycle=cycle,
+        security_master=security_master,
+        trading_profile=trading_profile,
+    )
+    linkage_phase = (
+        "continuation_supported"
+        if all(
+            state.state in {"advancing", "repairing"}
+            for state in mid_cycle_states.values()
+        )
+        else "continuation_at_risk"
+    )
+    supports_continuation = linkage_phase == "continuation_supported"
+    local_end_vs_global_end = (
+        "local_end_only" if supports_continuation else "needs_global_confirmation"
+    )
+    cycle_linkage_state = build_cycle_linkage_state(
+        stock_code=cycle.stock_code,
+        trade_date=cycle.trade_date,
+        small_cycle_ref={
+            "object_type": cycle.object_type,
+            "stock_code": cycle.stock_code,
+            "cycle_state": cycle.cycle_state,
+        },
+        mid_cycle_ref={
+            "fund_cycle_state": mid_cycle_states["fund_cycle"].state,
+            "industry_cycle_state": mid_cycle_states["industry_cycle"].state,
+        },
+        linkage_phase=linkage_phase,
+        supports_continuation=supports_continuation,
+        local_end_vs_global_end=local_end_vs_global_end,
+        confidence={
+            "level": "medium" if supports_continuation else "low",
+            "small_cycle_state": cycle.cycle_state,
+        },
+        evidence_bundle={
+            "fund_cycle_state": mid_cycle_states["fund_cycle"].state,
+            "industry_cycle_state": mid_cycle_states["industry_cycle"].state,
+        },
+    )
+    growth_potential_profile = build_growth_potential_profile_from_formal_inputs(
+        cycle=cycle,
+        fund_cycle_state=mid_cycle_states["fund_cycle"],
+        industry_cycle_state=mid_cycle_states["industry_cycle"],
+    )
+    top_risk_profile = build_top_risk_profile_from_formal_inputs(
+        cycle=cycle,
+        fund_cycle_state=mid_cycle_states["fund_cycle"],
+        industry_cycle_state=mid_cycle_states["industry_cycle"],
+        trading_profile=trading_profile,
+    )
+    return {
+        "wave_hypothesis": build_small_cycle_wave_hypothesis_from_formal_inputs(cycle=cycle),
+        "mid_cycle_states": mid_cycle_states,
+        "cycle_linkage_state": cycle_linkage_state,
+        "growth_potential_profile": growth_potential_profile,
+        "top_risk_profile": top_risk_profile,
+    }
