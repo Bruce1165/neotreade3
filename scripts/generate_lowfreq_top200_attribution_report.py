@@ -23,6 +23,7 @@ from neotrade3.analysis.attribution_daily_audit_payload import (
     build_entry_signal_selected_audit,
     build_simple_stage_audit,
 )
+from neotrade3.analysis.attribution_execution_limit_window import is_execution_limit_up_window
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from neotrade3.analysis.attribution_report_row import (
     build_attribution_report_row,
@@ -613,7 +614,6 @@ def _extract_execution_reason(
     )
     if reason:
         return reason
-    all_limit_up = False
     rows = conn.execute(
         """
         SELECT trade_date, pct_change, high, low, close
@@ -624,26 +624,19 @@ def _extract_execution_reason(
         """,
         (str(code), str(first_signal)),
     ).fetchall()
-    if rows:
-        all_limit_up = True
-        for row in rows:
-            pct = float(row[1]) if row and row[1] is not None else None
-            high = float(row[2]) if row and row[2] is not None else None
-            low = float(row[3]) if row and row[3] is not None else None
-            close = float(row[4]) if row and row[4] is not None else None
-            is_one_price_board = (
-                high is not None
-                and low is not None
-                and close is not None
-                and abs(float(high) - float(low)) <= 1e-9
-                and abs(float(high) - float(close)) <= 1e-9
-            )
-            if pct is None or pct < float(limit_up_pct):
-                all_limit_up = False
-                break
-            if execution_one_price_limit_only and not is_one_price_board:
-                all_limit_up = False
-                break
+    all_limit_up = is_execution_limit_up_window(
+        bars=[
+            {
+                "pct_change": float(row[1]) if row and row[1] is not None else None,
+                "high": float(row[2]) if row and row[2] is not None else None,
+                "low": float(row[3]) if row and row[3] is not None else None,
+                "close": float(row[4]) if row and row[4] is not None else None,
+            }
+            for row in rows
+        ],
+        limit_up_pct=float(limit_up_pct),
+        one_price_only=bool(execution_one_price_limit_only),
+    )
     positions_full = (
         str(execution_mode or "").strip().lower() != "unbounded_opportunity"
         and first_signal in positions_timeline
