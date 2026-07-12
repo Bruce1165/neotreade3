@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
+from neotrade3.analysis.attribution_trade_window import build_attribution_trade_window
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
@@ -784,29 +785,21 @@ def _analyze_topk(
             if audit.get("stage") == "entry_signal_selected":
                 entry_dates.append(d_key)
 
-        code_trades = sorted(
+        trade_window = build_attribution_trade_window(
             trades_by_code.get(code, []),
-            key=lambda x: (str(x.get("buy_date") or ""), str(x.get("sell_date") or "")),
+            segment_start_date=start_key,
+            segment_top_date=top_key,
         )
-        relevant_trades = [
-            t
-            for t in code_trades
-            if str(t.get("buy_date") or "") <= top_key and str(t.get("sell_date") or "9999-12-31") >= start_key
-        ]
-        bought = bool(relevant_trades)
-        held_to_top = any(
-            str(t.get("buy_date") or "") <= top_key <= str(t.get("sell_date") or "9999-12-31")
-            for t in relevant_trades
-        )
+        code_trades = list(trade_window["code_trades"])
+        relevant_trades = list(trade_window["relevant_trades"])
+        bought = bool(trade_window["bought"])
+        held_to_top = bool(trade_window["held_to_top"])
 
         first_candidate_date = candidate_dates[0] if candidate_dates else ""
         first_entry_date = entry_dates[0] if entry_dates else ""
-        first_buy_date = str(relevant_trades[0].get("buy_date") or "") if relevant_trades else ""
-        first_sell_date = str(relevant_trades[0].get("sell_date") or "") if relevant_trades else ""
-        latest_exit_reason = ""
-        if relevant_trades:
-            latest_trade = max(relevant_trades, key=lambda x: str(x.get("sell_date") or ""))
-            latest_exit_reason = str(latest_trade.get("sell_reason") or "")
+        first_buy_date = str(trade_window["first_buy_date"] or "")
+        first_sell_date = str(trade_window["first_sell_date"] or "")
+        latest_exit_reason = str(trade_window["latest_exit_reason"] or "")
 
         if bought and held_to_top:
             primary_reason = "实际持仓延续到市场事实见顶"
