@@ -19,6 +19,7 @@ from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_artifact_payload import build_attribution_artifact_payload
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
+from neotrade3.analysis.attribution_backtest_payload import build_attribution_backtest_payload
 from neotrade3.analysis.attribution_daily_audit_payload import (
     build_candidate_signal_selected_audit,
     build_entry_signal_selected_audit,
@@ -105,19 +106,12 @@ def _load_backtest_payload(
     trades = metrics.get("trades", []) if isinstance(metrics, dict) else []
     summary = dict(metrics) if isinstance(metrics, dict) else {}
     summary.pop("trades", None)
-    return {
-        "_meta": {
-            "status": "ok",
-            "requested_by": "script",
-            "model": "lowfreq_engine_v16_advanced",
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        },
-        "summary": summary,
-        "trade_blocks": summary.get("trade_blocks", {}) if isinstance(summary, dict) else {},
-        "config_snapshot": summary.get("config_snapshot", {}) if isinstance(summary, dict) else {},
-        "coverage_gaps": summary.get("coverage_gaps", {}) if isinstance(summary, dict) else {},
-        "trades": trades if isinstance(trades, list) else [],
-    }
+    return build_attribution_backtest_payload(
+        requested_by="script",
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        summary=summary,
+        trades=trades,
+    )
 
 
 def _a_share_universe_sql() -> str:
