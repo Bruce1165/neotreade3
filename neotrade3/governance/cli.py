@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .runtime import DEFAULT_GOVERNANCE_MANIFEST, run_governance_manifest
+from .runtime import run_governance_for_benchmark_run
 
 
 def _default_project_root() -> Path:
@@ -16,7 +16,7 @@ def _default_project_root() -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a NeoTrade3 M5 governance handoff from a benchmark manifest."
+        description="Run a NeoTrade3 M5 governance handoff from a persisted benchmark run."
     )
     parser.add_argument(
         "--project-root",
@@ -24,9 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project root path (defaults to repository root).",
     )
     parser.add_argument(
-        "--manifest",
-        default=DEFAULT_GOVERNANCE_MANIFEST,
-        help="Benchmark run manifest path used as the governance upstream input.",
+        "--benchmark-run-id",
+        required=True,
+        help="Persisted benchmark run id used as the governance upstream input.",
     )
     parser.add_argument(
         "--dry-run",
@@ -43,13 +43,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     project_root = (
         Path(args.project_root) if args.project_root else _default_project_root()
     )
-    manifest_path = Path(args.manifest)
-    if not manifest_path.is_absolute():
-        manifest_path = project_root / manifest_path
 
-    record = run_governance_manifest(
+    record = run_governance_for_benchmark_run(
         project_root=project_root,
-        manifest_path=manifest_path,
+        benchmark_run_id=str(args.benchmark_run_id),
         dry_run=bool(args.dry_run),
     )
 

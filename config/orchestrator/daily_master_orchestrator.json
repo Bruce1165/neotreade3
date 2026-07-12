@@ -100,9 +100,9 @@
       "lab_id": null,
       "trigger_type": "scheduled_entry",
       "phase": "governance",
-      "entrypoint": "neotrade3.governance.runtime:run_governance_manifest",
+      "entrypoint": "neotrade3.governance.runtime:run_governance_for_benchmark_run",
       "args_template": {
-        "manifest": "config/benchmark/validation_seed_manifest.json"
+        "benchmark_run_id": "validation_seed_v1_batch"
       },
       "depends_on": [],
       "requires_publish_status": false,

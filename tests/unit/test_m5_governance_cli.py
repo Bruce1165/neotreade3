@@ -5,6 +5,11 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
+from neotrade3.benchmark import (
+    load_benchmark_run_manifest,
+    materialize_benchmark_batch_run,
+    run_benchmark_manifest,
+)
 from neotrade3.governance.cli import build_parser, main
 from neotrade3.governance.run_ledger import (
     read_governance_handoff_artifact,
@@ -32,13 +37,29 @@ def _prepare_project_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_governance_cli_parser_uses_default_manifest() -> None:
-    parser = build_parser()
-    args = parser.parse_args([])
+def _materialize_benchmark_run(project_root: Path, manifest_name: str) -> str:
+    manifest = load_benchmark_run_manifest(
+        project_root / "config" / "benchmark" / manifest_name
+    )
+    batch_result = run_benchmark_manifest(
+        project_root=project_root,
+        manifest=manifest,
+    )
+    materialize_benchmark_batch_run(
+        project_root=project_root,
+        batch_result=batch_result,
+    )
+    return batch_result.run_id
 
-    assert args.project_root is None
-    assert args.manifest == "config/benchmark/validation_seed_manifest.json"
-    assert args.dry_run is False
+
+def test_governance_cli_parser_requires_benchmark_run_id() -> None:
+    parser = build_parser()
+    try:
+        parser.parse_args([])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("parser should require --benchmark-run-id")
 
 
 def test_governance_cli_parser_accepts_explicit_arguments() -> None:
@@ -47,27 +68,36 @@ def test_governance_cli_parser_accepts_explicit_arguments() -> None:
         [
             "--project-root",
             "/tmp/neotrade3",
-            "--manifest",
-            "config/benchmark/validation_seed_v2_manifest.json",
+            "--benchmark-run-id",
+            "validation_seed_v2_batch",
             "--dry-run",
         ]
     )
 
     assert args.project_root == "/tmp/neotrade3"
-    assert args.manifest == "config/benchmark/validation_seed_v2_manifest.json"
+    assert args.benchmark_run_id == "validation_seed_v2_batch"
     assert args.dry_run is True
 
 
 def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
     buffer = StringIO()
 
     with redirect_stdout(buffer):
-        exit_code = main(["--project-root", str(project_root), "--dry-run"])
+        exit_code = main(
+            [
+                "--project-root",
+                str(project_root),
+                "--benchmark-run-id",
+                run_id,
+                "--dry-run",
+            ]
+        )
 
     payload = json.loads(buffer.getvalue())
     assert exit_code == 0
-    assert payload["source_run_id"] == "validation_seed_v1_batch"
+    assert payload["source_run_id"] == run_id
     assert payload["status"] == "completed"
     assert payload["source_layer"] == "M4"
     assert payload["projected_assessment_count"] == 2
@@ -92,6 +122,7 @@ def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> N
 
 def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_v2_manifest.json")
     buffer = StringIO()
 
     with redirect_stdout(buffer):
@@ -99,8 +130,8 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
             [
                 "--project-root",
                 str(project_root),
-                "--manifest",
-                "config/benchmark/validation_seed_v2_manifest.json",
+                "--benchmark-run-id",
+                run_id,
             ]
         )
 
@@ -117,7 +148,7 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
-    assert payload["source_run_id"] == "validation_seed_v2_batch"
+    assert payload["source_run_id"] == run_id
     assert payload["status"] == "completed"
     assert payload["source_layer"] == "M4"
     assert payload["projected_assessment_count"] == 2
@@ -140,3 +171,23 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     assert artifact_payload["projected_assessment_count"] == payload[
         "projected_assessment_count"
     ]
+
+
+def test_governance_cli_main_raises_for_missing_benchmark_artifact(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+
+    try:
+        main(
+            [
+                "--project-root",
+                str(project_root),
+                "--benchmark-run-id",
+                "missing_benchmark_run",
+            ]
+        )
+    except FileNotFoundError as exc:
+        assert "missing_benchmark_run" in str(exc)
+    else:
+        raise AssertionError("missing benchmark artifact should raise FileNotFoundError")

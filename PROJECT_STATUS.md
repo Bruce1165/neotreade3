@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-11
+**Last Updated**: 2026-07-13
 
 ---
 
@@ -347,6 +347,45 @@
   - 本轮代码级最小验证结果：
     - `python3 -m pytest -q tests/unit/test_m1_phase1_formal_objects.py` -> `8 passed`
     - `python3 -m py_compile ...` 已通过本轮涉及文件的语法校验
+- 2026-07-13（M4/M5 基线推进实现态更新）：
+  - `M4` 已完成 benchmark 主链接入统一运行路径：
+    - `neotrade3/benchmark/cli.py`
+    - `config/benchmark/validation_seed_manifest.json`
+    - `config/benchmark/validation_seed_v2_manifest.json`
+  - `M4` 已具备基准结果持久化与查询基线：
+    - `neotrade3/benchmark/artifact_writer.py`
+    - `neotrade3/benchmark/run_ledger.py`
+    - 已支持 `write/read/list` benchmark run ledger
+    - 已支持 persisted artifact raw readback
+  - `M4` 已补齐 persisted artifact 的类型化回读基线：
+    - `BenchmarkBatchRunResult.from_dict(...)`
+    - `BenchmarkAssessmentResult.from_dict(...)`
+    - `AssessmentSummary.from_dict(...)`
+    - `GapRecord.from_dict(...)`
+    - `TraceBundle.from_dict(...)`
+    - `InteractionGuardrailBreach.from_dict(...)`
+    - `read_benchmark_batch_run_result(...)`
+  - `M5` 已完成治理对象核、`M4 -> M5` handoff、artifact、ledger/readback、runtime/CLI、orchestrator-fit 基线：
+    - `neotrade3/governance/contracts.py`
+    - `neotrade3/governance/handoff.py`
+    - `neotrade3/governance/artifact_writer.py`
+    - `neotrade3/governance/run_ledger.py`
+    - `neotrade3/governance/runtime.py`
+    - `neotrade3/governance/cli.py`
+    - `apps/worker/main.py`
+    - `config/orchestrator/daily_master_orchestrator.json`
+  - `M5` 当前已在 worker/orchestrator 中注册显式 `GOVERNANCE` 阶段，且 `PlannedTask.args_template` 可透传到执行面。
+  - `M5` 已完成上游真值切换基线：
+    - shared runtime 不再重跑 benchmark manifest
+    - governance CLI 改为显式接收 `benchmark_run_id`
+    - worker/orchestrator governance task 改为消费 `benchmark_run_id`
+    - shared runtime 当前只消费 persisted typed `M4` benchmark artifact
+  - 当前必须明确的边界：
+    - `M4` 仍是 validation-seed benchmark 基线，不等于完整 benchmark 层
+    - `M5` 仍是治理接线基线，不等于完整 validation/promotion/reject 闭环
+  - 当前最直接下一步：
+    - 推进 `M3 backhalf` 正式主链化，补齐 hold/exit、decision lifecycle、局部/全局退出语义
+    - 之后再推进 `M4` 完整 benchmark、`M5` 闭环对象、version unification、`M6 Delivery Ready`
 
 ## 文档一致性说明
 
@@ -355,8 +394,10 @@
 - 进行中：
   - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
   - `M2/M3` 前半段最小正式消费切换已完成多段窄提交收口；正式对象/组装器、引擎 formal front 接线、API formal-front 消费切片与 workbench 优先级修正都已进入提交历史，top200 attribution report 所依赖的公共投影与 report 拆分也已在 `HEAD`
+  - `M4` 已具备 mainline runner、artifact/ledger 与 typed readback 基线
+  - `M5` 已具备 contract/handoff/persistence/ledger/runtime/orchestrator-fit 基线，且上游真值已切到 persisted `M4`
 - 下一步第一件事：
-  - 先更新交接与计划口径，并基于 repo 实时状态重新审计剩余 working tree，避免继续沿用“API/report formal-front 尚未提交”的过期判断
+  - 先推进 `M3 backhalf` 正式主链化，避免后续 `M4/M5/M6` 继续消费 bridge 或不完整退出语义
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 

@@ -15,9 +15,7 @@ from typing import Any, cast
 from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.governance.runtime import (
-    DEFAULT_GOVERNANCE_MANIFEST,
-    resolve_governance_manifest_path,
-    run_governance_manifest,
+    run_governance_for_benchmark_run,
 )
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
@@ -262,18 +260,16 @@ class BootstrapWorkerApp:
         def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
             project_root = Path(context.get("project_root", self.project_root))
             dry_run = bool(context.get("dry_run", False))
-            manifest_value = task.args_template.get(
-                "manifest",
-                DEFAULT_GOVERNANCE_MANIFEST,
-            )
+            benchmark_run_id = str(
+                task.args_template.get("benchmark_run_id", "") or ""
+            ).strip()
             try:
-                manifest_path = resolve_governance_manifest_path(
+                if not benchmark_run_id:
+                    raise ValueError("benchmark_run_id must be provided")
+
+                record = run_governance_for_benchmark_run(
                     project_root=project_root,
-                    manifest_path=str(manifest_value),
-                )
-                record = run_governance_manifest(
-                    project_root=project_root,
-                    manifest_path=manifest_path,
+                    benchmark_run_id=benchmark_run_id,
                     dry_run=dry_run,
                 )
                 return TaskResult(
@@ -294,7 +290,7 @@ class BootstrapWorkerApp:
                         "experiment_request_count": record.experiment_request_count,
                         "promotion_blocker_count": record.promotion_blocker_count,
                         "dry_run": dry_run,
-                        "manifest": str(manifest_path),
+                        "benchmark_run_id": benchmark_run_id,
                     },
                 )
             except Exception as e:
