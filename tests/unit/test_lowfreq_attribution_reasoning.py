@@ -5,6 +5,8 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
+from neotrade3.analysis.attribution_reasoning import resolve_sell_reason_bucket
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,12 +26,12 @@ ATTR_MODULE = _load_script_module(
 
 
 def test_sell_reason_bucket_uses_engine_canonical_exit_taxonomy() -> None:
-    assert ATTR_MODULE._sell_reason_bucket("创业板见顶确认候选：趋势转弱=是 | 广度转弱=是 | 代理回撤-10.5%") == (
+    assert resolve_sell_reason_bucket("创业板见顶确认候选：趋势转弱=是 | 广度转弱=是 | 代理回撤-10.5%") == (
         "market_top_confirmed"
     )
-    assert ATTR_MODULE._sell_reason_bucket("板块见顶确认：AI退潮") == "sector_top_confirmed"
-    assert ATTR_MODULE._sell_reason_bucket("早窗硬证伪退出：跌破买入价-5.2%（阈值-5.0%）") == "thesis_invalidated"
-    assert ATTR_MODULE._sell_reason_bucket("回测结束平仓") == "回测结束平仓"
+    assert resolve_sell_reason_bucket("板块见顶确认：AI退潮") == "sector_top_confirmed"
+    assert resolve_sell_reason_bucket("早窗硬证伪退出：跌破买入价-5.2%（阈值-5.0%）") == "thesis_invalidated"
+    assert resolve_sell_reason_bucket("回测结束平仓") == "回测结束平仓"
 
 
 def test_audit_daily_reason_distinguishes_entry_from_candidate() -> None:

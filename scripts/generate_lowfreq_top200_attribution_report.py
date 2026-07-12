@@ -690,18 +690,6 @@ def _extract_execution_reason(
     return "信号存在但未形成实际成交，需复核执行窗口"
 
 
-def _sell_reason_bucket(sell_reason: str) -> str:
-    return resolve_sell_reason_bucket(sell_reason)
-
-
-def _not_picked_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
-    return resolve_not_picked_primary_reason(daily_audits)
-
-
-def _candidate_only_primary_reason(daily_audits: list[dict[str, Any]]) -> str:
-    return resolve_candidate_only_primary_reason(daily_audits)
-
-
 def _analyze_topk(
     *,
     engine: LowFreqTradingEngineV16,
@@ -802,7 +790,7 @@ def _analyze_topk(
         first_sell_date = str(trade_window["first_sell_date"] or "")
         latest_exit_reason = str(trade_window["latest_exit_reason"] or "")
 
-        sell_reason_bucket = _sell_reason_bucket(latest_exit_reason)
+        sell_reason_bucket = resolve_sell_reason_bucket(latest_exit_reason)
         execution_primary_reason = ""
         if entry_dates:
             execution_primary_reason = _extract_execution_reason(
@@ -820,8 +808,8 @@ def _analyze_topk(
                 execution_one_price_limit_only=bool(execution_one_price_limit_only),
                 limit_up_pct=float(getattr(engine, "EXEC_LIMIT_UP_PCT", 9.8) or 9.8),
             )
-        candidate_only_primary_reason = _candidate_only_primary_reason(daily_audits)
-        not_picked_primary_reason = _not_picked_primary_reason(daily_audits)
+        candidate_only_primary_reason = resolve_candidate_only_primary_reason(daily_audits)
+        not_picked_primary_reason = resolve_not_picked_primary_reason(daily_audits)
         reason_decision = resolve_primary_reason_decision(
             bought=bought,
             held_to_top=held_to_top,
