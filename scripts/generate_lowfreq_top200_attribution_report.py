@@ -33,6 +33,11 @@ from neotrade3.analysis.attribution_report_row import (
 )
 from neotrade3.analysis.attribution_signal_pick_summary import build_attribution_signal_pick_summary
 from neotrade3.analysis.attribution_trade_window import build_attribution_trade_window
+from neotrade3.analysis.attribution_wave_segment import (
+    build_insufficient_history_wave_segment,
+    build_missing_wave_segment,
+    build_ok_wave_segment,
+)
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
 from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
@@ -232,10 +237,7 @@ def _compute_wave_segment(
         (str(code), f"{year}-01-01", f"{year}-12-31"),
     ).fetchall()
     if not rows_2025:
-        return {
-            "status": "missing_2025_prices",
-            "code": str(code),
-        }
+        return build_missing_wave_segment(code=str(code))
 
     top_row = max(rows_2025, key=lambda x: float(x[1] or 0.0))
     top_date = date.fromisoformat(str(top_row[0]))
@@ -247,27 +249,24 @@ def _compute_wave_segment(
         lookback_trading_days=int(lookback_trading_days),
     )
     if len(window) < 2:
-        return {
-            "status": "insufficient_history",
-            "code": str(code),
-            "top_date": top_date.isoformat(),
-            "top_close": round(top_close, 4),
-        }
+        return build_insufficient_history_wave_segment(
+            code=str(code),
+            top_date=top_date,
+            top_close=top_close,
+        )
 
     start_row = min(window[:-1], key=lambda x: float(x["close"]))
     start_close = float(start_row["close"])
     segment_return = (top_close - start_close) / max(start_close, 1e-9) * 100.0
-    return {
-        "status": "ok",
-        "code": str(code),
-        "segment_window_trading_days": int(lookback_trading_days),
-        "start_date": str(start_row["trade_date"]),
-        "start_close": round(start_close, 4),
-        "top_date": top_date.isoformat(),
-        "top_close": round(top_close, 4),
-        "segment_return_pct": round(float(segment_return), 2),
-        "segment_basis": "见顶日前180交易日窗口内最低收盘价 -> 2025年最高收盘价",
-    }
+    return build_ok_wave_segment(
+        code=str(code),
+        lookback_trading_days=int(lookback_trading_days),
+        start_date=str(start_row["trade_date"]),
+        start_close=start_close,
+        top_date=top_date,
+        top_close=top_close,
+        segment_return_pct=segment_return,
+    )
 
 
 def _signal_layer_snapshot(raw: Any) -> dict[str, Any]:
