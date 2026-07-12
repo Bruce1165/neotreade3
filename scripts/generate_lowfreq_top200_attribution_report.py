@@ -19,6 +19,7 @@ from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
+from neotrade3.analysis.attribution_report_row import build_attribution_report_row
 from neotrade3.analysis.attribution_signal_pick_summary import build_attribution_signal_pick_summary
 from neotrade3.analysis.attribution_trade_window import build_attribution_trade_window
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
@@ -837,33 +838,33 @@ def _analyze_topk(
 
         summary_counters[reason_bucket] += 1
         report_rows.append(
-            {
-                "rank": int(item["rank"]),
-                "code": code,
-                "name": name,
-                "sector": sector,
-                "annual_return_pct": float(item["annual_return_pct"]),
-                "segment_start_date": start_key,
-                "segment_top_date": top_key,
-                "segment_return_pct": float(segment["segment_return_pct"]),
-                "candidate_picked": bool(signal_pick_summary["candidate_picked"]),
-                "entry_picked": bool(signal_pick_summary["entry_picked"]),
-                "picked": bool(signal_pick_summary["picked"]),
-                "first_candidate_date": first_candidate_date,
-                "candidate_signal_count_in_segment": int(signal_pick_summary["candidate_signal_count_in_segment"]),
-                "first_entry_date": first_entry_date,
-                "first_signal_date": str(signal_pick_summary["first_signal_date"] or ""),
-                "entry_signal_count_in_segment": int(signal_pick_summary["entry_signal_count_in_segment"]),
-                "signal_count_in_segment": int(signal_pick_summary["signal_count_in_segment"]),
-                "bought": bought,
-                "first_buy_date": first_buy_date,
-                "first_sell_date": first_sell_date,
-                "held_to_top": held_to_top,
-                "primary_reason": primary_reason,
-                "reason_bucket": reason_bucket,
-                "daily_audits": daily_audits,
-                "relevant_trades": relevant_trades,
-            }
+            build_attribution_report_row(
+                rank=item["rank"],
+                code=code,
+                name=name,
+                sector=sector,
+                annual_return_pct=item["annual_return_pct"],
+                segment_start_date=start_key,
+                segment_top_date=top_key,
+                segment_return_pct=segment["segment_return_pct"],
+                candidate_picked=bool(signal_pick_summary["candidate_picked"]),
+                entry_picked=bool(signal_pick_summary["entry_picked"]),
+                picked=bool(signal_pick_summary["picked"]),
+                first_candidate_date=first_candidate_date,
+                candidate_signal_count_in_segment=signal_pick_summary["candidate_signal_count_in_segment"],
+                first_entry_date=first_entry_date,
+                first_signal_date=str(signal_pick_summary["first_signal_date"] or ""),
+                entry_signal_count_in_segment=signal_pick_summary["entry_signal_count_in_segment"],
+                signal_count_in_segment=signal_pick_summary["signal_count_in_segment"],
+                bought=bought,
+                first_buy_date=first_buy_date,
+                first_sell_date=first_sell_date,
+                held_to_top=held_to_top,
+                primary_reason=primary_reason,
+                reason_bucket=reason_bucket,
+                daily_audits=daily_audits,
+                relevant_trades=relevant_trades,
+            )
         )
 
     aggregate = build_attribution_aggregate_summary(report_rows, dict(summary_counters))
