@@ -1,12 +1,18 @@
-Status: active
+Status: superseded
 Owner: lowfreq / decision_engine
 Scope: Narrow `M3 backhalf production hold/exit wiring` slice after the persisted M5 truth switch
 Canonical: self
 Supersedes: none
-Superseded_by: none
+Superseded_by: `docs/superpowers/specs/2026-07-13-lowfreq-m3-position-snapshot-carrier-design.md`
 Last_reviewed: 2026-07-13
 
 # Lowfreq M3 Production Hold/Exit Wiring Design
+
+Superseded on 2026-07-13 after implementation feasibility audit showed that
+`formal_front.py` does not have the runtime inputs required to truthfully rebuild
+`position_contract_snapshot(...)`. The active replacement spec is:
+
+- `docs/superpowers/specs/2026-07-13-lowfreq-m3-position-snapshot-carrier-design.md`
 
 Date: 2026-07-13
 
