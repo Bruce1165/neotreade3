@@ -19,7 +19,6 @@ from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_artifact_payload import build_attribution_artifact_payload
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
-from neotrade3.analysis.attribution_backtest_payload import build_attribution_backtest_payload
 from neotrade3.analysis.attribution_daily_audit_payload import (
     build_candidate_signal_selected_audit,
     build_entry_signal_selected_audit,
@@ -69,6 +68,9 @@ from neotrade3.orchestration.report_runner_cli_summary import (
 from neotrade3.orchestration.report_runner_run_context import (
     build_lowfreq_report_run_context,
 )
+from neotrade3.orchestration.report_runner_backtest_source import (
+    load_lowfreq_report_backtest_payload,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -93,41 +95,6 @@ def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(level=level, format="%(asctime)s %(message)s")
     logging.getLogger("lowfreq_engine_v16_advanced").setLevel(logging.WARNING)
     logging.getLogger("apps.api.main").setLevel(logging.WARNING)
-
-
-def _load_backtest_payload(
-    *,
-    service: BootstrapApiService,
-    backtest_json: Optional[Path],
-    start_date: date,
-    end_date: date,
-    initial_capital: float,
-    max_positions_override: Optional[int],
-    execution_one_price_limit_only: bool,
-) -> dict[str, Any]:
-    if backtest_json and backtest_json.exists():
-        return json.loads(backtest_json.read_text(encoding="utf-8"))
-
-    engine = service._lowfreq_engine_v16()
-    if max_positions_override is not None:
-        engine.MAX_POSITIONS = int(max_positions_override)
-    if execution_one_price_limit_only:
-        engine.EXEC_BLOCK_ONLY_ONE_PRICE_LIMIT = True
-    metrics = engine.run_backtest(
-        start_date=start_date,
-        end_date=end_date,
-        initial_capital=float(initial_capital),
-        include_trades=True,
-    )
-    trades = metrics.get("trades", []) if isinstance(metrics, dict) else []
-    summary = dict(metrics) if isinstance(metrics, dict) else {}
-    summary.pop("trades", None)
-    return build_attribution_backtest_payload(
-        requested_by="script",
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        summary=summary,
-        trades=trades,
-    )
 
 
 def _a_share_universe_sql() -> str:
@@ -914,7 +881,7 @@ def main() -> int:
             output_dir,
             **build_ranking_ready_report_status(ranking_count=len(ranking)),
         )
-        backtest_payload = _load_backtest_payload(
+        backtest_payload = load_lowfreq_report_backtest_payload(
             service=service,
             backtest_json=args.backtest_json,
             start_date=date.fromisoformat(str(args.backtest_start)),
@@ -922,6 +889,7 @@ def main() -> int:
             initial_capital=float(args.initial_capital),
             max_positions_override=args.max_positions_override,
             execution_one_price_limit_only=bool(args.execution_one_price_limit_only),
+            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
         summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
         _write_status(
