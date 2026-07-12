@@ -19,7 +19,10 @@ from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
-from neotrade3.analysis.attribution_report_row import build_attribution_report_row
+from neotrade3.analysis.attribution_report_row import (
+    build_attribution_report_row,
+    build_attribution_segment_failed_row,
+)
 from neotrade3.analysis.attribution_signal_pick_summary import build_attribution_signal_pick_summary
 from neotrade3.analysis.attribution_trade_window import build_attribution_trade_window
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate, TradeRecord
@@ -737,19 +740,13 @@ def _analyze_topk(
         sector = str(item.get("sector") or "")
         if segment.get("status") != "ok":
             report_rows.append(
-                {
-                    "rank": item["rank"],
-                    "code": code,
-                    "name": name,
-                    "annual_return_pct": item["annual_return_pct"],
-                    "segment_status": str(segment.get("status") or "unknown"),
-                    "candidate_picked": False,
-                    "entry_picked": False,
-                    "picked": False,
-                    "bought": False,
-                    "held_to_top": False,
-                    "primary_reason": "主升段识别失败",
-                }
+                build_attribution_segment_failed_row(
+                    rank=item["rank"],
+                    code=code,
+                    name=name,
+                    annual_return_pct=item["annual_return_pct"],
+                    segment_status=str(segment.get("status") or "unknown"),
+                )
             )
             summary_counters["segment_failed"] += 1
             continue

@@ -5,6 +5,29 @@ from __future__ import annotations
 from typing import Any
 
 
+def build_attribution_segment_failed_row(
+    *,
+    rank: Any,
+    code: str,
+    name: str,
+    annual_return_pct: Any,
+    segment_status: str,
+) -> dict[str, Any]:
+    return {
+        "rank": int(rank),
+        "code": str(code),
+        "name": str(name),
+        "annual_return_pct": float(annual_return_pct),
+        "segment_status": str(segment_status or "unknown"),
+        "candidate_picked": False,
+        "entry_picked": False,
+        "picked": False,
+        "bought": False,
+        "held_to_top": False,
+        "primary_reason": "主升段识别失败",
+    }
+
+
 def build_attribution_report_row(
     *,
     rank: Any,

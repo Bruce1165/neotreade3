@@ -1,6 +1,45 @@
 from __future__ import annotations
 
-from neotrade3.analysis.attribution_report_row import build_attribution_report_row
+from neotrade3.analysis.attribution_report_row import (
+    build_attribution_report_row,
+    build_attribution_segment_failed_row,
+)
+
+
+def test_build_attribution_segment_failed_row_projects_current_failure_payload() -> None:
+    out = build_attribution_segment_failed_row(
+        rank="9",
+        code="300750",
+        name="宁德时代",
+        annual_return_pct="102.3",
+        segment_status="missing_2025_prices",
+    )
+
+    assert out == {
+        "rank": 9,
+        "code": "300750",
+        "name": "宁德时代",
+        "annual_return_pct": 102.3,
+        "segment_status": "missing_2025_prices",
+        "candidate_picked": False,
+        "entry_picked": False,
+        "picked": False,
+        "bought": False,
+        "held_to_top": False,
+        "primary_reason": "主升段识别失败",
+    }
+
+
+def test_build_attribution_segment_failed_row_keeps_unknown_status_fallback() -> None:
+    out = build_attribution_segment_failed_row(
+        rank=1,
+        code="000001",
+        name="平安银行",
+        annual_return_pct=12.5,
+        segment_status="",
+    )
+
+    assert out["segment_status"] == "unknown"
 
 
 def test_build_attribution_report_row_projects_full_payload_with_current_coercions() -> None:
