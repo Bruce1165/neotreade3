@@ -1320,6 +1320,7 @@ class LowFreqTradingEngineV16:
         trade: TradeRecord,
         current_date: date,
         snapshot: Optional[dict[str, Any]],
+        position_contract_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         audit_log = getattr(self, "_sell_signal_audit_current_run", None)
         if not isinstance(audit_log, list):
@@ -1364,6 +1365,11 @@ class LowFreqTradingEngineV16:
                 "watch_day": int(watch_day),
                 "watch_hits": int(getattr(trade, "market_top_watch_hits", 0) or 0),
                 "details": str(snap.get("details") or getattr(trade, "market_top_watch_last_reason", "") or ""),
+                "position_contract_snapshot": (
+                    dict(position_contract_snapshot)
+                    if isinstance(position_contract_snapshot, dict)
+                    else None
+                ),
             }
         )
 
@@ -2203,6 +2209,7 @@ class LowFreqTradingEngineV16:
         current_return_pct: Optional[float] = None,
         peak_return_pct: Optional[float] = None,
         profit_keep_ratio: Optional[float] = None,
+        position_contract_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         audit_log = getattr(self, "_sell_signal_audit_current_run", None)
         if not isinstance(audit_log, list):
@@ -2223,6 +2230,11 @@ class LowFreqTradingEngineV16:
                 "peak_return_pct": round(float(peak_return_pct), 2) if peak_return_pct is not None else None,
                 "profit_keep_ratio": round(float(profit_keep_ratio), 4) if profit_keep_ratio is not None else None,
                 "details": str(snap.get("details") or getattr(trade, "system_exit_grace_reason", "") or ""),
+                "position_contract_snapshot": (
+                    dict(position_contract_snapshot)
+                    if isinstance(position_contract_snapshot, dict)
+                    else None
+                ),
             }
         )
 
@@ -2297,6 +2309,7 @@ class LowFreqTradingEngineV16:
         snapshot: Optional[dict[str, Any]],
         leader_hold_active: bool,
         confirm_hits_required: int,
+        position_contract_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
         audit_log = getattr(self, "_sell_signal_audit_current_run", None)
         if not isinstance(audit_log, list):
@@ -2327,6 +2340,11 @@ class LowFreqTradingEngineV16:
                 "market_label": str(snap.get("market_label") or ""),
                 "sector_label": str(snap.get("sector") or ""),
                 "trend_state": str(snap.get("trend_state") or ""),
+                "position_contract_snapshot": (
+                    dict(position_contract_snapshot)
+                    if isinstance(position_contract_snapshot, dict)
+                    else None
+                ),
             }
         )
 
@@ -2427,6 +2445,11 @@ class LowFreqTradingEngineV16:
                 snapshot=snapshot,
                 leader_hold_active=leader_hold_active,
                 confirm_hits_required=confirm_hits,
+                position_contract_snapshot=self._position_contract_snapshot(
+                    trade=trade,
+                    current_date=current_date,
+                    sell=None,
+                ),
             )
             self._reset_system_exit_state(trade, scope)
 
@@ -2449,6 +2472,11 @@ class LowFreqTradingEngineV16:
                 snapshot=snapshot,
                 leader_hold_active=leader_hold_active,
                 confirm_hits_required=confirm_hits,
+                position_contract_snapshot=self._position_contract_snapshot(
+                    trade=trade,
+                    current_date=current_date,
+                    sell=None,
+                ),
             )
             return None
 
@@ -2469,9 +2497,26 @@ class LowFreqTradingEngineV16:
                 snapshot=snapshot,
                 leader_hold_active=leader_hold_active,
                 confirm_hits_required=confirm_hits,
+                position_contract_snapshot=self._position_contract_snapshot(
+                    trade=trade,
+                    current_date=current_date,
+                    sell=None,
+                ),
             )
 
         if bool(transition.get("confirm_signal")):
+            position_contract_sell_signal: Optional[SellSignal] = None
+            sell_signal = application.get("sell_signal")
+            if isinstance(sell_signal, dict):
+                position_contract_sell_signal = SellSignal(
+                    str(sell_signal.get("reason") or ""),
+                    float(sell_signal.get("confidence") or 0.0),
+                    str(sell_signal.get("details") or ""),
+                    source_layer=str(sell_signal.get("source_layer") or ""),
+                    exit_scope=str(sell_signal.get("exit_scope") or ""),
+                    invalidated_reason=str(sell_signal.get("invalidated_reason") or ""),
+                    invalidated_window=str(sell_signal.get("invalidated_window") or ""),
+                )
             if bool(application.get("use_grace")):
                 grace_values = application.get("grace_values") or {}
                 trade.system_exit_grace_used = bool(grace_values.get("used", False))
@@ -2489,6 +2534,11 @@ class LowFreqTradingEngineV16:
                     current_return_pct=current_return_pct,
                     peak_return_pct=peak_return_pct,
                     profit_keep_ratio=profit_keep_ratio,
+                    position_contract_snapshot=self._position_contract_snapshot(
+                        trade=trade,
+                        current_date=current_date,
+                        sell=None,
+                    ),
                 )
                 self._reset_all_system_exit_states(trade)
                 return None
@@ -2502,6 +2552,11 @@ class LowFreqTradingEngineV16:
                     current_return_pct=current_return_pct,
                     peak_return_pct=peak_return_pct,
                     profit_keep_ratio=profit_keep_ratio,
+                    position_contract_snapshot=self._position_contract_snapshot(
+                        trade=trade,
+                        current_date=current_date,
+                        sell=position_contract_sell_signal,
+                    ),
                 )
             if bool(application.get("emit_confirm_event")):
                 self._record_system_exit_audit_event(
@@ -2512,10 +2567,14 @@ class LowFreqTradingEngineV16:
                     snapshot=snapshot,
                     leader_hold_active=leader_hold_active,
                     confirm_hits_required=confirm_hits,
+                    position_contract_snapshot=self._position_contract_snapshot(
+                        trade=trade,
+                        current_date=current_date,
+                        sell=position_contract_sell_signal,
+                    ),
                 )
             if bool(application.get("reset_scope_on_confirm")):
                 self._reset_system_exit_state(trade, scope)
-            sell_signal = application.get("sell_signal")
             if isinstance(sell_signal, dict):
                 return SellSignal(
                     str(sell_signal.get("reason") or ""),
@@ -3032,6 +3091,11 @@ class LowFreqTradingEngineV16:
                     snapshot=None,
                     current_return_pct=self._current_return_pct(trade, current_price=float(sell_price)),
                     peak_return_pct=self._peak_return_pct(trade),
+                    position_contract_snapshot=self._position_contract_snapshot(
+                        trade=trade,
+                        current_date=current_date,
+                        sell=hard_stop,
+                    ),
                 )
             self._reset_all_system_exit_states(trade)
             return hard_stop
@@ -3047,6 +3111,11 @@ class LowFreqTradingEngineV16:
                 trade=trade,
                 current_date=current_date,
                 snapshot=self._trend_exhaustion_snapshot(trade, current_date, current_price=float(sell_price)),
+                position_contract_snapshot=self._position_contract_snapshot(
+                    trade=trade,
+                    current_date=current_date,
+                    sell=trend_sell,
+                ),
             )
             self._reset_all_system_exit_states(trade)
             return trend_sell

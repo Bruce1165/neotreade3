@@ -146,6 +146,15 @@ def test_trend_exhausted_triggers_for_profitable_trade_after_peak_drawdown() -> 
     assert "距峰值回撤" in sell.details
     events = [entry["event"] for entry in engine._sell_signal_audit_current_run]
     assert "trend_exhausted" in events
+    trend_event = engine._sell_signal_audit_current_run[-1]
+    position_snapshot = trend_event["position_contract_snapshot"]
+    assert isinstance(position_snapshot, dict)
+    assert position_snapshot["hold_state"] == "exit_ready"
+    assert position_snapshot["exit_ready"] is True
+    assert position_snapshot["exit_scope"] == "position_only"
+    assert position_snapshot["exit_reason_type"] == "trend_exhausted"
+    assert position_snapshot["current_stage"] == "exit"
+    assert position_snapshot["decision"] == "exit"
 
 
 def test_trend_exhausted_does_not_trigger_before_min_hold_days() -> None:
@@ -661,3 +670,19 @@ def test_sell_signal_audit_records_observe_review_confirm() -> None:
         "market_exit_review_started",
         "market_exit_confirmed",
     ]
+    first_snapshot = engine._sell_signal_audit_current_run[0]["position_contract_snapshot"]
+    assert isinstance(first_snapshot, dict)
+    assert first_snapshot["hold_state"] == "observe_watch"
+    assert first_snapshot["exit_ready"] is False
+    assert first_snapshot["current_stage"] == "hold_confirmed"
+    assert first_snapshot["decision"] == "hold"
+    assert first_snapshot["next_action"] == "hold"
+
+    confirmed_snapshot = engine._sell_signal_audit_current_run[-1]["position_contract_snapshot"]
+    assert isinstance(confirmed_snapshot, dict)
+    assert confirmed_snapshot["hold_state"] == "exit_ready"
+    assert confirmed_snapshot["exit_ready"] is True
+    assert confirmed_snapshot["exit_scope"] == "portfolio"
+    assert confirmed_snapshot["exit_reason_type"] == "market_top_confirmed"
+    assert confirmed_snapshot["current_stage"] == "exit_ready"
+    assert confirmed_snapshot["decision"] == "exit"
