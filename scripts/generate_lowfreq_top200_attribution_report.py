@@ -60,6 +60,9 @@ from neotrade3.orchestration.report_runner_status import (
     build_initializing_report_status,
     build_ranking_ready_report_status,
 )
+from neotrade3.orchestration.report_runner_artifact_paths import (
+    build_lowfreq_report_artifact_paths,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -938,10 +941,15 @@ def main() -> int:
     finally:
         conn.close()
 
-    ranking_path = output_dir / f"top{int(args.limit)}_{args.year}_ranking.json"
-    segments_path = output_dir / f"top{int(args.limit)}_{args.year}_wave_segments.json"
-    attribution_path = output_dir / f"top{int(args.limit)}_{args.year}_model_attribution.json"
-    report_path = output_dir / "report.md"
+    artifact_paths = build_lowfreq_report_artifact_paths(
+        output_dir=output_dir,
+        year=int(args.year),
+        limit=int(args.limit),
+    )
+    ranking_path = Path(artifact_paths["ranking_path"])
+    segments_path = Path(artifact_paths["segments_path"])
+    attribution_path = Path(artifact_paths["attribution_path"])
+    report_path = Path(artifact_paths["report_path"])
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     ranking_path.write_text(json.dumps(ranking, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
