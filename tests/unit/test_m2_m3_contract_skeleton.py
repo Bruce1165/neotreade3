@@ -16,13 +16,19 @@ from neotrade3.data_control import (
 )
 from neotrade3.decision_engine import (
     ENTRY_STATE_OBJECT_TYPE,
+    EXIT_STATE_OBJECT_TYPE,
+    HOLD_STATE_OBJECT_TYPE,
     IDENTIFY_STATE_OBJECT_TYPE,
     TRACKING_STATE_OBJECT_TYPE,
+    ExitState,
     EntryState,
+    HoldState,
     IdentifyState,
     TrackingState,
+    build_exit_state,
     build_entry_state,
     build_entry_state_from_formal_inputs,
+    build_hold_state,
     build_identify_state,
     build_identify_state_from_formal_inputs,
     build_m1_constraints_ref,
@@ -91,6 +97,42 @@ def test_build_m3_front_states_returns_formal_payloads() -> None:
     assert entry_payload["object_type"] == ENTRY_STATE_OBJECT_TYPE
     assert entry_payload["actionable"] is False
     assert entry_payload["blocking_reasons"] == ["m1_constraint_not_ready"]
+
+
+def test_build_m3_hold_exit_states_returns_formal_payloads() -> None:
+    hold = build_hold_state(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        status="watch",
+        hold_state="review_watch",
+        warning_flags=["market_exit_state:review"],
+        not_exit_reasons=["系统退出证据尚未达到正式确认门槛"],
+        evidence_ref={"noise_evidence": ["market breadth weakening"]},
+        m2_cycle_ref={"object_type": "small_cycle", "stock_code": "600000"},
+    )
+    exit_state = build_exit_state(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        status="exit_ready",
+        exit_ready=True,
+        exit_scope="position_only",
+        exit_reason_type="trend_exhausted",
+        exit_attribution_bucket="trend_exhaustion_exit",
+        evidence_ref={"exit_evidence_bundle": ["trend exhausted"]},
+        m2_cycle_ref={"object_type": "small_cycle", "stock_code": "600000"},
+    )
+
+    assert isinstance(hold, HoldState)
+    hold_payload = hold.to_payload()
+    assert hold_payload["object_type"] == HOLD_STATE_OBJECT_TYPE
+    assert hold_payload["hold_state"] == "review_watch"
+    assert hold_payload["warning_flags"] == ["market_exit_state:review"]
+
+    assert isinstance(exit_state, ExitState)
+    exit_payload = exit_state.to_payload()
+    assert exit_payload["object_type"] == EXIT_STATE_OBJECT_TYPE
+    assert exit_payload["exit_ready"] is True
+    assert exit_payload["exit_reason_type"] == "trend_exhausted"
 
 
 def test_build_small_cycle_requires_key_identifiers() -> None:

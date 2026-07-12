@@ -18,6 +18,7 @@ from neotrade3.benchmark import (
     build_benchmark_assessment_from_m2_shadow,
     build_benchmark_sample,
 )
+from neotrade3.decision_engine import build_m3_hold_exit_bridge
 from neotrade3.cycle_intelligence import (
     build_cycle_linkage_state,
     build_growth_potential_profile_from_formal_inputs,
@@ -180,6 +181,9 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
     assert payload["summary"]["hard_violation_count"] == 0
     assert payload["gap_records"] == []
     assert payload["interaction_guardrail_breaches"] == []
+    assert payload["summary"]["hold_quality_risk_summary"]["status"] == (
+        "missing_m3_hold_exit_bridge"
+    )
     assert payload["trace_bundle"]["object_type"] == TRACE_BUNDLE_OBJECT_TYPE
     assert payload["trace_bundle"]["m2_shadow"]["cycle_linkage_state"][
         "supports_continuation"
@@ -228,6 +232,100 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b1_seed() -> None:
     assert payload["trace_bundle"]["m2_shadow"]["cycle_linkage_state"][
         "supports_continuation"
     ] is True
+
+
+def test_build_benchmark_assessment_from_m2_shadow_projects_watch_hold_summary() -> None:
+    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    sample = build_benchmark_sample(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        sample_bucket=B3_BOUNDARY_COMPLEX_SAMPLE,
+        target_state_type=T2_RANGE_TARGET,
+        expected_target_state={
+            "small_cycle_state": {"allowed": ["S2 Advancing"]},
+        },
+        scenario_tags=["B3", "watch_hold"],
+    )
+    m3_context = build_m3_hold_exit_bridge(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        position_snapshot={
+            "hold_state": "review_watch",
+            "warning_flags": ["market_exit_state:review"],
+            "not_exit_reasons": ["系统退出证据尚未达到正式确认门槛"],
+            "noise_evidence": ["market breadth weakening"],
+            "hold_attribution_bucket": "hold_noise_watch",
+            "exit_evidence_bundle": ["market breadth weakening"],
+            "current_stage": "hold_confirmed",
+            "decision": "hold",
+            "next_action": "hold",
+            "last_transition": "2026-07-06",
+            "source_layer": "hold",
+            "exit_ready": False,
+        },
+    )
+
+    result = build_benchmark_assessment_from_m2_shadow(
+        sample=sample,
+        cycle=cycle,
+        shadow_bundle=shadow_bundle,
+        m1_context=m1_context,
+        m3_context=m3_context,
+    )
+
+    payload = result.to_payload()
+    assert payload["summary"]["hold_quality_risk_summary"]["status"] == "watch"
+    assert payload["summary"]["hold_quality_risk_summary"]["risk_level"] == "watch"
+    assert payload["summary"]["hold_quality_risk_summary"]["hold_state"] == "review_watch"
+    assert payload["trace_bundle"]["m3_context"]["position_status"] == "watch"
+
+
+def test_build_benchmark_assessment_from_m2_shadow_projects_exit_ready_summary() -> None:
+    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    sample = build_benchmark_sample(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        sample_bucket=B2_CONTROL_FAILURE_SAMPLE,
+        target_state_type=T1_PROHIBITION_TARGET,
+        expected_target_state={
+            "small_cycle_state": {"allowed": ["S2 Advancing"]},
+        },
+        scenario_tags=["B2", "exit_ready"],
+    )
+    m3_context = build_m3_hold_exit_bridge(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        position_snapshot={
+            "hold_state": "exit_ready",
+            "warning_flags": ["market_exit_state:confirmed"],
+            "exit_evidence_bundle": ["trend exhausted"],
+            "current_stage": "exit_ready",
+            "decision": "exit",
+            "next_action": "exit",
+            "last_transition": "2026-07-07",
+            "source_layer": "exit",
+            "exit_ready": True,
+            "exit_scope": "portfolio",
+            "exit_reason_type": "trend_exhausted",
+            "exit_attribution_bucket": "trend_exhaustion_exit",
+        },
+    )
+
+    result = build_benchmark_assessment_from_m2_shadow(
+        sample=sample,
+        cycle=cycle,
+        shadow_bundle=shadow_bundle,
+        m1_context=m1_context,
+        m3_context=m3_context,
+    )
+
+    payload = result.to_payload()
+    assert payload["summary"]["hold_quality_risk_summary"]["status"] == "exit_ready"
+    assert payload["summary"]["hold_quality_risk_summary"]["risk_level"] == "high"
+    assert payload["summary"]["hold_quality_risk_summary"]["exit_reason_type"] == (
+        "trend_exhausted"
+    )
+    assert payload["trace_bundle"]["m3_context"]["position_status"] == "exit_ready"
 
 
 def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:

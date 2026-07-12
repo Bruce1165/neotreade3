@@ -1,8 +1,10 @@
 """Decision engine exports for NeoTrade3."""
 
 from .assembler import (
+    build_exit_state,
     build_entry_state,
     build_entry_state_from_formal_inputs,
+    build_hold_state,
     build_identify_state,
     build_identify_state_from_formal_inputs,
     build_m1_constraints_ref,
@@ -11,28 +13,40 @@ from .assembler import (
 )
 from .contracts import (
     ENTRY_STATE_OBJECT_TYPE,
+    EXIT_STATE_OBJECT_TYPE,
+    HOLD_STATE_OBJECT_TYPE,
     IDENTIFY_STATE_OBJECT_TYPE,
     M3_OBJECT_VERSION,
     TRACKING_STATE_OBJECT_TYPE,
+    ExitState,
     EntryState,
+    HoldState,
     IdentifyState,
     TrackingState,
 )
+from .hold_exit_bridge import build_m3_hold_exit_bridge
 from .projections import project_lowfreq_formal_front
 
 __all__ = [
+    "build_exit_state",
     "build_entry_state",
     "build_entry_state_from_formal_inputs",
+    "build_hold_state",
     "build_identify_state",
     "build_identify_state_from_formal_inputs",
+    "build_m3_hold_exit_bridge",
     "build_m1_constraints_ref",
     "build_tracking_state",
     "build_tracking_state_from_formal_inputs",
     "ENTRY_STATE_OBJECT_TYPE",
+    "EXIT_STATE_OBJECT_TYPE",
+    "HOLD_STATE_OBJECT_TYPE",
     "IDENTIFY_STATE_OBJECT_TYPE",
     "M3_OBJECT_VERSION",
     "TRACKING_STATE_OBJECT_TYPE",
+    "ExitState",
     "EntryState",
+    "HoldState",
     "IdentifyState",
     "TrackingState",
     "project_lowfreq_formal_front",

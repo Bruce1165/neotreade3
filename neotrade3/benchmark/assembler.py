@@ -80,6 +80,56 @@ def _risk_leq(actual_level: str, max_level: str) -> bool:
     )
 
 
+def _build_hold_quality_risk_summary(m3_context: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(m3_context, Mapping):
+        return {"status": "missing_m3_hold_exit_bridge"}
+
+    hold_state = m3_context.get("hold_state")
+    exit_state = m3_context.get("exit_state")
+    position_status = str(m3_context.get("position_status") or "").strip()
+    hold_quality_signal = str(m3_context.get("hold_quality_signal") or "").strip()
+
+    if isinstance(exit_state, Mapping) and exit_state:
+        evidence_ref = exit_state.get("evidence_ref")
+        warning_flags = (
+            list(evidence_ref.get("warning_flags") or [])
+            if isinstance(evidence_ref, Mapping)
+            else []
+        )
+        return {
+            "status": "exit_ready",
+            "risk_level": "high",
+            "position_status": position_status or "exit_ready",
+            "hold_quality_signal": hold_quality_signal or "high_risk_exit",
+            "exit_reason_type": str(exit_state.get("exit_reason_type") or "").strip(),
+            "exit_scope": str(exit_state.get("exit_scope") or "").strip(),
+            "warning_flag_count": len(warning_flags),
+        }
+
+    if isinstance(hold_state, Mapping) and hold_state:
+        hold_state_value = str(hold_state.get("hold_state") or "").strip()
+        warning_flags = list(hold_state.get("warning_flags") or [])
+        summary = {
+            "position_status": position_status or "holding",
+            "hold_quality_signal": hold_quality_signal or "stable_hold",
+            "hold_state": hold_state_value,
+            "warning_flag_count": len(warning_flags),
+        }
+        if hold_state_value in {"review_watch", "observe_watch", "noise_watch", "grace_hold"}:
+            return {
+                "status": "watch",
+                "risk_level": "watch",
+                **summary,
+            }
+        return {
+            "status": "holding",
+            "risk_level": "low",
+            **summary,
+        }
+
+    return {"status": "missing_m3_hold_exit_bridge"}
+
+
 def _make_benchmark_run_id(sample: BenchmarkSample) -> str:
     return (
         f"m4seed:{sample.sample_bucket}:{sample.stock_code}:{sample.trade_date}:"
@@ -377,7 +427,7 @@ def build_benchmark_assessment_from_m2_shadow(
                 "replay_consistency_status"
             ),
         },
-        hold_quality_risk_summary={"status": "not_in_scope"},
+        hold_quality_risk_summary=_build_hold_quality_risk_summary(m3_context),
         interaction_risk_summary={
             "guardrail_breach_count": len(breaches),
             "continuation_supported": linkage_payload.get("supports_continuation"),

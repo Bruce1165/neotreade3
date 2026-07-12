@@ -11,7 +11,7 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
-from .contracts import EntryState, IdentifyState, TrackingState
+from .contracts import ExitState, HoldState, EntryState, IdentifyState, TrackingState
 
 
 def _require_text(value: object, *, field_name: str) -> str:
@@ -270,6 +270,68 @@ def build_entry_state(
         decision=_require_text(decision, field_name="decision"),
         actionable=bool(actionable),
         blocking_reasons=_copy_text_list(blocking_reasons),
+        evidence_ref=_copy_mapping(evidence_ref),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+    )
+
+
+def build_hold_state(
+    *,
+    stock_code: str,
+    trade_date: str,
+    status: str,
+    hold_state: str,
+    warning_flags: list[str] | None = None,
+    not_exit_reasons: list[str] | None = None,
+    evidence_ref: Mapping[str, Any] | None = None,
+    m2_cycle_ref: Mapping[str, Any] | None = None,
+    m1_constraints_ref: Mapping[str, Any] | None = None,
+) -> HoldState:
+    """Build a formal M3 hold-state object from already-decided inputs."""
+
+    return HoldState(
+        stock_code=_require_text(stock_code, field_name="stock_code"),
+        trade_date=_require_text(trade_date, field_name="trade_date"),
+        status=_require_text(status, field_name="status"),
+        hold_state=_require_text(hold_state, field_name="hold_state"),
+        warning_flags=_copy_text_list(warning_flags),
+        not_exit_reasons=_copy_text_list(not_exit_reasons),
+        evidence_ref=_copy_mapping(evidence_ref),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+    )
+
+
+def build_exit_state(
+    *,
+    stock_code: str,
+    trade_date: str,
+    status: str,
+    exit_ready: bool,
+    exit_scope: str,
+    exit_reason_type: str,
+    exit_attribution_bucket: str,
+    evidence_ref: Mapping[str, Any] | None = None,
+    m2_cycle_ref: Mapping[str, Any] | None = None,
+    m1_constraints_ref: Mapping[str, Any] | None = None,
+) -> ExitState:
+    """Build a formal M3 exit-state object from already-decided inputs."""
+
+    return ExitState(
+        stock_code=_require_text(stock_code, field_name="stock_code"),
+        trade_date=_require_text(trade_date, field_name="trade_date"),
+        status=_require_text(status, field_name="status"),
+        exit_ready=bool(exit_ready),
+        exit_scope=_require_text(exit_scope, field_name="exit_scope"),
+        exit_reason_type=_require_text(
+            exit_reason_type,
+            field_name="exit_reason_type",
+        ),
+        exit_attribution_bucket=_require_text(
+            exit_attribution_bucket,
+            field_name="exit_attribution_bucket",
+        ),
         evidence_ref=_copy_mapping(evidence_ref),
         m2_cycle_ref=_copy_mapping(m2_cycle_ref),
         m1_constraints_ref=_copy_mapping(m1_constraints_ref),
