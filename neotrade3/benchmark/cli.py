@@ -1,0 +1,84 @@
+"""CLI entrypoint for NeoTrade3 benchmark runs."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Sequence
+
+from .batch_runner import load_benchmark_run_manifest, run_benchmark_manifest
+from .run_ledger import materialize_benchmark_batch_run
+
+
+def _default_project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run a NeoTrade3 M4 benchmark manifest."
+    )
+    parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project root path (defaults to repository root).",
+    )
+    parser.add_argument(
+        "--manifest",
+        default="config/benchmark/validation_seed_manifest.json",
+        help="Benchmark run manifest path.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute without writing artifact/ledger outputs under var/.",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    project_root = (
+        Path(args.project_root) if args.project_root else _default_project_root()
+    )
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = project_root / manifest_path
+
+    manifest = load_benchmark_run_manifest(manifest_path)
+    batch_result = run_benchmark_manifest(
+        project_root=project_root,
+        manifest=manifest,
+    )
+    record = materialize_benchmark_batch_run(
+        project_root=project_root,
+        batch_result=batch_result,
+        dry_run=bool(args.dry_run),
+    )
+
+    print(
+        json.dumps(
+            {
+                "run_id": record.run_id,
+                "status": record.status,
+                "sample_count": record.sample_count,
+                "executed_sample_ids": list(record.executed_sample_ids),
+                "grade_summary": dict(record.grade_summary),
+                "bucket_summary": dict(record.bucket_summary),
+                "artifact_path": record.artifact_path,
+                "ledger_path": record.ledger_path,
+                "dry_run": bool(args.dry_run),
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
