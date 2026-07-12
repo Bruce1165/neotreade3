@@ -38,12 +38,24 @@ from .contracts import (
     PromotionBlocker,
     ValidationResult,
 )
+from .handoff import (
+    GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE,
+    GOVERNANCE_HANDOFF_BUNDLE_OBJECT_VERSION,
+    M4_SOURCE_LAYER,
+    GovernanceHandoffBundle,
+    build_governance_handoff_from_assessment,
+    build_governance_handoff_from_batch_run,
+)
 
 __all__ = [
     "CHANGE_REQUEST_OBJECT_TYPE",
     "DIAGNOSTIC_CHAIN_OBJECT_TYPE",
     "EXPERIMENT_REQUEST_OBJECT_TYPE",
+    "GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE",
+    "GOVERNANCE_HANDOFF_BUNDLE_OBJECT_VERSION",
     "GOVERNANCE_DECISION_RECORD_OBJECT_TYPE",
+    "GovernanceHandoffBundle",
+    "M4_SOURCE_LAYER",
     "M5_OBJECT_VERSION",
     "PATH_DATA_REPAIR",
     "PATH_EXPERIMENT_VALIDATION",
@@ -70,6 +82,8 @@ __all__ = [
     "build_diagnostic_chain",
     "build_experiment_request",
     "build_experiment_request_from_change_request",
+    "build_governance_handoff_from_assessment",
+    "build_governance_handoff_from_batch_run",
     "build_governance_decision_record",
     "build_promotion_blocker",
     "build_promotion_blocker_from_diagnostic",
