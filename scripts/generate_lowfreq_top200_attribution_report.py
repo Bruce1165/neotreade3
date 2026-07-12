@@ -53,6 +53,13 @@ from neotrade3.analysis.attribution_signal_snapshot import build_attribution_sig
 from neotrade3.decision_engine.cross_sector_wave_policy import (
     is_cross_sector_wave_mismatch,
 )
+from neotrade3.orchestration.report_runner_status import (
+    build_analysis_ready_report_status,
+    build_backtest_ready_report_status,
+    build_done_report_status,
+    build_initializing_report_status,
+    build_ranking_ready_report_status,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -876,12 +883,22 @@ def main() -> int:
     report_id = str(args.report_id or f"{top_label}_{args.year}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
     output_dir = PROJECT_ROOT / "var/artifacts" / f"lowfreq_{top_label}_attribution" / report_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_status(output_dir, stage="initializing", year=int(args.year), limit=int(args.limit), report_id=report_id)
+    _write_status(
+        output_dir,
+        **build_initializing_report_status(
+            year=int(args.year),
+            limit=int(args.limit),
+            report_id=report_id,
+        ),
+    )
 
     conn = sqlite3.connect(str(DB_PATH))
     try:
         ranking = _load_top_ranking(conn, year=int(args.year), limit=int(args.limit))
-        _write_status(output_dir, stage="ranking_ready", ranking_count=len(ranking))
+        _write_status(
+            output_dir,
+            **build_ranking_ready_report_status(ranking_count=len(ranking)),
+        )
         backtest_payload = _load_backtest_payload(
             service=service,
             backtest_json=args.backtest_json,
@@ -894,10 +911,11 @@ def main() -> int:
         summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
         _write_status(
             output_dir,
-            stage="backtest_ready",
-            ranking_count=len(ranking),
-            total_return_pct=(summary.get("total_return_pct") if isinstance(summary, dict) else None),
-            total_trades=(summary.get("total_trades") if isinstance(summary, dict) else None),
+            **build_backtest_ready_report_status(
+                ranking_count=len(ranking),
+                total_return_pct=(summary.get("total_return_pct") if isinstance(summary, dict) else None),
+                total_trades=(summary.get("total_trades") if isinstance(summary, dict) else None),
+            ),
         )
         engine = service._lowfreq_engine_v16()
         if args.max_positions_override is not None:
@@ -912,9 +930,10 @@ def main() -> int:
         )
         _write_status(
             output_dir,
-            stage="analysis_ready",
-            ranking_count=len(ranking),
-            aggregate=aggregate,
+            **build_analysis_ready_report_status(
+                ranking_count=len(ranking),
+                aggregate=aggregate,
+            ),
         )
     finally:
         conn.close()
@@ -947,12 +966,13 @@ def main() -> int:
     )
     _write_status(
         output_dir,
-        stage="done",
-        report_id=report_id,
-        ranking_path=str(ranking_path),
-        segments_path=str(segments_path),
-        attribution_path=str(attribution_path),
-        report_path=str(report_path),
+        **build_done_report_status(
+            report_id=report_id,
+            ranking_path=ranking_path,
+            segments_path=segments_path,
+            attribution_path=attribution_path,
+            report_path=report_path,
+        ),
     )
 
     print(
