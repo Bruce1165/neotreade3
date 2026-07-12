@@ -63,6 +63,9 @@ from neotrade3.orchestration.report_runner_status import (
 from neotrade3.orchestration.report_runner_artifact_paths import (
     build_lowfreq_report_artifact_paths,
 )
+from neotrade3.orchestration.report_runner_cli_summary import (
+    build_lowfreq_report_success_summary,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -985,16 +988,15 @@ def main() -> int:
 
     print(
         json.dumps(
-            {
-                "status": "ok",
-                "report_id": report_id,
-                "output_dir": str(output_dir),
-                "ranking_path": str(ranking_path),
-                "segments_path": str(segments_path),
-                "attribution_path": str(attribution_path),
-                "report_path": str(report_path),
-                "aggregate": aggregate,
-            },
+            build_lowfreq_report_success_summary(
+                report_id=report_id,
+                output_dir=output_dir,
+                ranking_path=ranking_path,
+                segments_path=segments_path,
+                attribution_path=attribution_path,
+                report_path=report_path,
+                aggregate=aggregate,
+            ),
             ensure_ascii=False,
             indent=2,
         )
