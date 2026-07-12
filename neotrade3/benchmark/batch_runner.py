@@ -25,6 +25,14 @@ def _copy_str_list(value: Any, *, field_name: str) -> tuple[str, ...]:
     return tuple(str(item).strip() for item in value if str(item).strip())
 
 
+def _copy_int_dict(value: Any, *, field_name: str) -> dict[str, int]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{field_name} must be a JSON object")
+    return {str(key): int(item) for key, item in value.items()}
+
+
 @dataclass(frozen=True)
 class BenchmarkRunManifest:
     run_id: str
@@ -73,6 +81,41 @@ class BenchmarkBatchRunResult:
             "bucket_summary": dict(self.bucket_summary),
             "results": [item.to_payload() for item in self.results],
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "BenchmarkBatchRunResult":
+        if not isinstance(payload, dict):
+            raise TypeError("benchmark batch run result root must be a JSON object")
+        run_id = str(payload.get("run_id") or "").strip()
+        registry_path = str(payload.get("registry_path") or "").strip()
+        if not run_id:
+            raise ValueError("run_id must be non-empty")
+        if not registry_path:
+            raise ValueError("registry_path must be non-empty")
+
+        results_payload = payload.get("results", [])
+        if not isinstance(results_payload, list):
+            raise TypeError("results must be a JSON array")
+
+        return cls(
+            run_id=run_id,
+            registry_path=registry_path,
+            executed_sample_ids=_copy_str_list(
+                payload.get("executed_sample_ids"),
+                field_name="executed_sample_ids",
+            ),
+            grade_summary=_copy_int_dict(
+                payload.get("grade_summary"),
+                field_name="grade_summary",
+            ),
+            bucket_summary=_copy_int_dict(
+                payload.get("bucket_summary"),
+                field_name="bucket_summary",
+            ),
+            results=tuple(
+                BenchmarkAssessmentResult.from_dict(item) for item in results_payload
+            ),
+        )
 
 
 def load_benchmark_run_manifest(file_path: str | Path) -> BenchmarkRunManifest:

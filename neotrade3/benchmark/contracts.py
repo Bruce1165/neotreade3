@@ -35,6 +35,12 @@ def _copy_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
+def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{field_name} must be a JSON object")
+    return value
+
+
 def _copy_str_list(value: Iterable[object] | None, *, field_name: str) -> list[str]:
     if value is None:
         return []
@@ -122,6 +128,55 @@ class AssessmentSummary:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "AssessmentSummary":
+        payload_mapping = _require_mapping(payload, field_name="assessment_summary")
+        return cls(
+            benchmark_run_id=_require_text(
+                payload_mapping.get("benchmark_run_id"),
+                field_name="benchmark_run_id",
+            ),
+            symbol=_require_text(payload_mapping.get("symbol"), field_name="symbol"),
+            trade_date=_require_text(
+                payload_mapping.get("trade_date"),
+                field_name="trade_date",
+            ),
+            assessment_grade=_require_text(
+                payload_mapping.get("assessment_grade"),
+                field_name="assessment_grade",
+            ),
+            hard_violation_count=int(payload_mapping.get("hard_violation_count", 0)),
+            warn_count=int(payload_mapping.get("warn_count", 0)),
+            sample_bucket_summary=_copy_mapping(
+                payload_mapping.get("sample_bucket_summary")
+            ),
+            gap_group_distribution=_copy_mapping(
+                payload_mapping.get("gap_group_distribution")
+            ),
+            stability_risk_summary=_copy_mapping(
+                payload_mapping.get("stability_risk_summary")
+            ),
+            hold_quality_risk_summary=_copy_mapping(
+                payload_mapping.get("hold_quality_risk_summary")
+            ),
+            interaction_risk_summary=_copy_mapping(
+                payload_mapping.get("interaction_risk_summary")
+            ),
+            rule_version=_require_text(
+                payload_mapping.get("rule_version", "m4_benchmark_seed.v1alpha1"),
+                field_name="rule_version",
+            ),
+            object_type=str(
+                payload_mapping.get("object_type", ASSESSMENT_SUMMARY_OBJECT_TYPE)
+            ),
+            object_version=int(
+                payload_mapping.get(
+                    "object_version",
+                    ASSESSMENT_SUMMARY_OBJECT_VERSION,
+                )
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class GapRecord:
@@ -168,6 +223,65 @@ class GapRecord:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "GapRecord":
+        payload_mapping = _require_mapping(payload, field_name="gap_record")
+        return cls(
+            gap_id=_require_text(payload_mapping.get("gap_id"), field_name="gap_id"),
+            symbol=_require_text(payload_mapping.get("symbol"), field_name="symbol"),
+            trade_date=_require_text(
+                payload_mapping.get("trade_date"),
+                field_name="trade_date",
+            ),
+            date_range=_require_text(
+                payload_mapping.get("date_range"),
+                field_name="date_range",
+            ),
+            sample_bucket=_require_text(
+                payload_mapping.get("sample_bucket"),
+                field_name="sample_bucket",
+            ),
+            layer_scope=_require_text(
+                payload_mapping.get("layer_scope"),
+                field_name="layer_scope",
+            ),
+            gap_group=_require_text(
+                payload_mapping.get("gap_group"),
+                field_name="gap_group",
+            ),
+            gap_label=_require_text(
+                payload_mapping.get("gap_label"),
+                field_name="gap_label",
+            ),
+            severity=_require_text(
+                payload_mapping.get("severity"),
+                field_name="severity",
+            ),
+            target_state_type=_require_text(
+                payload_mapping.get("target_state_type"),
+                field_name="target_state_type",
+            ),
+            expected_target_state=_copy_mapping(
+                payload_mapping.get("expected_target_state")
+            ),
+            actual_state=_copy_mapping(payload_mapping.get("actual_state")),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            trace_id=str(payload_mapping.get("trace_id", "") or "").strip(),
+            rule_version=str(
+                payload_mapping.get("rule_version", "m4_benchmark_seed.v1alpha1") or ""
+            ).strip()
+            or "m4_benchmark_seed.v1alpha1",
+            input_data_version=str(
+                payload_mapping.get("input_data_version", "m1_phase1.v1") or ""
+            ).strip()
+            or "m1_phase1.v1",
+            benchmark_run_id=str(payload_mapping.get("benchmark_run_id", "") or "").strip(),
+            object_type=str(payload_mapping.get("object_type", GAP_RECORD_OBJECT_TYPE)),
+            object_version=int(
+                payload_mapping.get("object_version", GAP_RECORD_OBJECT_VERSION)
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class TraceBundle:
@@ -204,6 +318,43 @@ class TraceBundle:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "TraceBundle":
+        payload_mapping = _require_mapping(payload, field_name="trace_bundle")
+        return cls(
+            trace_id=_require_text(
+                payload_mapping.get("trace_id"),
+                field_name="trace_id",
+            ),
+            symbol=_require_text(payload_mapping.get("symbol"), field_name="symbol"),
+            trade_date=_require_text(
+                payload_mapping.get("trade_date"),
+                field_name="trade_date",
+            ),
+            sample_bucket=_require_text(
+                payload_mapping.get("sample_bucket"),
+                field_name="sample_bucket",
+            ),
+            target_state_type=_require_text(
+                payload_mapping.get("target_state_type"),
+                field_name="target_state_type",
+            ),
+            m1_context=_copy_mapping(payload_mapping.get("m1_context")),
+            m2_formal=_copy_mapping(payload_mapping.get("m2_formal")),
+            m2_shadow=_copy_mapping(payload_mapping.get("m2_shadow")),
+            m3_context=_copy_mapping(payload_mapping.get("m3_context")),
+            m4_assessment=_copy_mapping(payload_mapping.get("m4_assessment")),
+            benchmark_run_id=str(payload_mapping.get("benchmark_run_id", "") or "").strip(),
+            rule_version=str(
+                payload_mapping.get("rule_version", "m4_benchmark_seed.v1alpha1") or ""
+            ).strip()
+            or "m4_benchmark_seed.v1alpha1",
+            object_type=str(payload_mapping.get("object_type", TRACE_BUNDLE_OBJECT_TYPE)),
+            object_version=int(
+                payload_mapping.get("object_version", TRACE_BUNDLE_OBJECT_VERSION)
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class InteractionGuardrailBreach:
@@ -238,6 +389,59 @@ class InteractionGuardrailBreach:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "InteractionGuardrailBreach":
+        payload_mapping = _require_mapping(
+            payload,
+            field_name="interaction_guardrail_breach",
+        )
+        return cls(
+            breach_id=_require_text(
+                payload_mapping.get("breach_id"),
+                field_name="breach_id",
+            ),
+            symbol=_require_text(payload_mapping.get("symbol"), field_name="symbol"),
+            trade_date=_require_text(
+                payload_mapping.get("trade_date"),
+                field_name="trade_date",
+            ),
+            sample_bucket=_require_text(
+                payload_mapping.get("sample_bucket"),
+                field_name="sample_bucket",
+            ),
+            guardrail_code=_require_text(
+                payload_mapping.get("guardrail_code"),
+                field_name="guardrail_code",
+            ),
+            severity=_require_text(
+                payload_mapping.get("severity"),
+                field_name="severity",
+            ),
+            summary=_require_text(
+                payload_mapping.get("summary"),
+                field_name="summary",
+            ),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            trace_id=str(payload_mapping.get("trace_id", "") or "").strip(),
+            benchmark_run_id=str(payload_mapping.get("benchmark_run_id", "") or "").strip(),
+            rule_version=str(
+                payload_mapping.get("rule_version", "m4_benchmark_seed.v1alpha1") or ""
+            ).strip()
+            or "m4_benchmark_seed.v1alpha1",
+            object_type=str(
+                payload_mapping.get(
+                    "object_type",
+                    INTERACTION_GUARDRAIL_BREACH_OBJECT_TYPE,
+                )
+            ),
+            object_version=int(
+                payload_mapping.get(
+                    "object_version",
+                    INTERACTION_GUARDRAIL_BREACH_OBJECT_VERSION,
+                )
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class BenchmarkAssessmentResult:
@@ -257,6 +461,39 @@ class BenchmarkAssessmentResult:
                 item.to_payload() for item in self.interaction_guardrail_breaches
             ],
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "BenchmarkAssessmentResult":
+        payload_mapping = _require_mapping(
+            payload,
+            field_name="benchmark_assessment_result",
+        )
+        gap_records_payload = payload_mapping.get("gap_records", [])
+        interaction_breaches_payload = payload_mapping.get(
+            "interaction_guardrail_breaches",
+            [],
+        )
+        if not isinstance(gap_records_payload, list):
+            raise TypeError("gap_records must be a JSON array")
+        if not isinstance(interaction_breaches_payload, list):
+            raise TypeError("interaction_guardrail_breaches must be a JSON array")
+
+        trace_bundle_payload = payload_mapping.get("trace_bundle")
+        return cls(
+            summary=AssessmentSummary.from_dict(payload_mapping.get("summary")),
+            gap_records=tuple(
+                GapRecord.from_dict(item) for item in gap_records_payload
+            ),
+            trace_bundle=(
+                None
+                if trace_bundle_payload is None
+                else TraceBundle.from_dict(trace_bundle_payload)
+            ),
+            interaction_guardrail_breaches=tuple(
+                InteractionGuardrailBreach.from_dict(item)
+                for item in interaction_breaches_payload
+            ),
+        )
 
 
 def build_benchmark_sample(

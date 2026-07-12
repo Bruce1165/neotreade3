@@ -161,6 +161,18 @@ def read_benchmark_run_artifact(
     return payload if isinstance(payload, dict) else None
 
 
+def read_benchmark_batch_run_result(
+    *,
+    project_root: str | Path,
+    run_id: str,
+) -> BenchmarkBatchRunResult | None:
+    artifact_file = _artifact_file(project_root=Path(project_root), run_id=run_id)
+    if not artifact_file.exists():
+        return None
+    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+    return BenchmarkBatchRunResult.from_dict(payload)
+
+
 def list_benchmark_run_ledgers(
     *,
     project_root: str | Path,
