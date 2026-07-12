@@ -7,13 +7,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from neotrade3.benchmark.batch_runner import (
-    load_benchmark_run_manifest,
-    run_benchmark_manifest,
-)
-
-from .handoff import build_governance_handoff_from_batch_run
-from .run_ledger import materialize_governance_handoff
+from .runtime import DEFAULT_GOVERNANCE_MANIFEST, run_governance_manifest
 
 
 def _default_project_root() -> Path:
@@ -31,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--manifest",
-        default="config/benchmark/validation_seed_manifest.json",
+        default=DEFAULT_GOVERNANCE_MANIFEST,
         help="Benchmark run manifest path used as the governance upstream input.",
     )
     parser.add_argument(
@@ -53,15 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not manifest_path.is_absolute():
         manifest_path = project_root / manifest_path
 
-    manifest = load_benchmark_run_manifest(manifest_path)
-    batch_result = run_benchmark_manifest(
+    record = run_governance_manifest(
         project_root=project_root,
-        manifest=manifest,
-    )
-    bundle = build_governance_handoff_from_batch_run(batch_result=batch_result)
-    record = materialize_governance_handoff(
-        project_root=project_root,
-        bundle=bundle,
+        manifest_path=manifest_path,
         dry_run=bool(args.dry_run),
     )
 

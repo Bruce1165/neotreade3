@@ -73,6 +73,7 @@ class DailyMasterOrchestrator:
                     depends_on=task.depends_on,
                     outputs=task.outputs,
                     requires_publish_status=task.requires_publish_status,
+                    args_template=dict(task.args_template),
                     status=status,
                     skip_reason=skip_reason,
                 )

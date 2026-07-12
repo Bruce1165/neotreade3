@@ -14,6 +14,11 @@ from typing import Any, cast
 
 from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 from neotrade3.data_control import DataControlPipeline
+from neotrade3.governance.runtime import (
+    DEFAULT_GOVERNANCE_MANIFEST,
+    resolve_governance_manifest_path,
+    run_governance_manifest,
+)
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
 from neotrade3.labs.contracts import materialize_lab_runtime_artifacts
@@ -24,7 +29,13 @@ from neotrade3.orchestration import (
     OrchestratorRunLedgerEntry,
     OrchestratorTaskLedgerEntry,
 )
-from neotrade3.orchestration.models import DailyRunPlan, OrchestrationPhase, PlannedTask, RunStatus, TaskResult
+from neotrade3.orchestration.models import (
+    DailyRunPlan,
+    OrchestrationPhase,
+    PlannedTask,
+    RunStatus,
+    TaskResult,
+)
 
 
 class BootstrapWorkerApp:
@@ -245,6 +256,58 @@ class BootstrapWorkerApp:
                 )
         return executor
 
+    def _create_governance_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for GOVERNANCE phase tasks."""
+
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            project_root = Path(context.get("project_root", self.project_root))
+            dry_run = bool(context.get("dry_run", False))
+            manifest_value = task.args_template.get(
+                "manifest",
+                DEFAULT_GOVERNANCE_MANIFEST,
+            )
+            try:
+                manifest_path = resolve_governance_manifest_path(
+                    project_root=project_root,
+                    manifest_path=str(manifest_value),
+                )
+                record = run_governance_manifest(
+                    project_root=project_root,
+                    manifest_path=manifest_path,
+                    dry_run=dry_run,
+                )
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK,
+                    lab_id=task.lab_id,
+                    message="governance handoff materialized successfully",
+                    artifact_refs=[record.artifact_path, record.ledger_path],
+                    details={
+                        "source_run_id": record.source_run_id,
+                        "status": record.status,
+                        "source_layer": record.source_layer,
+                        "projected_assessment_count": record.projected_assessment_count,
+                        "projected_issue_count": record.projected_issue_count,
+                        "diagnostic_count": record.diagnostic_count,
+                        "change_request_count": record.change_request_count,
+                        "experiment_request_count": record.experiment_request_count,
+                        "promotion_blocker_count": record.promotion_blocker_count,
+                        "dry_run": dry_run,
+                        "manifest": str(manifest_path),
+                    },
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"governance execution error: {e}",
+                )
+
+        return executor
+
     def _create_preflight_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
         """Create executor for PREFLIGHT phase tasks."""
         def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
@@ -377,6 +440,7 @@ class BootstrapWorkerApp:
             OrchestrationPhase.DAILY_LAB_JOBS: self._create_lab_executor(),
             OrchestrationPhase.LEARNING_LOOP: self._create_learning_executor(learning),
             OrchestrationPhase.ISSUE_AGGREGATION_AND_CLOSEOUT: self._create_issue_executor(issue_center),
+            OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
             OrchestrationPhase.PREFLIGHT: self._create_preflight_executor(),
         }
 

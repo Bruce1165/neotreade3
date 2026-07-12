@@ -7,7 +7,8 @@
     "publish_gated_jobs",
     "daily_lab_jobs",
     "learning_loop",
-    "issue_aggregation_and_closeout"
+    "issue_aggregation_and_closeout",
+    "governance"
   ],
   "tasks": [
     {
@@ -93,6 +94,22 @@
       "failure_policy": "continue_with_issue",
       "retry_policy": "single_retry",
       "issue_tags": ["lab", "trading"]
+    },
+    {
+      "task_id": "governance.materialize_handoff",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "governance",
+      "entrypoint": "neotrade3.governance.runtime:run_governance_manifest",
+      "args_template": {
+        "manifest": "config/benchmark/validation_seed_manifest.json"
+      },
+      "depends_on": [],
+      "requires_publish_status": false,
+      "outputs": ["governance_handoff_artifact", "governance_handoff_ledger"],
+      "failure_policy": "halt_run",
+      "retry_policy": "no_retry",
+      "issue_tags": ["governance", "handoff"]
     }
   ]
 }
