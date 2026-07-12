@@ -5,6 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 
+def build_simple_stage_audit(*, audit_date: str, stage: str, reason: str) -> dict[str, Any]:
+    return {
+        "date": str(audit_date or ""),
+        "stage": str(stage or ""),
+        "reason": str(reason or ""),
+    }
+
+
 def build_entry_signal_selected_audit(*, audit_date: str, signal: dict[str, Any]) -> dict[str, Any]:
     return {
         "date": str(audit_date or ""),

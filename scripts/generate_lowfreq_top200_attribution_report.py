@@ -21,6 +21,7 @@ from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_in
 from neotrade3.analysis.attribution_daily_audit_payload import (
     build_candidate_signal_selected_audit,
     build_entry_signal_selected_audit,
+    build_simple_stage_audit,
 )
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
 from neotrade3.analysis.attribution_report_row import (
@@ -448,11 +449,11 @@ def _audit_daily_reason(
 ) -> dict[str, Any]:
     market_state = ctx.market_filter_state(target_date)
     if market_state["filtered"]:
-        return {
-            "date": target_date.isoformat(),
-            "stage": "market_filtered",
-            "reason": f"市场情绪过滤（{market_state['sentiment']} {market_state['score']:.0f}分）",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="market_filtered",
+            reason=f"市场情绪过滤（{market_state['sentiment']} {market_state['score']:.0f}分）",
+        )
 
     entry_signals = ctx.entry_signals(target_date)
     if str(code) in entry_signals:
@@ -469,99 +470,99 @@ def _audit_daily_reason(
     if sector_str in hot_sectors:
         seed_codes = ctx.sector_seed_codes(sector_str, target_date)
         if str(code) not in seed_codes:
-            return {
-                "date": target_date.isoformat(),
-                "stage": "sector_seed_miss",
-                "reason": "所属热点板块内未进入当日涨幅前20种子",
-            }
+            return build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="sector_seed_miss",
+                reason="所属热点板块内未进入当日涨幅前20种子",
+            )
         candidates = ctx.sector_candidates(sector_str, target_date)
         cand = candidates.get(str(code))
         if cand is None:
-            return {
-                "date": target_date.isoformat(),
-                "stage": "sector_candidate_filtered",
-                "reason": "进入板块种子但在候选阶段被硬过滤（基本面/结构/focus/历史）",
-            }
+            return build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="sector_candidate_filtered",
+                reason="进入板块种子但在候选阶段被硬过滤（基本面/结构/focus/历史）",
+            )
         required = float(engine.BUY_THRESHOLD)
         nonconfirm_bonus = float(engine.CUP_HANDLE_NONCONFIRM_THRESHOLD_BONUS or 0.0)
         if nonconfirm_bonus > 0 and not bool(getattr(cand, "cup_handle_ok", False)):
             required += nonconfirm_bonus
         if float(cand.buy_score) < required:
-            return {
-                "date": target_date.isoformat(),
-                "stage": "score_below_threshold",
-                "reason": f"评分未达门槛（{cand.buy_score:.1f} < {required:.1f}）",
-            }
+            return build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="score_below_threshold",
+                reason=f"评分未达门槛（{cand.buy_score:.1f} < {required:.1f}）",
+            )
         if str(cand.role) == "跟随":
-            return {
-                "date": target_date.isoformat(),
-                "stage": "follower_filtered",
-                "reason": "跟随股过滤",
-            }
+            return build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="follower_filtered",
+                reason="跟随股过滤",
+            )
         if float(cand.sector_resonance) < float(engine.MIN_RESONANCE):
-            return {
-                "date": target_date.isoformat(),
-                "stage": "resonance_filtered",
-                "reason": f"共振不足（{cand.sector_resonance:.0%} < {engine.MIN_RESONANCE:.0%}）",
-            }
-        return {
-            "date": target_date.isoformat(),
-            "stage": "sector_candidate_not_selected",
-            "reason": "通过板块候选但未进入最终信号，需复核当日去重/并列排序",
-        }
+            return build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="resonance_filtered",
+                reason=f"共振不足（{cand.sector_resonance:.0%} < {engine.MIN_RESONANCE:.0%}）",
+            )
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="sector_candidate_not_selected",
+            reason="通过板块候选但未进入最终信号，需复核当日去重/并列排序",
+        )
 
     seed_codes = ctx.global_seed_codes(target_date)
     if str(code) not in seed_codes:
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_seed_miss",
-            "reason": "所属板块未进热点，且个股未进入跨板块扫描种子",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_seed_miss",
+            reason="所属板块未进热点，且个股未进入跨板块扫描种子",
+        )
     candidates = ctx.global_candidates(target_date)
     cand = candidates.get(str(code))
     if cand is None:
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_candidate_filtered",
-            "reason": "进入跨板块种子但在候选阶段被硬过滤（基本面/结构/focus/历史）",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_candidate_filtered",
+            reason="进入跨板块种子但在候选阶段被硬过滤（基本面/结构/focus/历史）",
+        )
     if str(cand.role) == "跟随":
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_follower_filtered",
-            "reason": "跨板块分支中过滤跟随股",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_follower_filtered",
+            reason="跨板块分支中过滤跟随股",
+        )
     if float(cand.sector_resonance) < float(engine.MIN_RESONANCE):
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_resonance_filtered",
-            "reason": f"跨板块分支共振不足（{cand.sector_resonance:.0%} < {engine.MIN_RESONANCE:.0%}）",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_resonance_filtered",
+            reason=f"跨板块分支共振不足（{cand.sector_resonance:.0%} < {engine.MIN_RESONANCE:.0%}）",
+        )
     if is_cross_sector_wave_mismatch(
         cand.wave_phase,
         wave3_only=bool(engine.CROSS_SECTOR_WAVE3_ONLY),
         allow_wave1=bool(getattr(engine, "CROSS_SECTOR_ALLOW_WAVE1", True)),
     ):
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_wave_filtered",
-            "reason": f"跨板块分支波段不符（{cand.wave_phase}）",
-        }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_wave_filtered",
+            reason=f"跨板块分支波段不符（{cand.wave_phase}）",
+        )
     required = float(engine.BUY_THRESHOLD) + float(engine.CROSS_SECTOR_SCORE_MARGIN)
     nonconfirm_bonus = float(engine.CUP_HANDLE_NONCONFIRM_THRESHOLD_BONUS or 0.0)
     if nonconfirm_bonus > 0 and not bool(getattr(cand, "cup_handle_ok", False)):
         required += nonconfirm_bonus
     if float(cand.buy_score) < required:
-        return {
-            "date": target_date.isoformat(),
-            "stage": "global_score_filtered",
-            "reason": f"跨板块评分未达门槛（{cand.buy_score:.1f} < {required:.1f}）",
-        }
-    return {
-        "date": target_date.isoformat(),
-        "stage": "global_cap_filtered",
-        "reason": "跨板块候选满足条件，但名额已被更高优先级股票占满",
-    }
+        return build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_score_filtered",
+            reason=f"跨板块评分未达门槛（{cand.buy_score:.1f} < {required:.1f}）",
+        )
+    return build_simple_stage_audit(
+        audit_date=target_date.isoformat(),
+        stage="global_cap_filtered",
+        reason="跨板块候选满足条件，但名额已被更高优先级股票占满",
+    )
 
 
 def _build_positions_timeline(trades: list[dict[str, Any]], trading_dates: list[str]) -> dict[str, set[str]]:
