@@ -27,6 +27,7 @@ from neotrade3.analysis.attribution_daily_audit_payload import (
 from neotrade3.analysis.attribution_execution_limit_window import is_execution_limit_up_window
 from neotrade3.analysis.attribution_markdown_report import build_attribution_markdown_report
 from neotrade3.analysis.attribution_positions_timeline import build_positions_timeline
+from neotrade3.analysis.attribution_ranking_payload import build_attribution_ranking_row
 from neotrade3.analysis.attribution_report_row import (
     build_attribution_report_row,
     build_attribution_segment_failed_row,
@@ -180,18 +181,17 @@ def _load_top_ranking(conn: sqlite3.Connection, *, year: int, limit: int) -> lis
     out: list[dict[str, Any]] = []
     for idx, row in enumerate(rows, start=1):
         out.append(
-            {
-                "rank": idx,
-                "code": str(row[0]),
-                "name": str(row[1] or ""),
-                "sector": str(row[2] or ""),
-                "first_trade_date": str(row[3]),
-                "last_trade_date": str(row[4]),
-                "first_close": round(float(row[5]), 4),
-                "last_close": round(float(row[6]), 4),
-                "annual_return_pct": round(float(row[7]), 2),
-                "price_basis": "未复权收盘价",
-            }
+            build_attribution_ranking_row(
+                rank=idx,
+                code=row[0],
+                name=row[1],
+                sector=row[2],
+                first_trade_date=row[3],
+                last_trade_date=row[4],
+                first_close=row[5],
+                last_close=row[6],
+                annual_return_pct=row[7],
+            )
         )
     return out
 
