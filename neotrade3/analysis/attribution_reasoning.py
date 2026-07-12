@@ -97,3 +97,41 @@ def resolve_candidate_only_primary_reason(daily_audits: list[dict[str, Any]]) ->
     if str(signal.get("candidate_tier") or "") == "soft_retained":
         return "进入候选池但被软保留，未进入正式建仓池"
     return "进入候选池但未进入正式建仓池"
+
+
+def resolve_primary_reason_decision(
+    *,
+    bought: bool,
+    held_to_top: bool,
+    entry_picked: bool,
+    candidate_picked: bool,
+    latest_exit_reason: str,
+    sell_reason_bucket: str,
+    execution_primary_reason: str,
+    candidate_only_primary_reason: str,
+    not_picked_primary_reason: str,
+) -> dict[str, str]:
+    if bought and held_to_top:
+        return {
+            "primary_reason": "实际持仓延续到市场事实见顶",
+            "reason_bucket": "held_to_top",
+        }
+    if bought:
+        return {
+            "primary_reason": str(latest_exit_reason or "") or "已买入但未持有到见顶",
+            "reason_bucket": str(sell_reason_bucket or ""),
+        }
+    if entry_picked:
+        return {
+            "primary_reason": str(execution_primary_reason or ""),
+            "reason_bucket": "picked_not_bought",
+        }
+    if candidate_picked:
+        return {
+            "primary_reason": str(candidate_only_primary_reason or ""),
+            "reason_bucket": "candidate_not_entry",
+        }
+    return {
+        "primary_reason": str(not_picked_primary_reason or ""),
+        "reason_bucket": "not_picked",
+    }

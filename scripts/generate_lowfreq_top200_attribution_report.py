@@ -26,6 +26,7 @@ from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
     resolve_execution_audit_primary_reason,
     resolve_not_picked_primary_reason,
+    resolve_primary_reason_decision,
     resolve_sell_reason_bucket,
 )
 from neotrade3.analysis.attribution_signal_snapshot import build_attribution_signal_snapshot
@@ -800,14 +801,10 @@ def _analyze_topk(
         first_sell_date = str(trade_window["first_sell_date"] or "")
         latest_exit_reason = str(trade_window["latest_exit_reason"] or "")
 
-        if bought and held_to_top:
-            primary_reason = "实际持仓延续到市场事实见顶"
-            reason_bucket = "held_to_top"
-        elif bought:
-            primary_reason = latest_exit_reason or "已买入但未持有到见顶"
-            reason_bucket = _sell_reason_bucket(latest_exit_reason)
-        elif entry_dates:
-            primary_reason = _extract_execution_reason(
+        sell_reason_bucket = _sell_reason_bucket(latest_exit_reason)
+        execution_primary_reason = ""
+        if entry_dates:
+            execution_primary_reason = _extract_execution_reason(
                 code=code,
                 signal_dates=entry_dates,
                 positions_timeline=positions_timeline,
@@ -822,13 +819,21 @@ def _analyze_topk(
                 execution_one_price_limit_only=bool(execution_one_price_limit_only),
                 limit_up_pct=float(getattr(engine, "EXEC_LIMIT_UP_PCT", 9.8) or 9.8),
             )
-            reason_bucket = "picked_not_bought"
-        elif candidate_dates:
-            primary_reason = _candidate_only_primary_reason(daily_audits)
-            reason_bucket = "candidate_not_entry"
-        else:
-            primary_reason = _not_picked_primary_reason(daily_audits)
-            reason_bucket = "not_picked"
+        candidate_only_primary_reason = _candidate_only_primary_reason(daily_audits)
+        not_picked_primary_reason = _not_picked_primary_reason(daily_audits)
+        reason_decision = resolve_primary_reason_decision(
+            bought=bought,
+            held_to_top=held_to_top,
+            entry_picked=bool(entry_dates),
+            candidate_picked=bool(candidate_dates),
+            latest_exit_reason=latest_exit_reason,
+            sell_reason_bucket=sell_reason_bucket,
+            execution_primary_reason=execution_primary_reason,
+            candidate_only_primary_reason=candidate_only_primary_reason,
+            not_picked_primary_reason=not_picked_primary_reason,
+        )
+        primary_reason = str(reason_decision["primary_reason"] or "")
+        reason_bucket = str(reason_decision["reason_bucket"] or "")
 
         summary_counters[reason_bucket] += 1
         report_rows.append(
