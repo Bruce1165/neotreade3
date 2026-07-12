@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from apps.api.main import BootstrapApiService
 from neotrade3.analysis.attribution_aggregate_summary import build_attribution_aggregate_summary
+from neotrade3.analysis.attribution_artifact_payload import build_attribution_artifact_payload
 from neotrade3.analysis.attribution_audit_index import build_buy_signal_audit_index
 from neotrade3.analysis.attribution_daily_audit_payload import (
     build_candidate_signal_selected_audit,
@@ -929,20 +930,18 @@ def main() -> int:
     segments_path = output_dir / f"top{int(args.limit)}_{args.year}_wave_segments.json"
     attribution_path = output_dir / f"top{int(args.limit)}_{args.year}_model_attribution.json"
     report_path = output_dir / "report.md"
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     ranking_path.write_text(json.dumps(ranking, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    attribution_payload = {
-        "_meta": {
-            "status": "ok",
-            "report_id": report_id,
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "year": int(args.year),
-            "limit": int(args.limit),
-        },
-        "aggregate": aggregate,
-        "items": attribution_rows,
-    }
+    attribution_payload = build_attribution_artifact_payload(
+        report_id=report_id,
+        generated_at=generated_at,
+        year=int(args.year),
+        limit=int(args.limit),
+        aggregate=aggregate,
+        items=attribution_rows,
+    )
     attribution_path.write_text(json.dumps(attribution_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _write_markdown_report(
         output_path=report_path,
