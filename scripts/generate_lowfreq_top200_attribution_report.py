@@ -34,6 +34,7 @@ from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, StockCandidate,
 from neotrade3.analysis.attribution_reasoning import (
     resolve_candidate_only_primary_reason,
     resolve_execution_audit_primary_reason,
+    resolve_execution_fallback_reason,
     resolve_not_picked_primary_reason,
     resolve_primary_reason_decision,
     resolve_sell_reason_bucket,
@@ -612,6 +613,7 @@ def _extract_execution_reason(
     )
     if reason:
         return reason
+    all_limit_up = False
     rows = conn.execute(
         """
         SELECT trade_date, pct_change, high, low, close
@@ -642,37 +644,42 @@ def _extract_execution_reason(
             if execution_one_price_limit_only and not is_one_price_board:
                 all_limit_up = False
                 break
-        if all_limit_up:
-            return "信号存在但连续涨停，无法成交"
-    if (
+    positions_full = (
         str(execution_mode or "").strip().lower() != "unbounded_opportunity"
         and first_signal in positions_timeline
         and len(positions_timeline[first_signal]) >= int(max_positions)
+    )
+    chase_blocked = False
+    if (
+        not all_limit_up
+        and not positions_full
     ):
-        return "信号存在但同期仓位已满"
-    signal_map = ctx.signals(date.fromisoformat(str(first_signal)))
-    sig = signal_map.get(str(code))
-    if isinstance(sig, dict):
-        row = conn.execute(
-            """
-            SELECT close
-            FROM daily_prices
-            WHERE code = ? AND trade_date = ?
-            LIMIT 1
-            """,
-            (str(code), str(first_signal)),
-        ).fetchone()
-        ref_price = float(row[0]) if row and row[0] is not None else None
-        if ref_price is not None and ref_price > 0:
-            snapshot = engine._chase_entry_snapshot(
-                conn.cursor(),
-                code=str(code),
-                target_date=date.fromisoformat(str(first_signal)),
-                ref_price=float(ref_price),
-            )
-            if isinstance(snapshot, dict) and bool(snapshot.get("blocked")):
-                return "信号存在但因追高型买点被硬禁"
-    return "信号存在但未形成实际成交，需复核执行窗口"
+        signal_map = ctx.signals(date.fromisoformat(str(first_signal)))
+        sig = signal_map.get(str(code))
+        if isinstance(sig, dict):
+            row = conn.execute(
+                """
+                SELECT close
+                FROM daily_prices
+                WHERE code = ? AND trade_date = ?
+                LIMIT 1
+                """,
+                (str(code), str(first_signal)),
+            ).fetchone()
+            ref_price = float(row[0]) if row and row[0] is not None else None
+            if ref_price is not None and ref_price > 0:
+                snapshot = engine._chase_entry_snapshot(
+                    conn.cursor(),
+                    code=str(code),
+                    target_date=date.fromisoformat(str(first_signal)),
+                    ref_price=float(ref_price),
+                )
+                chase_blocked = isinstance(snapshot, dict) and bool(snapshot.get("blocked"))
+    return resolve_execution_fallback_reason(
+        all_limit_up=all_limit_up,
+        positions_full=positions_full,
+        chase_blocked=chase_blocked,
+    )
 
 
 def _analyze_topk(

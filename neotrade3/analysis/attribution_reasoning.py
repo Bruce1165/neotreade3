@@ -44,6 +44,21 @@ def resolve_execution_audit_primary_reason(
     return ""
 
 
+def resolve_execution_fallback_reason(
+    *,
+    all_limit_up: bool,
+    positions_full: bool,
+    chase_blocked: bool,
+) -> str:
+    if all_limit_up:
+        return "信号存在但连续涨停，无法成交"
+    if positions_full:
+        return resolve_audit_block_reason_text({"execution_block_reason": "positions_full"})
+    if chase_blocked:
+        return resolve_audit_block_reason_text({"blocked_reason": "chase_entry_blocked"})
+    return "信号存在但未形成实际成交，需复核执行窗口"
+
+
 def resolve_sell_reason_bucket(sell_reason: str) -> str:
     reason = str(sell_reason or "").strip()
     if reason.startswith("回测结束平仓"):
