@@ -66,6 +66,9 @@ from neotrade3.orchestration.report_runner_artifact_paths import (
 from neotrade3.orchestration.report_runner_cli_summary import (
     build_lowfreq_report_success_summary,
 )
+from neotrade3.orchestration.report_runner_run_context import (
+    build_lowfreq_report_run_context,
+)
 
 
 LOGGER = logging.getLogger("lowfreq_topk_attribution")
@@ -885,9 +888,15 @@ def main() -> int:
 
     _setup_logging(bool(args.verbose))
     service = BootstrapApiService(project_root=PROJECT_ROOT)
-    top_label = f"top{int(args.limit)}"
-    report_id = str(args.report_id or f"{top_label}_{args.year}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
-    output_dir = PROJECT_ROOT / "var/artifacts" / f"lowfreq_{top_label}_attribution" / report_id
+    run_context = build_lowfreq_report_run_context(
+        project_root=PROJECT_ROOT,
+        year=int(args.year),
+        limit=int(args.limit),
+        report_id=args.report_id,
+        timestamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+    )
+    report_id = str(run_context["report_id"])
+    output_dir = Path(run_context["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_status(
         output_dir,
