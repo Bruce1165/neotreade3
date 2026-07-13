@@ -204,11 +204,15 @@ def test_assessment_handoff_projects_full_b4_governance_chain() -> None:
     assert len(payload["experiment_requests"]) == 1
     assert len(payload["validation_results"]) == 1
     assert len(payload["promotion_blockers"]) == 1
+    assert len(payload["attention_items"]) == 1
     assert len(payload["decision_records"]) == 1
     assert (
         payload["promotion_blockers"][0]["blocker_code"]
         == GUARDRAIL_CODE_LOCAL_GLOBAL_END
     )
+    assert payload["attention_items"][0]["attention_id"].endswith(":attention")
+    assert payload["attention_items"][0]["issue_type"] == "promotion_blocker"
+    assert payload["attention_items"][0]["blocking_scope"] == "promotion"
     assert payload["validation_results"][0]["candidate_run_id"] == ""
     assert payload["validation_results"][0]["outcome"] == (
         "awaiting_candidate_validation"
@@ -234,6 +238,7 @@ def test_assessment_handoff_returns_zero_projection_when_b4_is_clean() -> None:
     assert bundle.experiment_requests == ()
     assert bundle.validation_results == ()
     assert bundle.promotion_blockers == ()
+    assert bundle.attention_items == ()
     assert bundle.decision_records == ()
 
 
@@ -274,7 +279,11 @@ def test_batch_handoff_preserves_deterministic_projection_order() -> None:
     assert len(payload["experiment_requests"]) == 2
     assert len(payload["validation_results"]) == 2
     assert len(payload["promotion_blockers"]) == 2
+    assert len(payload["attention_items"]) == 2
     assert len(payload["decision_records"]) == 2
+    assert [item["attention_id"] for item in payload["attention_items"]] == [
+        f"{item['blocker_id']}:attention" for item in payload["promotion_blockers"]
+    ]
 
 
 def test_handoff_payload_is_defensively_copied() -> None:
@@ -288,7 +297,9 @@ def test_handoff_payload_is_defensively_copied() -> None:
     payload = bundle.to_payload()
     payload["diagnostics"].append({"diagnostic_id": "other"})
     payload["change_requests"].append({"cr_id": "other"})
+    payload["attention_items"].append({"attention_id": "other"})
 
     fresh_payload = bundle.to_payload()
     assert len(fresh_payload["diagnostics"]) == 1
     assert len(fresh_payload["change_requests"]) == 1
+    assert len(fresh_payload["attention_items"]) == 1

@@ -101,6 +101,7 @@ def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> N
     assert payload["status"] == "completed"
     assert payload["source_layer"] == "M4"
     assert payload["projected_assessment_count"] == 2
+    assert payload["attention_item_count"] == 1
     assert payload["dry_run"] is True
     assert not (project_root / payload["artifact_path"]).exists()
     assert not (project_root / payload["ledger_path"]).exists()
@@ -152,6 +153,7 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     assert payload["status"] == "completed"
     assert payload["source_layer"] == "M4"
     assert payload["projected_assessment_count"] == 2
+    assert payload["attention_item_count"] == 0
     assert payload["dry_run"] is False
     assert artifact_path.exists()
     assert ledger_path.exists()
@@ -171,6 +173,7 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
         ledger_record.promotion_blocker_count
         == payload["promotion_blocker_count"]
     )
+    assert ledger_record.attention_item_count == payload["attention_item_count"]
     assert (
         ledger_record.decision_record_count
         == payload["decision_record_count"]
@@ -180,6 +183,7 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
         "projected_assessment_count"
     ]
     assert len(artifact_payload["validation_results"]) == payload["validation_result_count"]
+    assert len(artifact_payload["attention_items"]) == payload["attention_item_count"]
     assert len(artifact_payload["decision_records"]) == payload["decision_record_count"]
 
 

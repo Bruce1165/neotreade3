@@ -63,6 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "experiment_request_count": record.experiment_request_count,
                 "validation_result_count": record.validation_result_count,
                 "promotion_blocker_count": record.promotion_blocker_count,
+                "attention_item_count": record.attention_item_count,
                 "decision_record_count": record.decision_record_count,
                 "artifact_path": record.artifact_path,
                 "ledger_path": record.ledger_path,

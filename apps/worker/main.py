@@ -339,6 +339,7 @@ class BootstrapWorkerApp:
                         "change_request_count": record.change_request_count,
                         "experiment_request_count": record.experiment_request_count,
                         "promotion_blocker_count": record.promotion_blocker_count,
+                        "attention_item_count": record.attention_item_count,
                         "dry_run": dry_run,
                         "benchmark_run_id": benchmark_run_id,
                     },

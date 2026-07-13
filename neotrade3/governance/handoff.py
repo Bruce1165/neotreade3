@@ -10,6 +10,7 @@ from neotrade3.benchmark.batch_runner import BenchmarkBatchRunResult
 from neotrade3.benchmark.contracts import BenchmarkAssessmentResult
 
 from .assembler import (
+    build_attention_item,
     build_block_decision_record_from_promotion_blocker,
     build_b4_local_global_guardrail_diagnostic,
     build_change_request_from_diagnostic,
@@ -18,6 +19,7 @@ from .assembler import (
     build_promotion_blocker_from_diagnostic,
 )
 from .contracts import (
+    AttentionItem,
     ChangeRequest,
     DiagnosticChain,
     ExperimentRequest,
@@ -44,6 +46,7 @@ class GovernanceHandoffBundle:
     experiment_requests: tuple[ExperimentRequest, ...] = ()
     validation_results: tuple[ValidationResult, ...] = ()
     promotion_blockers: tuple[PromotionBlocker, ...] = ()
+    attention_items: tuple[AttentionItem, ...] = ()
     decision_records: tuple[GovernanceDecisionRecord, ...] = ()
     projected_assessment_count: int = 0
     projected_issue_count: int = 0
@@ -59,6 +62,7 @@ class GovernanceHandoffBundle:
             "experiment_requests": _copy_payload_list(self.experiment_requests),
             "validation_results": _copy_payload_list(self.validation_results),
             "promotion_blockers": _copy_payload_list(self.promotion_blockers),
+            "attention_items": _copy_payload_list(self.attention_items),
             "decision_records": _copy_payload_list(self.decision_records),
             "projected_assessment_count": int(self.projected_assessment_count),
             "projected_issue_count": int(self.projected_issue_count),
@@ -77,6 +81,28 @@ def _empty_handoff_bundle(
         source_layer=M4_SOURCE_LAYER,
         projected_assessment_count=projected_assessment_count,
         projected_issue_count=0,
+    )
+
+
+def _build_attention_item_from_blocker(
+    *,
+    diagnostic: DiagnosticChain,
+    blocker: PromotionBlocker,
+) -> AttentionItem:
+    return build_attention_item(
+        attention_id=f"{blocker.blocker_id}:attention",
+        created_at=diagnostic.trade_date,
+        source="governance",
+        target_layer="M5",
+        issue_type="promotion_blocker",
+        severity=blocker.severity,
+        automation_class="human_review_required",
+        evidence_refs=blocker.evidence_refs,
+        recommended_action=blocker.required_clearance,
+        human_action_required=True,
+        status="open",
+        owner="system_governance",
+        blocking_scope="promotion",
     )
 
 
@@ -118,6 +144,10 @@ def build_governance_handoff_from_assessment(
     promotion_blocker = build_promotion_blocker_from_diagnostic(
         diagnostic=diagnostic
     )
+    attention_item = _build_attention_item_from_blocker(
+        diagnostic=diagnostic,
+        blocker=promotion_blocker,
+    )
     decision_record = build_block_decision_record_from_promotion_blocker(
         blocker=promotion_blocker
     )
@@ -129,6 +159,7 @@ def build_governance_handoff_from_assessment(
         experiment_requests=(experiment_request,),
         validation_results=(validation_result,),
         promotion_blockers=(promotion_blocker,),
+        attention_items=(attention_item,),
         decision_records=(decision_record,),
         projected_assessment_count=1,
         projected_issue_count=1,
@@ -144,6 +175,7 @@ def build_governance_handoff_from_batch_run(
     experiment_requests: list[ExperimentRequest] = []
     validation_results: list[ValidationResult] = []
     promotion_blockers: list[PromotionBlocker] = []
+    attention_items: list[AttentionItem] = []
     decision_records: list[GovernanceDecisionRecord] = []
 
     for assessment in batch_result.results:
@@ -153,6 +185,7 @@ def build_governance_handoff_from_batch_run(
         experiment_requests.extend(bundle.experiment_requests)
         validation_results.extend(bundle.validation_results)
         promotion_blockers.extend(bundle.promotion_blockers)
+        attention_items.extend(bundle.attention_items)
         decision_records.extend(bundle.decision_records)
 
     return GovernanceHandoffBundle(
@@ -163,6 +196,7 @@ def build_governance_handoff_from_batch_run(
         experiment_requests=tuple(experiment_requests),
         validation_results=tuple(validation_results),
         promotion_blockers=tuple(promotion_blockers),
+        attention_items=tuple(attention_items),
         decision_records=tuple(decision_records),
         projected_assessment_count=len(batch_result.results),
         projected_issue_count=len(diagnostics),

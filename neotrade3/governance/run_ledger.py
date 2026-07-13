@@ -29,6 +29,7 @@ class GovernanceRunLedgerRecord:
     experiment_request_count: int = 0
     validation_result_count: int = 0
     promotion_blocker_count: int = 0
+    attention_item_count: int = 0
     decision_record_count: int = 0
 
     @classmethod
@@ -51,6 +52,7 @@ class GovernanceRunLedgerRecord:
             experiment_request_count=int(payload.get("experiment_request_count", 0)),
             validation_result_count=int(payload.get("validation_result_count", 0)),
             promotion_blocker_count=int(payload.get("promotion_blocker_count", 0)),
+            attention_item_count=int(payload.get("attention_item_count", 0)),
             decision_record_count=int(payload.get("decision_record_count", 0)),
         )
 
@@ -69,6 +71,7 @@ class GovernanceRunLedgerRecord:
             "experiment_request_count": self.experiment_request_count,
             "validation_result_count": self.validation_result_count,
             "promotion_blocker_count": self.promotion_blocker_count,
+            "attention_item_count": self.attention_item_count,
             "decision_record_count": self.decision_record_count,
         }
 
@@ -125,6 +128,7 @@ def write_governance_run_ledger(
         "experiment_request_count": len(bundle.experiment_requests),
         "validation_result_count": len(bundle.validation_results),
         "promotion_blocker_count": len(bundle.promotion_blockers),
+        "attention_item_count": len(bundle.attention_items),
         "decision_record_count": len(bundle.decision_records),
     }
 
