@@ -6,7 +6,10 @@ import sqlite3
 from datetime import date
 from typing import Any, Callable
 
-from neotrade3.cycle_intelligence import build_small_cycle_from_m1
+from neotrade3.cycle_intelligence import (
+    build_shadow_cycle_intelligence_from_m1,
+    build_small_cycle_from_m1,
+)
 from neotrade3.data_control import project_pf1_trading_profile
 from neotrade3.data_control.formal_input_adapter import load_formal_m1_inputs
 
@@ -123,17 +126,31 @@ def build_lowfreq_formal_front_payload(
                 trading_day_status=trading_day_status,
                 trading_profile=trading_profile,
             )
+            shadow_bundle = build_shadow_cycle_intelligence_from_m1(
+                cycle=small_cycle,
+                security_master=security_master,
+                trading_profile=trading_profile,
+            )
+            cycle_linkage_state = shadow_bundle.get("cycle_linkage_state")
+            cycle_linkage_state_ref = (
+                cycle_linkage_state.to_payload()
+                if hasattr(cycle_linkage_state, "to_payload")
+                else {}
+            )
             identify_state = build_identify_state_from_formal_inputs(
                 cycle=small_cycle,
                 m1_constraints_ref=constraints,
+                cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
             tracking_state = build_tracking_state_from_formal_inputs(
                 cycle=small_cycle,
                 m1_constraints_ref=constraints,
+                cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
             entry_state = build_entry_state_from_formal_inputs(
                 cycle=small_cycle,
                 m1_constraints_ref=constraints,
+                cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
             items_by_code[code] = {
                 "status": "ok",

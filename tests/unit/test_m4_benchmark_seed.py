@@ -138,19 +138,23 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[
         trading_day_status=trading_day,
         trading_profile=profile,
     )
+    cycle_linkage_state_ref = shadow_bundle["cycle_linkage_state"].to_payload()
     m3_context = {
         "m1_constraints_ref": dict(constraints),
         "identify_state": build_identify_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "tracking_state": build_tracking_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "entry_state": build_entry_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
     }
     return cycle, shadow_bundle, m1_context, m3_context

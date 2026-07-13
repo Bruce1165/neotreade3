@@ -109,6 +109,7 @@ def _sample_m1_objects(
 def _build_front_m3_context(
     *,
     cycle: SmallCycle,
+    cycle_linkage_state: Any = None,
     d1_fact: D1DailyPriceFact,
     security_master: D7SecurityMasterMinimal,
     trading_day_status: D7TradingDayStatus,
@@ -120,17 +121,25 @@ def _build_front_m3_context(
         trading_day_status=trading_day_status,
         trading_profile=trading_profile,
     )
+    cycle_linkage_state_ref = (
+        cycle_linkage_state.to_payload()
+        if hasattr(cycle_linkage_state, "to_payload")
+        else {}
+    )
     identify_state = build_identify_state_from_formal_inputs(
         cycle=cycle,
         m1_constraints_ref=constraints,
+        cycle_linkage_state_ref=cycle_linkage_state_ref,
     )
     tracking_state = build_tracking_state_from_formal_inputs(
         cycle=cycle,
         m1_constraints_ref=constraints,
+        cycle_linkage_state_ref=cycle_linkage_state_ref,
     )
     entry_state = build_entry_state_from_formal_inputs(
         cycle=cycle,
         m1_constraints_ref=constraints,
+        cycle_linkage_state_ref=cycle_linkage_state_ref,
     )
     return {
         "m1_constraints_ref": dict(constraints),
@@ -170,6 +179,7 @@ def _build_reference_cycle_and_shadow_bundle() -> BenchmarkFixtureBundle:
     }
     m3_context = _build_front_m3_context(
         cycle=cycle,
+        cycle_linkage_state=shadow_bundle.get("cycle_linkage_state"),
         d1_fact=d1,
         security_master=security,
         trading_day_status=trading_day,
@@ -193,6 +203,7 @@ def _build_target_opportunity_reference_fixture() -> BenchmarkFixtureBundle:
 
 def _build_control_failure_reference_fixture() -> BenchmarkFixtureBundle:
     reference = _build_reference_cycle_and_shadow_bundle()
+    d1, security, trading_day, profile = _sample_m1_objects()
     linkage = reference.shadow_bundle["cycle_linkage_state"]
     bad_linkage = build_cycle_linkage_state(
         stock_code=reference.cycle.stock_code,
@@ -220,13 +231,20 @@ def _build_control_failure_reference_fixture() -> BenchmarkFixtureBundle:
             "cycle_linkage_state": bad_linkage,
         },
         m1_context=reference.m1_context,
-        m3_context=reference.m3_context,
+        m3_context=_build_front_m3_context(
+            cycle=reference.cycle,
+            cycle_linkage_state=bad_linkage,
+            d1_fact=d1,
+            security_master=security,
+            trading_day_status=trading_day,
+            trading_profile=profile,
+        ),
     )
 
 
 def _build_local_global_guardrail_fixture() -> BenchmarkFixtureBundle:
     reference = _build_reference_cycle_and_shadow_bundle()
-    _, security, _, profile = _sample_m1_objects()
+    d1, security, trading_day, profile = _sample_m1_objects()
     mid_cycles = build_mid_cycle_states_from_m1(
         cycle=reference.cycle,
         security_master=security,
@@ -271,7 +289,14 @@ def _build_local_global_guardrail_fixture() -> BenchmarkFixtureBundle:
             ),
         },
         m1_context=reference.m1_context,
-        m3_context=reference.m3_context,
+        m3_context=_build_front_m3_context(
+            cycle=reference.cycle,
+            cycle_linkage_state=bad_linkage,
+            d1_fact=d1,
+            security_master=security,
+            trading_day_status=trading_day,
+            trading_profile=profile,
+        ),
     )
 
 

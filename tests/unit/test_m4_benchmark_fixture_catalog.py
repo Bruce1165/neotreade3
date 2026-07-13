@@ -78,3 +78,11 @@ def test_build_benchmark_fixture_bundle_for_b4_seed_returns_guardrail_fixture() 
 
     assert linkage_state.supports_continuation is False
     assert linkage_state.local_end_vs_global_end == "possible_global_end"
+    assert fixture["m3_context"]["tracking_state"]["maturity"] == "not_ready"
+    assert fixture["m3_context"]["tracking_state"]["transition_reason"] == (
+        "cycle_linkage_blocks_continuation"
+    )
+    assert fixture["m3_context"]["entry_state"]["actionable"] is False
+    assert "cycle_linkage_blocks_continuation" in fixture["m3_context"]["entry_state"][
+        "blocking_reasons"
+    ]

@@ -5,6 +5,7 @@ import pytest
 from neotrade3.cycle_intelligence import (
     SMALL_CYCLE_OBJECT_TYPE,
     SmallCycle,
+    build_cycle_linkage_state,
     build_small_cycle,
     build_small_cycle_from_m1,
 )
@@ -118,6 +119,8 @@ def test_build_m3_hold_exit_states_returns_formal_payloads() -> None:
         exit_scope="position_only",
         exit_reason_type="trend_exhausted",
         exit_attribution_bucket="trend_exhaustion_exit",
+        local_exit_semantics="local_end_only",
+        global_thesis_end_semantics="needs_global_confirmation",
         evidence_ref={"exit_evidence_bundle": ["trend exhausted"]},
         m2_cycle_ref={"object_type": "small_cycle", "stock_code": "600000"},
     )
@@ -336,3 +339,63 @@ def test_build_front_states_from_formal_inputs_waits_when_cycle_only_emerging() 
     assert tracking.to_payload()["maturity"] == "observe"
     assert entry.to_payload()["status"] == "not_ready"
     assert "tracking_not_mature" in entry.to_payload()["blocking_reasons"]
+
+
+def test_build_front_states_from_formal_inputs_respects_linkage_blocking() -> None:
+    d1, security, trading_day, profile = _sample_m1_objects(return_20d=0.12, positive_days_5d=4)
+    cycle = build_small_cycle_from_m1(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    linkage_state = build_cycle_linkage_state(
+        stock_code=cycle.stock_code,
+        trade_date=cycle.trade_date,
+        small_cycle_ref={
+            "object_type": cycle.object_type,
+            "stock_code": cycle.stock_code,
+            "cycle_state": cycle.cycle_state,
+        },
+        mid_cycle_ref={
+            "fund_cycle_state": "advancing",
+            "industry_cycle_state": "advancing",
+        },
+        linkage_phase="continuation_blocked",
+        supports_continuation=False,
+        local_end_vs_global_end="possible_global_end",
+        confidence={"level": "medium"},
+        evidence_bundle={"override": "linkage_blocked_test"},
+        rule_version="m2_cycle_linkage.v1alpha1",
+    )
+
+    tracking = build_tracking_state_from_formal_inputs(
+        cycle=cycle,
+        m1_constraints_ref=constraints,
+        cycle_linkage_state_ref=linkage_state.to_payload(),
+    )
+    entry = build_entry_state_from_formal_inputs(
+        cycle=cycle,
+        m1_constraints_ref=constraints,
+        cycle_linkage_state_ref=linkage_state.to_payload(),
+    )
+
+    assert tracking.to_payload()["status"] == "tracking"
+    assert tracking.to_payload()["maturity"] == "not_ready"
+    assert tracking.to_payload()["transition_reason"] == (
+        "cycle_linkage_blocks_continuation"
+    )
+    assert tracking.to_payload()["evidence_ref"]["supports_continuation"] is False
+    assert entry.to_payload()["status"] == "not_ready"
+    assert entry.to_payload()["decision"] == "wait"
+    assert entry.to_payload()["actionable"] is False
+    assert "cycle_linkage_blocks_continuation" in entry.to_payload()["blocking_reasons"]
+    assert entry.to_payload()["evidence_ref"]["local_end_vs_global_end"] == (
+        "possible_global_end"
+    )

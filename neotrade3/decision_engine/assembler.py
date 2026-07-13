@@ -61,6 +61,28 @@ def _cycle_ref(cycle: SmallCycle) -> dict[str, Any]:
     }
 
 
+def _linkage_evidence_ref(
+    cycle_linkage_state_ref: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(cycle_linkage_state_ref, Mapping):
+        return {}
+    return {
+        "supports_continuation": bool(cycle_linkage_state_ref.get("supports_continuation")),
+        "local_end_vs_global_end": str(
+            cycle_linkage_state_ref.get("local_end_vs_global_end") or ""
+        ).strip(),
+        "linkage_phase": str(cycle_linkage_state_ref.get("linkage_phase") or "").strip(),
+    }
+
+
+def _linkage_blocks_continuation(
+    cycle_linkage_state_ref: Mapping[str, Any] | None,
+) -> bool:
+    if not isinstance(cycle_linkage_state_ref, Mapping):
+        return False
+    return cycle_linkage_state_ref.get("supports_continuation") is False
+
+
 def build_m1_constraints_ref(
     *,
     d1_fact: D1DailyPriceFact | None,
@@ -103,6 +125,7 @@ def build_identify_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
     m1_constraints_ref: Mapping[str, Any],
+    cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> IdentifyState:
     """Translate a formal small-cycle into a formal identify-state."""
 
@@ -139,10 +162,12 @@ def build_tracking_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
     m1_constraints_ref: Mapping[str, Any],
+    cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> TrackingState:
     """Translate a formal small-cycle into a formal tracking-state."""
 
     blocked = bool(m1_constraints_ref.get("blocked"))
+    linkage_blocks_continuation = _linkage_blocks_continuation(cycle_linkage_state_ref)
     if blocked or cycle.cycle_state in {"S0 Neutral", "S4 Exhausting_or_Invalidated"}:
         status = "not_tracking"
         maturity = "not_ready"
@@ -151,6 +176,10 @@ def build_tracking_state_from_formal_inputs(
             if blocked
             else "small_cycle_not_suitable_for_tracking"
         )
+    elif linkage_blocks_continuation:
+        status = "tracking"
+        maturity = "not_ready"
+        transition_reason = "cycle_linkage_blocks_continuation"
     elif cycle.cycle_state == "S1 Emerging":
         status = "tracking"
         maturity = "observe"
@@ -169,6 +198,7 @@ def build_tracking_state_from_formal_inputs(
         evidence_ref={
             "cycle_state": cycle.cycle_state,
             "state_stability_level": cycle.state_stability_level,
+            **_linkage_evidence_ref(cycle_linkage_state_ref),
         },
         m2_cycle_ref=_cycle_ref(cycle),
         m1_constraints_ref=m1_constraints_ref,
@@ -179,17 +209,21 @@ def build_entry_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
     m1_constraints_ref: Mapping[str, Any],
+    cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> EntryState:
     """Translate a formal small-cycle into a formal entry-state."""
 
     blocked = bool(m1_constraints_ref.get("blocked"))
     blocking_reasons = _copy_text_list(list(m1_constraints_ref.get("blocking_reasons") or []))
+    linkage_blocks_continuation = _linkage_blocks_continuation(cycle_linkage_state_ref)
     actionable = False
     status = "not_ready"
     decision = "wait"
 
     if blocked:
         status = "blocked"
+    elif linkage_blocks_continuation:
+        blocking_reasons.append("cycle_linkage_blocks_continuation")
     elif cycle.cycle_state in {"S2 Advancing", "S3 Maturing"}:
         actionable = True
         status = "ready"
@@ -209,6 +243,7 @@ def build_entry_state_from_formal_inputs(
         evidence_ref={
             "cycle_state": cycle.cycle_state,
             "confidence_level": cycle.confidence.get("level"),
+            **_linkage_evidence_ref(cycle_linkage_state_ref),
         },
         m2_cycle_ref=_cycle_ref(cycle),
         m1_constraints_ref=m1_constraints_ref,
