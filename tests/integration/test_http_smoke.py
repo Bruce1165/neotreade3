@@ -436,3 +436,130 @@ def test_http_smoke_governance_status_transition_orchestration_run_round_trip(
         == 'attachment; filename="orchestrator_result.json"'
     )
     assert json.loads(download_body.decode("utf-8")) == stored_artifact
+
+
+def test_http_smoke_governance_candidate_validation_outcome_orchestration_run_round_trip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+
+    orchestrator_ledger_dir = tmp_path / "ledgers" / "orchestration_runs"
+    orchestrator_artifact_dir = tmp_path / "artifacts" / "orchestration_runs"
+    validation_result = {
+        "validation_id": "validation-1",
+        "experiment_id": "experiment-1",
+        "baseline_run_id": "benchmark-run-1",
+        "candidate_run_id": "candidate-run-1",
+        "outcome": "rejected",
+        "introduced_risk_count": 1,
+        "cleared_guardrail_codes": [],
+        "remaining_guardrail_codes": ["interaction.local_global"],
+        "evidence_refs": [{"kind": "candidate_validation"}],
+    }
+
+    def fake_run_governance_candidate_validation_outcome_on_demand(
+        *,
+        target_date,
+        source_run_id,
+        validation_result,
+        requested_by,
+        dry_run,
+    ):
+        assert target_date.isoformat() == "2026-05-20"
+        assert source_run_id == "benchmark-run-1"
+        assert validation_result.validation_id == "validation-1"
+        assert validation_result.outcome == "rejected"
+        assert requested_by == "integration.http_smoke"
+        assert dry_run is False
+        return {
+            "status": "ok",
+            "target_date": "2026-05-20",
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "governance.candidate_validation_outcome",
+                        "phase": "governance",
+                        "status": "ok",
+                        "message": (
+                            "candidate validation outcome materialized successfully"
+                        ),
+                        "details": {
+                            "source_run_id": source_run_id,
+                            "validation_id": validation_result.validation_id,
+                            "outcome": validation_result.outcome,
+                        },
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        service.worker_app,
+        "run_governance_candidate_validation_outcome_on_demand",
+        fake_run_governance_candidate_validation_outcome_on_demand,
+    )
+    monkeypatch.setattr(
+        service,
+        "_orchestration_run_paths",
+        lambda *, target_date: (
+            orchestrator_ledger_dir / target_date / "orchestrator_run.json",
+            orchestrator_artifact_dir / target_date / "orchestrator_result.json",
+        ),
+    )
+
+    with _serve(service) as server:
+        status, _, post_payload = _post_json(
+            f"http://127.0.0.1:{server.server_port}/api/orchestration/run",
+            {
+                "date": "2026-05-20",
+                "mode": "governance_candidate_validation_outcome",
+                "source_run_id": "benchmark-run-1",
+                "validation_result": validation_result,
+                "requested_by": "integration.http_smoke",
+            },
+        )
+        detail_status, _, detail_payload = _read_json(
+            f"http://127.0.0.1:{server.server_port}/api/orchestration/runs/2026-05-20"
+        )
+        download_status, download_headers, download_body = _read_bytes(
+            f"http://127.0.0.1:{server.server_port}/api/orchestration/runs/2026-05-20/download"
+        )
+
+    assert status == 200
+    assert post_payload.get("_meta", {}).get("status") == "ok"
+    post_run = post_payload.get("orchestrator_run", {})
+    assert post_run.get("target_date") == "2026-05-20"
+    assert post_run.get("mode") == "governance_candidate_validation_outcome"
+    assert post_run.get("status_counts") == {"ok": 1}
+
+    ledger_path = orchestrator_ledger_dir / "2026-05-20" / "orchestrator_run.json"
+    artifact_path = orchestrator_artifact_dir / "2026-05-20" / "orchestrator_result.json"
+    assert ledger_path.exists()
+    assert artifact_path.exists()
+
+    stored_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    stored_artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert stored_ledger.get("mode") == "governance_candidate_validation_outcome"
+    assert stored_artifact.get("mode") == "governance_candidate_validation_outcome"
+    assert (
+        stored_artifact.get("tasks", [])[0].get("task_id")
+        == "governance.candidate_validation_outcome"
+    )
+    assert (
+        stored_artifact.get("tasks", [])[0].get("details", {}).get("validation_id")
+        == "validation-1"
+    )
+
+    assert detail_status == 200
+    assert detail_payload.get("_meta", {}).get("status") == "ok"
+    assert detail_payload.get("orchestrator_run") == stored_ledger
+    assert detail_payload.get("orchestrator_result") == stored_artifact
+    assert detail_payload.get("orchestrator_run") == post_run
+
+    assert download_status == 200
+    assert (
+        download_headers.get("Content-Disposition")
+        == 'attachment; filename="orchestrator_result.json"'
+    )
+    assert json.loads(download_body.decode("utf-8")) == stored_artifact

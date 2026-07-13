@@ -33,6 +33,8 @@ from neotrade3.data_control import (
 )
 from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.run_ledger import (
+    read_governance_candidate_validation_artifact,
+    read_governance_candidate_validation_record,
     materialize_governance_handoff,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
@@ -143,6 +145,57 @@ def _materialize_rejected_governance_input(
         encoding="utf-8",
     )
     return bundle.source_run_id, validation.validation_id
+
+
+def _build_candidate_validation_payload(
+    *,
+    outcome: str = "rejected",
+) -> tuple[str, dict[str, object]]:
+    bundle = _build_reference_bundle()
+    validation = build_validation_result(
+        validation_id=bundle.validation_results[0].validation_id,
+        experiment_id=bundle.experiment_requests[0].experiment_id,
+        baseline_run_id=bundle.source_run_id,
+        candidate_run_id="candidate-run-1",
+        outcome=outcome,
+        introduced_risk_count=0 if outcome == "passed" else 1,
+        cleared_guardrail_codes=(
+            ["interaction.local_global"] if outcome == "passed" else []
+        ),
+        remaining_guardrail_codes=(
+            [] if outcome == "passed" else ["interaction.local_global"]
+        ),
+        evidence_refs=[{"kind": "candidate_validation"}],
+    )
+    return bundle.source_run_id, validation.to_payload()
+
+
+def _build_candidate_validation_input(
+    tmp_path: Path,
+    *,
+    outcome: str = "rejected",
+) -> tuple[str, dict[str, object]]:
+    bundle = _build_reference_bundle()
+    materialize_governance_handoff(
+        project_root=tmp_path,
+        bundle=bundle,
+    )
+    validation = build_validation_result(
+        validation_id=bundle.validation_results[0].validation_id,
+        experiment_id=bundle.experiment_requests[0].experiment_id,
+        baseline_run_id=bundle.source_run_id,
+        candidate_run_id="candidate-run-1",
+        outcome=outcome,
+        introduced_risk_count=0 if outcome == "passed" else 1,
+        cleared_guardrail_codes=(
+            ["interaction.local_global"] if outcome == "passed" else []
+        ),
+        remaining_guardrail_codes=(
+            [] if outcome == "passed" else ["interaction.local_global"]
+        ),
+        evidence_refs=[{"kind": "candidate_validation"}],
+    )
+    return bundle.source_run_id, validation.to_payload()
 
 
 def test_lab_registry_loads_expected_bootstrap_labs() -> None:
@@ -1412,6 +1465,120 @@ def test_orchestration_run_view_uses_governance_status_transition_worker_runtime
     assert artifact_payload["tasks"][0]["task_id"] == "governance.status_transition"
 
 
+def test_orchestration_run_view_uses_governance_candidate_validation_worker_runtime(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    captured: dict[str, object] = {}
+    original_require_trading_day = service.require_trading_day
+    original_worker_run = (
+        service.worker_app.run_governance_candidate_validation_outcome_on_demand
+    )
+    original_materialize_lab_runs = service._materialize_lab_runs_from_snapshot
+    _, validation_result_payload = _build_candidate_validation_payload()
+    validation_result = worker_main._resolve_validation_result_argument(
+        validation_result_payload
+    )
+    assert validation_result is not None
+
+    def _unexpected_require_trading_day(*, target_date, requested_by="api"):
+        raise AssertionError(
+            "governance_candidate_validation_outcome mode should not require trading day"
+        )
+
+    def _fake_worker_run_governance_candidate_validation(
+        *,
+        target_date,
+        source_run_id,
+        validation_result,
+        requested_by=(
+            "BootstrapWorkerApp.run_governance_candidate_validation_outcome_on_demand"
+        ),
+        dry_run=False,
+    ):
+        captured["target_date"] = target_date.isoformat()
+        captured["source_run_id"] = source_run_id
+        captured["validation_id"] = validation_result.validation_id
+        captured["outcome"] = validation_result.outcome
+        captured["requested_by"] = requested_by
+        captured["dry_run"] = dry_run
+        return {
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "governance.candidate_validation_outcome",
+                        "phase": "governance",
+                        "status": "ok",
+                        "message": "candidate validation outcome ok",
+                        "lab_id": None,
+                        "details": {
+                            "source_run_id": source_run_id,
+                            "validation_id": validation_result.validation_id,
+                            "outcome": validation_result.outcome,
+                        },
+                        "artifact_refs": [],
+                    }
+                ]
+            },
+            "summary": {"planned_task_count": 1},
+        }
+
+    def _unexpected_materialize_lab_runs(**kwargs):
+        raise AssertionError(
+            "governance_candidate_validation_outcome mode should not materialize lab runs"
+        )
+
+    service.require_trading_day = _unexpected_require_trading_day
+    service.worker_app.run_governance_candidate_validation_outcome_on_demand = (
+        _fake_worker_run_governance_candidate_validation
+    )
+    service._materialize_lab_runs_from_snapshot = _unexpected_materialize_lab_runs
+    try:
+        payload = service.orchestration_run_view(
+            target_date="2026-05-19",
+            mode="governance_candidate_validation_outcome",
+            publish_succeeded=False,
+            requested_by="test",
+            dry_run=False,
+            source_run_id="benchmark-run-1",
+            validation_result=validation_result,
+        )
+    finally:
+        service.require_trading_day = original_require_trading_day
+        service.worker_app.run_governance_candidate_validation_outcome_on_demand = (
+            original_worker_run
+        )
+        service._materialize_lab_runs_from_snapshot = original_materialize_lab_runs
+
+    ledger_path = tmp_path / "var/ledgers/orchestration_runs/2026-05-19/orchestrator_run.json"
+    artifact_path = (
+        tmp_path / "var/artifacts/orchestration_runs/2026-05-19/orchestrator_result.json"
+    )
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert captured == {
+        "target_date": "2026-05-19",
+        "source_run_id": "benchmark-run-1",
+        "validation_id": validation_result_payload["validation_id"],
+        "outcome": validation_result_payload["outcome"],
+        "requested_by": "test",
+        "dry_run": False,
+    }
+    assert payload["_meta"]["status"] == "ok"
+    assert (
+        payload["orchestrator_run"]["mode"]
+        == "governance_candidate_validation_outcome"
+    )
+    assert ledger_payload["mode"] == "governance_candidate_validation_outcome"
+    assert artifact_payload["mode"] == "governance_candidate_validation_outcome"
+    assert (
+        artifact_payload["tasks"][0]["task_id"]
+        == "governance.candidate_validation_outcome"
+    )
+
+
 def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
     tmp_path: Path,
 ) -> None:
@@ -1840,6 +2007,59 @@ def test_worker_runs_governance_status_transition_on_demand(tmp_path: Path) -> N
     assert transition_ledger.effective_attention_status == "resolved"
 
 
+def test_worker_runs_governance_candidate_validation_outcome_on_demand(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_worker_project_root(tmp_path)
+    source_run_id, validation_result_payload = _build_candidate_validation_input(
+        project_root,
+        outcome="passed",
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+
+    snapshot = app.run_governance_candidate_validation_outcome_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+        validation_result=worker_main._resolve_validation_result_argument(
+            validation_result_payload
+        ),
+    )
+
+    validation_id = str(validation_result_payload["validation_id"])
+    validation_artifact = read_governance_candidate_validation_artifact(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+    validation_ledger = read_governance_candidate_validation_record(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["target_date"] == "2026-05-19"
+    assert snapshot["summary"] == {
+        "planned_task_count": 1,
+        "executed_task_count": 1,
+        "ok_task_count": 1,
+    }
+    orchestration = snapshot["orchestration"]
+    assert orchestration["run_ledger"]["status"] == "ok"
+    assert (
+        orchestration["task_results"][0]["task_id"]
+        == "governance.candidate_validation_outcome"
+    )
+    assert (
+        orchestration["task_results"][0]["details"]["validation_id"] == validation_id
+    )
+    assert orchestration["task_results"][0]["details"]["outcome"] == "passed"
+    assert validation_artifact is not None
+    assert validation_artifact["validation_id"] == validation_id
+    assert validation_artifact["outcome"] == "passed"
+    assert validation_ledger is not None
+    assert validation_ledger.validation_id == validation_id
+    assert validation_ledger.outcome == "passed"
+
+
 def test_worker_main_governance_reject_mode_returns_zero_for_ok_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2018,6 +2238,58 @@ def test_worker_main_governance_status_transition_mode_returns_nonzero_for_faile
     assert worker_main.main() == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "failed"
+
+
+def test_worker_main_governance_candidate_validation_outcome_mode_returns_zero_for_ok_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, validation_result_payload = _build_candidate_validation_payload()
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {
+                "mode": "governance_candidate_validation_outcome",
+                "target_date": "2026-05-19",
+                "publish_succeeded": False,
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "",
+                "validation_result": json.dumps(
+                    validation_result_payload, ensure_ascii=False, sort_keys=True
+                ),
+            },
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _OkCandidateValidationApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run_governance_candidate_validation_outcome_on_demand(
+            self, *, target_date, source_run_id, validation_result, dry_run
+        ):
+            assert target_date.isoformat() == "2026-05-19"
+            assert source_run_id == "benchmark-run-1"
+            assert validation_result.validation_id == validation_result_payload["validation_id"]
+            assert validation_result.outcome == validation_result_payload["outcome"]
+            assert dry_run is True
+            return {
+                "status": "ok",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _OkCandidateValidationApp)
+
+    assert worker_main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
 
 
 def test_issue_center_loads_baseline_from_summary_artifact(tmp_path: Path) -> None:
@@ -2269,6 +2541,28 @@ def test_bootstrap_api_router_rejects_governance_status_transition_without_sourc
     assert payload["error"]["code"] == "invalid_source_run_id"
 
 
+def test_bootstrap_api_router_rejects_candidate_validation_outcome_without_source_run_id() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    router = BootstrapApiRouter(service)
+    _, validation_result = _build_candidate_validation_payload()
+
+    with pytest.raises(Exception) as exc_info:
+        router.dispatch_post(
+            "/api/orchestration/run",
+            {
+                "date": "2026-05-19",
+                "mode": "governance_candidate_validation_outcome",
+                "requested_by": "test",
+                "dry_run": True,
+                "validation_result": validation_result,
+            },
+        )
+
+    status, payload = format_api_error(exc_info.value)
+    assert status == 400
+    assert payload["error"]["code"] == "invalid_source_run_id"
+
+
 def test_bootstrap_api_router_rejects_governance_reject_without_validation_id() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)
@@ -2288,6 +2582,27 @@ def test_bootstrap_api_router_rejects_governance_reject_without_validation_id() 
     status, payload = format_api_error(exc_info.value)
     assert status == 400
     assert payload["error"]["code"] == "invalid_validation_id"
+
+
+def test_bootstrap_api_router_rejects_candidate_validation_outcome_without_validation_result() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(Exception) as exc_info:
+        router.dispatch_post(
+            "/api/orchestration/run",
+            {
+                "date": "2026-05-19",
+                "mode": "governance_candidate_validation_outcome",
+                "requested_by": "test",
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+            },
+        )
+
+    status, payload = format_api_error(exc_info.value)
+    assert status == 400
+    assert payload["error"]["code"] == "invalid_validation_result"
 
 
 def test_bootstrap_api_router_rejects_governance_status_transition_without_validation_id() -> None:

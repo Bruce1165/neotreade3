@@ -18,7 +18,9 @@ from neotrade3.benchmark.runtime import (
 )
 from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 from neotrade3.data_control import DataControlPipeline
+from neotrade3.governance.contracts import ValidationResult
 from neotrade3.governance.runtime import (
+    run_governance_candidate_validation_outcome,
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
     run_governance_status_transition,
@@ -42,6 +44,39 @@ from neotrade3.orchestration.models import (
     RunStatus,
     TaskResult,
 )
+
+
+def _resolve_validation_result_argument(
+    value: object,
+) -> ValidationResult | None:
+    if value is None:
+        return None
+    if isinstance(value, ValidationResult):
+        return value
+    payload = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"validation_result must be valid JSON: {exc}"
+            ) from exc
+    try:
+        return ValidationResult.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"validation_result must match ValidationResult contract: {exc}"
+        ) from exc
+
+
+def _parse_validation_result_argument(value: str) -> ValidationResult:
+    try:
+        validation_result = _resolve_validation_result_argument(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if validation_result is None:
+        raise argparse.ArgumentTypeError("validation_result must be provided")
+    return validation_result
 
 
 class BootstrapWorkerApp:
@@ -323,7 +358,47 @@ class BootstrapWorkerApp:
             validation_id = str(
                 task.args_template.get("validation_id", "") or ""
             ).strip()
+            validation_result_payload = task.args_template.get("validation_result")
             try:
+                if task.task_id == "governance.candidate_validation_outcome":
+                    if not source_run_id:
+                        raise ValueError(
+                            "source_run_id must be provided when validation_result is set"
+                        )
+                    validation_result = _resolve_validation_result_argument(
+                        validation_result_payload
+                    )
+                    if validation_result is None:
+                        raise ValueError(
+                            "validation_result must be provided when source_run_id is set"
+                        )
+                    record = run_governance_candidate_validation_outcome(
+                        project_root=project_root,
+                        source_run_id=source_run_id,
+                        validation_result=validation_result,
+                        dry_run=dry_run,
+                    )
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message=(
+                            "governance candidate validation outcome materialized "
+                            "successfully"
+                        ),
+                        artifact_refs=[record.artifact_path, record.ledger_path],
+                        details={
+                            "validation_id": record.validation_id,
+                            "source_run_id": record.source_run_id,
+                            "status": record.status,
+                            "baseline_run_id": record.baseline_run_id,
+                            "candidate_run_id": record.candidate_run_id,
+                            "outcome": record.outcome,
+                            "dry_run": dry_run,
+                        },
+                    )
+
                 if task.task_id == "governance.status_transition":
                     if not source_run_id:
                         raise ValueError(
@@ -634,6 +709,80 @@ class BootstrapWorkerApp:
             self.write_outputs(target_date, snapshot)
 
         return snapshot
+
+    def run_governance_candidate_validation_outcome_on_demand(
+        self,
+        *,
+        target_date: date,
+        source_run_id: str,
+        validation_result: ValidationResult,
+        requested_by: str = (
+            "BootstrapWorkerApp.run_governance_candidate_validation_outcome_on_demand"
+        ),
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        orchestrator = DailyMasterOrchestrator.from_files(
+            orchestrator_config_path=self.paths["orchestrator_config"],
+            labs_registry_path=self.paths["labs_config"],
+        )
+        plan = orchestrator.build_on_demand_plan(
+            OnDemandTaskRequest(
+                target_date=target_date,
+                tasks=[
+                    OnDemandTaskItem(
+                        task_id="governance.candidate_validation_outcome",
+                        phase=OrchestrationPhase.GOVERNANCE,
+                        entrypoint=(
+                            "neotrade3.governance.runtime:"
+                            "run_governance_candidate_validation_outcome"
+                        ),
+                        args_template={
+                            "source_run_id": source_run_id,
+                            "validation_result": validation_result.to_payload(),
+                        },
+                        outputs=[
+                            "governance_candidate_validation_artifact",
+                            "governance_candidate_validation_ledger",
+                        ],
+                    )
+                ],
+            )
+        )
+        task_results = orchestrator.execute_run_plan(
+            plan,
+            {
+                OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
+            },
+            {
+                "target_date": target_date,
+                "project_root": str(self.project_root),
+                "db_path": str(self.project_root / "var/data/neotrade3.db"),
+                "requested_by": requested_by,
+                "dry_run": dry_run,
+            },
+        )
+        run_entry, task_entries = self._build_execution_run_ledger(
+            target_date=target_date,
+            execution_run_plan=plan,
+            task_results=task_results,
+        )
+        return {
+            "status": run_entry.status.value,
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "plan": self._to_jsonable(plan),
+                "task_results": self._to_jsonable(task_results),
+                "run_ledger": self._to_jsonable(run_entry),
+                "task_ledger": self._to_jsonable(task_entries),
+            },
+            "summary": {
+                "planned_task_count": len(plan.planned_tasks),
+                "executed_task_count": len(task_results),
+                "ok_task_count": sum(
+                    1 for result in task_results if result.status == RunStatus.OK
+                ),
+            },
+        }
 
     def run_governance_reject_on_demand(
         self,
@@ -963,7 +1112,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the NeoTrade3 bootstrap worker.")
     parser.add_argument(
         "--mode",
-        choices=("daily", "governance_reject", "governance_status_transition"),
+        choices=(
+            "daily",
+            "governance_reject",
+            "governance_status_transition",
+            "governance_candidate_validation_outcome",
+        ),
         default="daily",
         help="Worker run mode. Defaults to the daily bootstrap flow.",
     )
@@ -988,6 +1142,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--validation-id",
         help="Validation result id for governance_reject mode.",
     )
+    parser.add_argument(
+        "--validation-result",
+        type=_parse_validation_result_argument,
+        help="ValidationResult payload encoded as JSON for governance_candidate_validation_outcome mode.",
+    )
     return parser
 
 
@@ -1007,6 +1166,9 @@ def main() -> int:
     mode = str(getattr(args, "mode", "daily") or "daily").strip().lower()
     source_run_id = str(getattr(args, "source_run_id", "") or "").strip()
     validation_id = str(getattr(args, "validation_id", "") or "").strip()
+    validation_result = _resolve_validation_result_argument(
+        getattr(args, "validation_result", None)
+    )
     project_root = Path(__file__).resolve().parents[2]
     app = BootstrapWorkerApp(project_root=project_root)
     if mode == "governance_reject":
@@ -1031,6 +1193,18 @@ def main() -> int:
             target_date=target_date,
             source_run_id=source_run_id,
             validation_id=validation_id,
+            dry_run=bool(args.dry_run),
+        )
+    elif mode == "governance_candidate_validation_outcome":
+        if not source_run_id or validation_result is None:
+            parser.error(
+                "--source-run-id and --validation-result are required when "
+                "--mode governance_candidate_validation_outcome"
+            )
+        snapshot = app.run_governance_candidate_validation_outcome_on_demand(
+            target_date=target_date,
+            source_run_id=source_run_id,
+            validation_result=validation_result,
             dry_run=bool(args.dry_run),
         )
     else:

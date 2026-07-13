@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
+from neotrade3.governance.contracts import ValidationResult
+
 from apps.api.shared import ApiBinaryResponse, ApiError
 
 
@@ -2584,13 +2586,15 @@ class BootstrapApiRouter:
                 "daily",
                 "governance_reject",
                 "governance_status_transition",
+                "governance_candidate_validation_outcome",
             }:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_mode",
                     message=(
                         "mode must be one of: daily, governance_reject, "
-                        "governance_status_transition"
+                        "governance_status_transition, "
+                        "governance_candidate_validation_outcome"
                     ),
                     details={"mode": mode},
                 )
@@ -2624,9 +2628,12 @@ class BootstrapApiRouter:
 
             source_run_id = body.get("source_run_id")
             validation_id = body.get("validation_id")
+            validation_result = body.get("validation_result")
+            resolved_validation_result: ValidationResult | None = None
             if normalized_mode in {
                 "governance_reject",
                 "governance_status_transition",
+                "governance_candidate_validation_outcome",
             }:
                 if (
                     not isinstance(source_run_id, str)
@@ -2638,6 +2645,10 @@ class BootstrapApiRouter:
                         message="source_run_id must be a non-empty string",
                         details={"source_run_id": source_run_id},
                     )
+            if normalized_mode in {
+                "governance_reject",
+                "governance_status_transition",
+            }:
                 if (
                     not isinstance(validation_id, str)
                     or not validation_id.strip()
@@ -2648,6 +2659,20 @@ class BootstrapApiRouter:
                         message="validation_id must be a non-empty string",
                         details={"validation_id": validation_id},
                     )
+            if normalized_mode == "governance_candidate_validation_outcome":
+                try:
+                    resolved_validation_result = ValidationResult.from_dict(
+                        validation_result
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_validation_result",
+                        message=(
+                            "validation_result must match ValidationResult contract"
+                        ),
+                        details={"reason": str(exc)},
+                    ) from exc
 
             return HTTPStatus.OK, self.service.orchestration_run_view(
                 target_date=raw_date,
@@ -2665,6 +2690,7 @@ class BootstrapApiRouter:
                     if isinstance(validation_id, str)
                     else None
                 ),
+                validation_result=resolved_validation_result,
             )
 
         if path == "/api/trading-calendar/rebuild":

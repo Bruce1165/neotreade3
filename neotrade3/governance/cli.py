@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from .contracts import ValidationResult
 from .runtime import (
+    run_governance_candidate_validation_outcome,
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
     run_governance_status_transition,
@@ -16,6 +18,21 @@ from .runtime import (
 
 def _default_project_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _parse_validation_result_argument(value: str) -> ValidationResult:
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(
+            f"validation_result must be valid JSON: {exc}"
+        ) from exc
+    try:
+        return ValidationResult.from_dict(payload)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            f"validation_result must match ValidationResult contract: {exc}"
+        ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +109,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Execute without writing status transition artifact/ledger outputs under var/.",
     )
+    candidate_validation_parser = subparsers.add_parser(
+        "candidate-validation-outcome",
+        help="Materialize an independent governance candidate validation outcome from an explicit validation_result payload.",
+    )
+    candidate_validation_parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project root path (defaults to repository root).",
+    )
+    candidate_validation_parser.add_argument(
+        "--source-run-id",
+        required=True,
+        help="Persisted governance handoff source run id.",
+    )
+    candidate_validation_parser.add_argument(
+        "--validation-result",
+        required=True,
+        type=_parse_validation_result_argument,
+        help="ValidationResult payload encoded as JSON.",
+    )
+    candidate_validation_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute without writing candidate validation artifact/ledger outputs under var/.",
+    )
     return parser
 
 
@@ -141,6 +183,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             "candidate_run_id": record.candidate_run_id,
             "decision_id": record.decision_id,
             "decision": record.decision,
+            "artifact_path": record.artifact_path,
+            "ledger_path": record.ledger_path,
+            "dry_run": bool(args.dry_run),
+        }
+    elif args.command == "candidate-validation-outcome":
+        record = run_governance_candidate_validation_outcome(
+            project_root=project_root,
+            source_run_id=str(args.source_run_id),
+            validation_result=args.validation_result,
+            dry_run=bool(args.dry_run),
+        )
+        payload = {
+            "validation_id": record.validation_id,
+            "source_run_id": record.source_run_id,
+            "status": record.status,
+            "baseline_run_id": record.baseline_run_id,
+            "candidate_run_id": record.candidate_run_id,
+            "outcome": record.outcome,
             "artifact_path": record.artifact_path,
             "ledger_path": record.ledger_path,
             "dry_run": bool(args.dry_run),

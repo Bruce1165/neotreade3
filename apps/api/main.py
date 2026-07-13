@@ -47,6 +47,7 @@ from neotrade3.migration import (
 from apps.worker.main import BootstrapWorkerApp
 from neotrade3.data_control import SourceRegistry
 from neotrade3.data_control.pipeline import DataControlPipeline
+from neotrade3.governance.contracts import ValidationResult
 from neotrade3.labs import LabRegistry
 from neotrade3.labs.contracts import (
     build_lab_runtime_artifacts_payload,
@@ -1330,6 +1331,7 @@ class BootstrapApiService:
         dry_run: bool = False,
         source_run_id: str | None = None,
         validation_id: str | None = None,
+        validation_result: ValidationResult | None = None,
     ) -> dict[str, Any]:
         if not requested_by.strip():
             raise ApiError(
@@ -1365,6 +1367,22 @@ class BootstrapApiService:
                     validation_id=resolved_validation_id,
                     requested_by=requested_by.strip(),
                     dry_run=dry_run,
+                )
+            elif normalized_mode == "governance_candidate_validation_outcome":
+                if validation_result is None:
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_validation_result",
+                        message="validation_result must be provided",
+                    )
+                snapshot = (
+                    self.worker_app.run_governance_candidate_validation_outcome_on_demand(
+                        target_date=target_date_obj,
+                        source_run_id=resolved_source_run_id,
+                        validation_result=validation_result,
+                        requested_by=requested_by.strip(),
+                        dry_run=dry_run,
+                    )
                 )
             else:
                 snapshot = self.worker_app.run_governance_status_transition_on_demand(
