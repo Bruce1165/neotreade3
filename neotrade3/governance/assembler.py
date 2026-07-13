@@ -16,6 +16,7 @@ from neotrade3.benchmark.contracts import (
 )
 
 from .contracts import (
+    AttentionItem,
     PATH_EXPERIMENT_VALIDATION,
     PATH_HUMAN_ESCALATION,
     PATH_INTERACTION_SEMANTIC_REPAIR,
@@ -163,6 +164,39 @@ def build_experiment_request(
         comparison_scope=dict(comparison_scope or {}),
         status=_require_text(status, "status"),
         evidence_refs=_normalize_evidence_refs(evidence_refs),
+    )
+
+
+def build_attention_item(
+    *,
+    attention_id: str,
+    created_at: str,
+    source: str,
+    target_layer: str,
+    issue_type: str,
+    severity: str,
+    automation_class: str,
+    evidence_refs: Sequence[dict[str, Any]] | None = None,
+    recommended_action: str,
+    human_action_required: bool,
+    status: str,
+    owner: str,
+    blocking_scope: str,
+) -> AttentionItem:
+    return AttentionItem(
+        attention_id=_require_text(attention_id, "attention_id"),
+        created_at=_require_text(created_at, "created_at"),
+        source=_require_text(source, "source"),
+        target_layer=_require_text(target_layer, "target_layer"),
+        issue_type=_require_text(issue_type, "issue_type"),
+        severity=_require_text(severity, "severity"),
+        automation_class=_require_text(automation_class, "automation_class"),
+        evidence_refs=_normalize_evidence_refs(evidence_refs),
+        recommended_action=_require_text(recommended_action, "recommended_action"),
+        human_action_required=bool(human_action_required),
+        status=_require_text(status, "status"),
+        owner=_require_text(owner, "owner"),
+        blocking_scope=_require_text(blocking_scope, "blocking_scope"),
     )
 
 

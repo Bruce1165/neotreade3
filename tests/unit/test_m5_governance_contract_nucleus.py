@@ -22,12 +22,14 @@ from neotrade3.data_control import (
     PF1TradingProfile,
 )
 from neotrade3.governance import (
+    ATTENTION_ITEM_OBJECT_TYPE,
     CHANGE_REQUEST_OBJECT_TYPE,
     DIAGNOSTIC_CHAIN_OBJECT_TYPE,
     GOVERNANCE_DECISION_RECORD_OBJECT_TYPE,
     PROMOTION_BLOCKER_OBJECT_TYPE,
     ROOT_LAYER_INTERACTION,
     VALIDATION_RESULT_OBJECT_TYPE,
+    build_attention_item,
     build_b4_local_global_guardrail_diagnostic,
     build_block_decision_record_from_promotion_blocker,
     build_change_request_from_diagnostic,
@@ -186,16 +188,35 @@ def test_governance_contract_payloads_are_stable() -> None:
         status="final",
         evidence_refs=[{"kind": "validation_result"}],
     )
+    attention_item = build_attention_item(
+        attention_id="attention-1",
+        created_at="2026-07-13T10:00:00Z",
+        source="governance",
+        target_layer="M3",
+        issue_type="semantic_drift",
+        severity="high",
+        automation_class="human_review_required",
+        evidence_refs=[{"kind": "diagnostic_chain"}],
+        recommended_action="review_m3_semantic_owner",
+        human_action_required=True,
+        status="open",
+        owner="governance_ops",
+        blocking_scope="promotion",
+    )
 
     result_payload = result.to_payload()
     decision_payload = decision.to_payload()
+    attention_payload = attention_item.to_payload()
     result_payload["remaining_guardrail_codes"].append("other")
     decision_payload["evidence_refs"].append({"kind": "other"})
+    attention_payload["evidence_refs"].append({"kind": "other"})
 
     assert result.to_payload()["object_type"] == VALIDATION_RESULT_OBJECT_TYPE
     assert decision.to_payload()["object_type"] == GOVERNANCE_DECISION_RECORD_OBJECT_TYPE
+    assert attention_item.to_payload()["object_type"] == ATTENTION_ITEM_OBJECT_TYPE
     assert result.remaining_guardrail_codes == [GUARDRAIL_CODE_LOCAL_GLOBAL_END]
     assert decision.evidence_refs == [{"kind": "validation_result"}]
+    assert attention_item.evidence_refs == [{"kind": "diagnostic_chain"}]
 
 
 def test_governance_builders_reject_empty_ids() -> None:
@@ -209,6 +230,23 @@ def test_governance_builders_reject_empty_ids() -> None:
             rationale="guardrail still active",
             approver="human_reviewer",
             status="final",
+        )
+
+    with pytest.raises(ValueError):
+        build_attention_item(
+            attention_id="",
+            created_at="2026-07-13T10:00:00Z",
+            source="governance",
+            target_layer="M3",
+            issue_type="semantic_drift",
+            severity="high",
+            automation_class="human_review_required",
+            evidence_refs=[],
+            recommended_action="review_m3_semantic_owner",
+            human_action_required=True,
+            status="open",
+            owner="governance_ops",
+            blocking_scope="promotion",
         )
 
 

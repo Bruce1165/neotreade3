@@ -9,6 +9,7 @@ from typing import Any
 DIAGNOSTIC_CHAIN_OBJECT_TYPE = "diagnostic_chain"
 CHANGE_REQUEST_OBJECT_TYPE = "change_request"
 EXPERIMENT_REQUEST_OBJECT_TYPE = "experiment_request"
+ATTENTION_ITEM_OBJECT_TYPE = "attention_item"
 VALIDATION_RESULT_OBJECT_TYPE = "validation_result"
 PROMOTION_BLOCKER_OBJECT_TYPE = "promotion_blocker"
 GOVERNANCE_DECISION_RECORD_OBJECT_TYPE = "governance_decision_record"
@@ -153,6 +154,44 @@ class ExperimentRequest:
             "comparison_scope": _copy_mapping(self.comparison_scope),
             "status": self.status,
             "evidence_refs": _copy_mapping_list(self.evidence_refs),
+            "object_type": self.object_type,
+            "object_version": self.object_version,
+        }
+
+
+@dataclass(frozen=True)
+class AttentionItem:
+    attention_id: str
+    created_at: str
+    source: str
+    target_layer: str
+    issue_type: str
+    severity: str
+    automation_class: str
+    evidence_refs: list[dict[str, Any]]
+    recommended_action: str
+    human_action_required: bool
+    status: str
+    owner: str
+    blocking_scope: str
+    object_type: str = ATTENTION_ITEM_OBJECT_TYPE
+    object_version: int = M5_OBJECT_VERSION
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "attention_id": self.attention_id,
+            "created_at": self.created_at,
+            "source": self.source,
+            "target_layer": self.target_layer,
+            "issue_type": self.issue_type,
+            "severity": self.severity,
+            "automation_class": self.automation_class,
+            "evidence_refs": _copy_mapping_list(self.evidence_refs),
+            "recommended_action": self.recommended_action,
+            "human_action_required": bool(self.human_action_required),
+            "status": self.status,
+            "owner": self.owner,
+            "blocking_scope": self.blocking_scope,
             "object_type": self.object_type,
             "object_version": self.object_version,
         }

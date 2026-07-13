@@ -1,6 +1,7 @@
 """Formal M5 governance objects and pure builders."""
 
 from .assembler import (
+    build_attention_item,
     build_block_decision_record_from_promotion_blocker,
     build_b4_local_global_guardrail_diagnostic,
     build_change_request,
@@ -15,6 +16,7 @@ from .assembler import (
     build_validation_result,
 )
 from .contracts import (
+    ATTENTION_ITEM_OBJECT_TYPE,
     CHANGE_REQUEST_OBJECT_TYPE,
     DIAGNOSTIC_CHAIN_OBJECT_TYPE,
     EXPERIMENT_REQUEST_OBJECT_TYPE,
@@ -33,6 +35,7 @@ from .contracts import (
     ROOT_LAYER_RECOGNITION,
     ROOT_LAYER_TRANSLATION,
     VALIDATION_RESULT_OBJECT_TYPE,
+    AttentionItem,
     ChangeRequest,
     DiagnosticChain,
     ExperimentRequest,
@@ -51,6 +54,7 @@ from .handoff import (
 
 __all__ = [
     "CHANGE_REQUEST_OBJECT_TYPE",
+    "ATTENTION_ITEM_OBJECT_TYPE",
     "DIAGNOSTIC_CHAIN_OBJECT_TYPE",
     "EXPERIMENT_REQUEST_OBJECT_TYPE",
     "GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE",
@@ -72,6 +76,7 @@ __all__ = [
     "ROOT_LAYER_RECOGNITION",
     "ROOT_LAYER_TRANSLATION",
     "VALIDATION_RESULT_OBJECT_TYPE",
+    "AttentionItem",
     "ChangeRequest",
     "DiagnosticChain",
     "ExperimentRequest",
@@ -79,6 +84,7 @@ __all__ = [
     "PromotionBlocker",
     "ValidationResult",
     "build_b4_local_global_guardrail_diagnostic",
+    "build_attention_item",
     "build_block_decision_record_from_promotion_blocker",
     "build_change_request",
     "build_change_request_from_diagnostic",
