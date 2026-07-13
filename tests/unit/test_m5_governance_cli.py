@@ -17,6 +17,8 @@ from neotrade3.governance.run_ledger import (
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
     read_governance_run_ledger,
+    read_governance_status_transition_artifact,
+    read_governance_status_transition_ledger,
 )
 
 
@@ -133,6 +135,28 @@ def test_governance_cli_parser_accepts_reject_arguments() -> None:
     )
 
     assert args.command == "reject"
+    assert args.project_root == "/tmp/neotrade3"
+    assert args.source_run_id == "benchmark-run-1"
+    assert args.validation_id == "validation-1"
+    assert args.dry_run is True
+
+
+def test_governance_cli_parser_accepts_status_transition_arguments() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "status-transition",
+            "--project-root",
+            "/tmp/neotrade3",
+            "--source-run-id",
+            "benchmark-run-1",
+            "--validation-id",
+            "validation-1",
+            "--dry-run",
+        ]
+    )
+
+    assert args.command == "status-transition"
     assert args.project_root == "/tmp/neotrade3"
     assert args.source_run_id == "benchmark-run-1"
     assert args.validation_id == "validation-1"
@@ -391,3 +415,170 @@ def test_governance_cli_reject_raises_for_missing_validation(tmp_path: Path) -> 
         assert "validation_result not found" in str(exc)
     else:
         raise AssertionError("missing validation should raise ValueError")
+
+
+def test_governance_cli_status_transition_dry_run_does_not_write_outputs(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    main(
+        [
+            "reject",
+            "--project-root",
+            str(project_root),
+            "--source-run-id",
+            run_id,
+            "--validation-id",
+            "validation-final-reject",
+        ]
+    )
+    buffer = StringIO()
+
+    with redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "status-transition",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "validation-final-reject",
+                "--dry-run",
+            ]
+        )
+
+    payload = json.loads(buffer.getvalue())
+    assert exit_code == 0
+    assert payload["validation_id"] == "validation-final-reject"
+    assert payload["source_run_id"] == run_id
+    assert payload["effective_attention_status"] == "resolved"
+    assert payload["effective_blocker_active"] is True
+    assert payload["dry_run"] is True
+    assert not (project_root / payload["artifact_path"]).exists()
+    assert not (project_root / payload["ledger_path"]).exists()
+    assert (
+        read_governance_status_transition_artifact(
+            project_root=project_root,
+            validation_id=payload["validation_id"],
+        )
+        is None
+    )
+    assert (
+        read_governance_status_transition_ledger(
+            project_root=project_root,
+            validation_id=payload["validation_id"],
+        )
+        is None
+    )
+
+
+def test_governance_cli_status_transition_materializes_outputs(tmp_path: Path) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    main(
+        [
+            "reject",
+            "--project-root",
+            str(project_root),
+            "--source-run-id",
+            run_id,
+            "--validation-id",
+            "validation-final-reject",
+        ]
+    )
+    buffer = StringIO()
+
+    with redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "status-transition",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "validation-final-reject",
+            ]
+        )
+
+    payload = json.loads(buffer.getvalue())
+    artifact_path = project_root / payload["artifact_path"]
+    ledger_path = project_root / payload["ledger_path"]
+    artifact_payload = read_governance_status_transition_artifact(
+        project_root=project_root,
+        validation_id=payload["validation_id"],
+    )
+    ledger_record = read_governance_status_transition_ledger(
+        project_root=project_root,
+        validation_id=payload["validation_id"],
+    )
+
+    assert exit_code == 0
+    assert payload["validation_id"] == "validation-final-reject"
+    assert payload["source_run_id"] == run_id
+    assert payload["status"] == "completed"
+    assert payload["effective_attention_status"] == "resolved"
+    assert payload["effective_blocker_active"] is True
+    assert payload["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert ledger_record.validation_id == payload["validation_id"]
+    assert ledger_record.decision_id == payload["decision_id"]
+    assert ledger_record.effective_attention_id == payload["effective_attention_id"]
+    assert (
+        ledger_record.effective_attention_status
+        == payload["effective_attention_status"]
+    )
+    assert ledger_record.effective_blocker_id == payload["effective_blocker_id"]
+    assert (
+        ledger_record.effective_blocker_active
+        == payload["effective_blocker_active"]
+    )
+    assert artifact_payload["effective_attention_item"]["status"] == "resolved"
+    assert artifact_payload["effective_promotion_blocker"]["active"] is True
+
+
+def test_governance_cli_status_transition_raises_for_missing_reject_proof(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+
+    try:
+        main(
+            [
+                "status-transition",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "validation-final-reject",
+            ]
+        )
+    except ValueError as exc:
+        assert "persisted governance reject execution not found" in str(exc)
+    else:
+        raise AssertionError("missing reject proof should raise ValueError")

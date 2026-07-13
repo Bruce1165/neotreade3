@@ -10,6 +10,7 @@ from typing import Sequence
 from .runtime import (
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
+    run_governance_status_transition,
 )
 
 
@@ -67,6 +68,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Execute without writing reject artifact/ledger outputs under var/.",
     )
+    status_transition_parser = subparsers.add_parser(
+        "status-transition",
+        help="Materialize an independent governance status transition from persisted reject execution proof.",
+    )
+    status_transition_parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project root path (defaults to repository root).",
+    )
+    status_transition_parser.add_argument(
+        "--source-run-id",
+        required=True,
+        help="Persisted governance handoff source run id.",
+    )
+    status_transition_parser.add_argument(
+        "--validation-id",
+        required=True,
+        help="Validation result id to materialize as a status transition.",
+    )
+    status_transition_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute without writing status transition artifact/ledger outputs under var/.",
+    )
     return parser
 
 
@@ -101,7 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ledger_path": record.ledger_path,
             "dry_run": bool(args.dry_run),
         }
-    else:
+    elif args.command == "reject":
         record = run_governance_reject_execution(
             project_root=project_root,
             source_run_id=str(args.source_run_id),
@@ -116,6 +141,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             "candidate_run_id": record.candidate_run_id,
             "decision_id": record.decision_id,
             "decision": record.decision,
+            "artifact_path": record.artifact_path,
+            "ledger_path": record.ledger_path,
+            "dry_run": bool(args.dry_run),
+        }
+    else:
+        record = run_governance_status_transition(
+            project_root=project_root,
+            source_run_id=str(args.source_run_id),
+            validation_id=str(args.validation_id),
+            dry_run=bool(args.dry_run),
+        )
+        payload = {
+            "validation_id": record.validation_id,
+            "source_run_id": record.source_run_id,
+            "status": record.status,
+            "baseline_run_id": record.baseline_run_id,
+            "candidate_run_id": record.candidate_run_id,
+            "decision_id": record.decision_id,
+            "effective_attention_id": record.effective_attention_id,
+            "effective_attention_status": record.effective_attention_status,
+            "effective_blocker_id": record.effective_blocker_id,
+            "effective_blocker_active": record.effective_blocker_active,
             "artifact_path": record.artifact_path,
             "ledger_path": record.ledger_path,
             "dry_run": bool(args.dry_run),
