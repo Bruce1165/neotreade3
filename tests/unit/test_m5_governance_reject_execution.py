@@ -1,60 +1,30 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.run_ledger import (
     read_governance_handoff_artifact,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
 )
 from neotrade3.governance.runtime import run_governance_reject_execution
-from tests.unit.test_m5_governance_run_ledger import _build_reference_bundle
-from neotrade3.governance.run_ledger import materialize_governance_handoff
-
-
-def _materialize_reference_handoff(tmp_path: Path):
-    bundle = _build_reference_bundle()
-    record = materialize_governance_handoff(
-        project_root=tmp_path,
-        bundle=bundle,
-    )
-    return bundle, record
+from tests.unit.test_m5_governance_candidate_validation_outcome import (
+    _materialize_candidate_validation_outcome,
+    _materialize_reference_handoff,
+)
 
 
 def test_run_governance_reject_execution_materializes_independent_artifacts(
     tmp_path: Path,
 ) -> None:
     bundle, handoff_record = _materialize_reference_handoff(tmp_path)
-    validation = build_validation_result(
-        validation_id="validation-final-reject",
-        experiment_id=bundle.experiment_requests[0].experiment_id,
-        baseline_run_id=bundle.source_run_id,
-        candidate_run_id="candidate-run-1",
+    validation, _ = _materialize_candidate_validation_outcome(
+        tmp_path=tmp_path,
+        bundle=bundle,
         outcome="rejected",
-        introduced_risk_count=2,
-        cleared_guardrail_codes=[],
-        remaining_guardrail_codes=["interaction.local_global"],
-        evidence_refs=[{"kind": "validation_result"}],
-    )
-    bundle_payload = read_governance_handoff_artifact(
-        project_root=tmp_path,
-        source_run_id=bundle.source_run_id,
-    )
-    assert bundle_payload is not None
-    bundle_payload["validation_results"].append(validation.to_payload())
-    artifact_file = (
-        tmp_path
-        / "var/artifacts/governance_handoffs"
-        / bundle.source_run_id
-        / "governance_handoff_bundle.json"
-    )
-    artifact_file.write_text(
-        json.dumps(bundle_payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+        candidate_run_id="candidate-run-1",
     )
 
     record = run_governance_reject_execution(
@@ -96,28 +66,11 @@ def test_run_governance_reject_execution_materializes_independent_artifacts(
 
 def test_run_governance_reject_execution_dry_run_writes_nothing(tmp_path: Path) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = build_validation_result(
-        validation_id="validation-final-reject",
-        experiment_id=bundle.experiment_requests[0].experiment_id,
-        baseline_run_id=bundle.source_run_id,
-        candidate_run_id="candidate-run-1",
+    validation, _ = _materialize_candidate_validation_outcome(
+        tmp_path=tmp_path,
+        bundle=bundle,
         outcome="rejected",
-        introduced_risk_count=1,
-        cleared_guardrail_codes=[],
-        remaining_guardrail_codes=["interaction.local_global"],
-        evidence_refs=[],
-    )
-    artifact_file = (
-        tmp_path
-        / "var/artifacts/governance_handoffs"
-        / bundle.source_run_id
-        / "governance_handoff_bundle.json"
-    )
-    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
-    payload["validation_results"].append(validation.to_payload())
-    artifact_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+        candidate_run_id="candidate-run-1",
     )
 
     record = run_governance_reject_execution(
@@ -155,28 +108,11 @@ def test_run_governance_reject_execution_rejects_non_rejected_outcome(
     tmp_path: Path,
 ) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = build_validation_result(
-        validation_id="validation-final-pass",
-        experiment_id=bundle.experiment_requests[0].experiment_id,
-        baseline_run_id=bundle.source_run_id,
-        candidate_run_id="candidate-run-2",
+    validation, _ = _materialize_candidate_validation_outcome(
+        tmp_path=tmp_path,
+        bundle=bundle,
         outcome="passed",
-        introduced_risk_count=0,
-        cleared_guardrail_codes=["interaction.local_global"],
-        remaining_guardrail_codes=[],
-        evidence_refs=[],
-    )
-    artifact_file = (
-        tmp_path
-        / "var/artifacts/governance_handoffs"
-        / bundle.source_run_id
-        / "governance_handoff_bundle.json"
-    )
-    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
-    payload["validation_results"].append(validation.to_payload())
-    artifact_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+        candidate_run_id="candidate-run-2",
     )
 
     with pytest.raises(ValueError, match="validation_result.outcome must be rejected"):

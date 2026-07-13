@@ -36,6 +36,17 @@ class GovernanceRejectExecutionArtifactRecord:
 
 
 @dataclass(frozen=True)
+class GovernanceCandidateValidationArtifactRecord:
+    validation_id: str
+    source_run_id: str
+    written_at: str
+    artifact_path: str
+    baseline_run_id: str
+    candidate_run_id: str
+    outcome: str
+
+
+@dataclass(frozen=True)
 class GovernanceStatusTransitionArtifactRecord:
     validation_id: str
     source_run_id: str
@@ -131,6 +142,56 @@ def write_governance_reject_execution_artifact(
         baseline_run_id=validation_result.baseline_run_id,
         candidate_run_id=validation_result.candidate_run_id,
         decision_id=decision_record.decision_id,
+    )
+
+
+def write_governance_candidate_validation_artifact(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    validation_result: ValidationResult,
+    dry_run: bool = False,
+) -> GovernanceCandidateValidationArtifactRecord:
+    project_root_path = Path(project_root)
+    normalized_source_run_id = str(source_run_id or "").strip()
+    validation_id = str(validation_result.validation_id or "").strip()
+    if not normalized_source_run_id:
+        raise ValueError("source_run_id must be non-empty")
+    if not validation_id:
+        raise ValueError("validation_id must be non-empty")
+
+    artifacts_dir = (
+        project_root_path
+        / "var/artifacts/governance_candidate_validations"
+        / validation_id
+    )
+    artifact_file = artifacts_dir / "governance_candidate_validation.json"
+    written_at = _now_iso()
+    payload = {
+        "source_run_id": normalized_source_run_id,
+        "validation_id": validation_id,
+        "baseline_run_id": validation_result.baseline_run_id,
+        "candidate_run_id": validation_result.candidate_run_id,
+        "outcome": validation_result.outcome,
+        "validation_result": validation_result.to_payload(),
+        "written_at": written_at,
+    }
+
+    if not dry_run:
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        artifact_file.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    return GovernanceCandidateValidationArtifactRecord(
+        validation_id=validation_id,
+        source_run_id=normalized_source_run_id,
+        written_at=written_at,
+        artifact_path=str(artifact_file.relative_to(project_root_path)),
+        baseline_run_id=validation_result.baseline_run_id,
+        candidate_run_id=validation_result.candidate_run_id,
+        outcome=validation_result.outcome,
     )
 
 

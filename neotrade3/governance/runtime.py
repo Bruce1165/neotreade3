@@ -11,12 +11,15 @@ from .assembler import build_reject_decision_record_from_validation_result
 from .contracts import AttentionItem, GovernanceDecisionRecord, PromotionBlocker, ValidationResult
 from .handoff import build_governance_handoff_from_batch_run
 from .run_ledger import (
+    GovernanceCandidateValidationRecord,
     GovernanceRejectExecutionLedgerRecord,
     GovernanceRunLedgerRecord,
     GovernanceStatusTransitionRecord,
+    materialize_governance_candidate_validation,
     materialize_governance_handoff,
     materialize_governance_reject_execution,
     materialize_governance_status_transition,
+    read_governance_candidate_validation_result,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
     read_governance_handoff_bundle,
@@ -57,6 +60,45 @@ def _find_validation_result(
     )
     if validation_result is None:
         raise ValueError(f"validation_result not found for validation_id={validation_id}")
+    return validation_result
+
+
+def _require_final_validation_result(*, validation_result: ValidationResult) -> ValidationResult:
+    if validation_result.outcome == "awaiting_candidate_validation":
+        raise ValueError(
+            "validation_result.outcome must not be awaiting_candidate_validation"
+        )
+    if not str(validation_result.candidate_run_id or "").strip():
+        raise ValueError(
+            "validation_result.candidate_run_id must be non-empty for final outcomes"
+        )
+    return validation_result
+
+
+def _resolve_baseline_validation_result(
+    *,
+    bundle_validation_results: tuple[ValidationResult, ...],
+    validation_id: str,
+) -> ValidationResult:
+    return _find_validation_result(
+        validation_results=bundle_validation_results,
+        validation_id=validation_id,
+    )
+
+
+def _resolve_candidate_validation_outcome(
+    *,
+    project_root: Path,
+    validation_id: str,
+) -> ValidationResult:
+    validation_result = read_governance_candidate_validation_result(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+    if validation_result is None:
+        raise ValueError(
+            f"persisted candidate validation outcome not found for validation_id={validation_id}"
+        )
     return validation_result
 
 
@@ -187,6 +229,54 @@ def run_governance_for_benchmark_run(
     )
 
 
+def run_governance_candidate_validation_outcome(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    validation_result: ValidationResult,
+    dry_run: bool = False,
+) -> GovernanceCandidateValidationRecord:
+    project_root_path = Path(project_root)
+    resolved_source_run_id = resolve_governance_benchmark_run_id(
+        benchmark_run_id=source_run_id,
+    )
+    resolved_validation_id = resolve_governance_validation_id(
+        validation_id=validation_result.validation_id,
+    )
+    final_validation_result = _require_final_validation_result(
+        validation_result=validation_result,
+    )
+
+    bundle = read_governance_handoff_bundle(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+    )
+    if bundle is None:
+        raise ValueError(
+            f"persisted governance handoff not found for source_run_id={resolved_source_run_id}"
+        )
+
+    baseline_validation_result = _resolve_baseline_validation_result(
+        bundle_validation_results=bundle.validation_results,
+        validation_id=resolved_validation_id,
+    )
+    if final_validation_result.experiment_id != baseline_validation_result.experiment_id:
+        raise ValueError(
+            "validation_result.experiment_id must match the persisted handoff baseline"
+        )
+    if final_validation_result.baseline_run_id != resolved_source_run_id:
+        raise ValueError(
+            "validation_result.baseline_run_id must match source_run_id"
+        )
+
+    return materialize_governance_candidate_validation(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+        validation_result=final_validation_result,
+        dry_run=dry_run,
+    )
+
+
 def run_governance_reject_execution(
     *,
     project_root: str | Path,
@@ -211,10 +301,18 @@ def run_governance_reject_execution(
             f"persisted governance handoff not found for source_run_id={resolved_source_run_id}"
         )
 
-    validation_result = _find_validation_result(
-        validation_results=bundle.validation_results,
+    _resolve_baseline_validation_result(
+        bundle_validation_results=bundle.validation_results,
         validation_id=resolved_validation_id,
     )
+    validation_result = _resolve_candidate_validation_outcome(
+        project_root=project_root_path,
+        validation_id=resolved_validation_id,
+    )
+    if validation_result.baseline_run_id != resolved_source_run_id:
+        raise ValueError(
+            "persisted candidate validation baseline_run_id does not match source_run_id"
+        )
 
     decision_record = build_reject_decision_record_from_validation_result(
         validation_result=validation_result
@@ -252,10 +350,18 @@ def run_governance_status_transition(
             f"persisted governance handoff not found for source_run_id={resolved_source_run_id}"
         )
 
-    validation_result = _find_validation_result(
-        validation_results=bundle.validation_results,
+    _resolve_baseline_validation_result(
+        bundle_validation_results=bundle.validation_results,
         validation_id=resolved_validation_id,
     )
+    validation_result = _resolve_candidate_validation_outcome(
+        project_root=project_root_path,
+        validation_id=resolved_validation_id,
+    )
+    if validation_result.baseline_run_id != resolved_source_run_id:
+        raise ValueError(
+            "persisted candidate validation baseline_run_id does not match source_run_id"
+        )
     blocker_id, attention_id = _resolve_transition_object_ids(
         validation_result=validation_result
     )

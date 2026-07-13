@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.run_ledger import (
     materialize_governance_handoff,
     read_governance_handoff_artifact,
@@ -15,6 +14,9 @@ from neotrade3.governance.run_ledger import (
 from neotrade3.governance.runtime import (
     run_governance_reject_execution,
     run_governance_status_transition,
+)
+from tests.unit.test_m5_governance_candidate_validation_outcome import (
+    _materialize_candidate_validation_outcome,
 )
 from tests.unit.test_m5_governance_run_ledger import _build_reference_bundle
 
@@ -37,39 +39,15 @@ def _handoff_artifact_file(*, tmp_path: Path, source_run_id: str) -> Path:
     )
 
 
-def _append_rejected_validation(*, tmp_path: Path, source_run_id: str, experiment_id: str):
-    validation = build_validation_result(
-        validation_id="validation-final-reject",
-        experiment_id=experiment_id,
-        baseline_run_id=source_run_id,
-        candidate_run_id="candidate-run-1",
-        outcome="rejected",
-        introduced_risk_count=2,
-        cleared_guardrail_codes=[],
-        remaining_guardrail_codes=["interaction.local_global"],
-        evidence_refs=[{"kind": "validation_result"}],
-    )
-    artifact_file = _handoff_artifact_file(
-        tmp_path=tmp_path,
-        source_run_id=source_run_id,
-    )
-    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
-    payload["validation_results"].append(validation.to_payload())
-    artifact_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return validation
-
-
 def test_run_governance_status_transition_materializes_independent_projection(
     tmp_path: Path,
 ) -> None:
     bundle, handoff_record = _materialize_reference_handoff(tmp_path)
-    validation = _append_rejected_validation(
+    validation, _ = _materialize_candidate_validation_outcome(
         tmp_path=tmp_path,
-        source_run_id=bundle.source_run_id,
-        experiment_id=bundle.experiment_requests[0].experiment_id,
+        bundle=bundle,
+        outcome="rejected",
+        candidate_run_id="candidate-run-1",
     )
     handoff_file = _handoff_artifact_file(
         tmp_path=tmp_path,
@@ -131,10 +109,11 @@ def test_run_governance_status_transition_dry_run_writes_nothing(
     tmp_path: Path,
 ) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = _append_rejected_validation(
+    validation, _ = _materialize_candidate_validation_outcome(
         tmp_path=tmp_path,
-        source_run_id=bundle.source_run_id,
-        experiment_id=bundle.experiment_requests[0].experiment_id,
+        bundle=bundle,
+        outcome="rejected",
+        candidate_run_id="candidate-run-1",
     )
     run_governance_reject_execution(
         project_root=tmp_path,
@@ -164,10 +143,11 @@ def test_run_governance_status_transition_rejects_missing_reject_proof(
     tmp_path: Path,
 ) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = _append_rejected_validation(
+    validation, _ = _materialize_candidate_validation_outcome(
         tmp_path=tmp_path,
-        source_run_id=bundle.source_run_id,
-        experiment_id=bundle.experiment_requests[0].experiment_id,
+        bundle=bundle,
+        outcome="rejected",
+        candidate_run_id="candidate-run-1",
     )
 
     with pytest.raises(ValueError, match="persisted governance reject execution not found"):
@@ -182,10 +162,11 @@ def test_run_governance_status_transition_rejects_missing_blocker(
     tmp_path: Path,
 ) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = _append_rejected_validation(
+    validation, _ = _materialize_candidate_validation_outcome(
         tmp_path=tmp_path,
-        source_run_id=bundle.source_run_id,
-        experiment_id=bundle.experiment_requests[0].experiment_id,
+        bundle=bundle,
+        outcome="rejected",
+        candidate_run_id="candidate-run-1",
     )
     run_governance_reject_execution(
         project_root=tmp_path,
@@ -215,10 +196,11 @@ def test_run_governance_status_transition_rejects_missing_attention_item(
     tmp_path: Path,
 ) -> None:
     bundle, _ = _materialize_reference_handoff(tmp_path)
-    validation = _append_rejected_validation(
+    validation, _ = _materialize_candidate_validation_outcome(
         tmp_path=tmp_path,
-        source_run_id=bundle.source_run_id,
-        experiment_id=bundle.experiment_requests[0].experiment_id,
+        bundle=bundle,
+        outcome="rejected",
+        candidate_run_id="candidate-run-1",
     )
     run_governance_reject_execution(
         project_root=tmp_path,
