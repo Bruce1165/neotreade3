@@ -383,14 +383,18 @@
   - `M3 backhalf` 已完成 position snapshot production carrier 基线：
     - `lowfreq_engine_v16_advanced.py` 当前会在正式 `sell_signal_audit` 事件中附带 canonical `position_contract_snapshot`
     - 该 carrier 已稳定暴露 `hold_state / exit_ready / exit_scope / exit_reason_type / current_stage / decision / next_action / last_transition`
-    - 当前只做 runtime truth exposure，不等于 `M3 backhalf` 已完整闭环
+    - `position_contract_snapshot` 当前也已显式暴露 `local_exit_semantics / global_thesis_end_semantics`
+  - `M3 backhalf` 已完成 formal object/owner 补齐：
+    - `neotrade3/decision_engine/contracts.py` 已具备 `HoldState / ExitState / DecisionLifecycleEvent / DecisionLifecycleLog`
+    - `neotrade3/decision_engine/hold_exit_bridge.py` 已把 canonical snapshot 透传为 formal `HoldState / ExitState`
+    - `neotrade3/decision_engine/decision_lifecycle_log.py` 已可把 `sell_signal_audit` formalize 为 per-stock lifecycle logs
   - 当前必须明确的边界：
     - `M4` 仍是 validation-seed benchmark 基线，不等于完整 benchmark 层
     - `M5` 仍是治理接线基线，不等于完整 validation/promotion/reject 闭环
-    - `M3 backhalf` 当前仅完成 position snapshot carrier 暴露，仍未完成 `decision_lifecycle_log` 与局部/全局退出显式语义
+    - `M3 backhalf` 当前 formal object/owner 已补齐，但下游消费面与状态文档此前存在滞后，不应再把 `decision_lifecycle_log` 和局部/全局退出显式语义记为未完成
   - 当前最直接下一步：
-    - 继续推进 `M3 backhalf`，优先补 `decision_lifecycle_log` 与局部/全局退出显式语义
-    - 之后再推进 `M4` 完整 benchmark、`M5` 闭环对象、version unification、`M6 Delivery Ready`
+    - 先推进 `M5 mainline`，优先收口 `persisted M4 benchmark run -> M5 governance handoff materialization`
+    - 之后再推进 `M5` 完整闭环对象、`M4` 完整 benchmark、version unification、`M6 Delivery Ready`
 
 ## 文档一致性说明
 
@@ -399,11 +403,11 @@
 - 进行中：
   - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
   - `M2/M3` 前半段最小正式消费切换已完成多段窄提交收口；正式对象/组装器、引擎 formal front 接线、API formal-front 消费切片与 workbench 优先级修正都已进入提交历史，top200 attribution report 所依赖的公共投影与 report 拆分也已在 `HEAD`
-  - `M3 backhalf` 已新增 position snapshot production carrier，当前 `sell_signal_audit` 已能稳定带出 canonical `position_contract_snapshot`
+  - `M3 backhalf` 已完成 position snapshot production carrier、hold/exit formal bridge、局部/全局退出显式语义与 `decision_lifecycle_log` nucleus
   - `M4` 已具备 mainline runner、artifact/ledger 与 typed readback 基线
   - `M5` 已具备 contract/handoff/persistence/ledger/runtime/orchestrator-fit 基线，且上游真值已切到 persisted `M4`
 - 下一步第一件事：
-  - 先继续推进 `M3 backhalf` 的正式语义闭环，优先补 `decision_lifecycle_log` 与局部/全局退出显式语义
+  - 先推进 `M5 mainline` 的最窄正式闭环，优先收口 `persisted M4 benchmark run -> M5 governance handoff materialization`
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
