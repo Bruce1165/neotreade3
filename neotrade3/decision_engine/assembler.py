@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from neotrade3.cycle_intelligence import SmallCycle
 from neotrade3.data_control import (
@@ -11,7 +12,15 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
-from .contracts import ExitState, HoldState, EntryState, IdentifyState, TrackingState
+from .contracts import (
+    DecisionLifecycleEvent,
+    DecisionLifecycleLog,
+    EntryState,
+    ExitState,
+    HoldState,
+    IdentifyState,
+    TrackingState,
+)
 
 
 def _require_text(value: object, *, field_name: str) -> str:
@@ -31,6 +40,14 @@ def _copy_text_list(value: list[str] | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _copy_payload_list(
+    value: list[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_copy_mapping(item) for item in value if isinstance(item, Mapping)]
 
 
 def _cycle_ref(cycle: SmallCycle) -> dict[str, Any]:
@@ -345,4 +362,46 @@ def build_exit_state(
         evidence_ref=_copy_mapping(evidence_ref),
         m2_cycle_ref=_copy_mapping(m2_cycle_ref),
         m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+    )
+
+
+def build_decision_lifecycle_event(
+    *,
+    stock_code: str,
+    trade_date: str,
+    event: str,
+    source_layer: str,
+    stage: str,
+    decision: str,
+    exit_scope: str,
+    details: str,
+    position_contract_snapshot: Mapping[str, Any] | None = None,
+    evidence_ref: Mapping[str, Any] | None = None,
+) -> DecisionLifecycleEvent:
+    """Build a formal M3 decision-lifecycle event from already-decided inputs."""
+
+    return DecisionLifecycleEvent(
+        stock_code=_require_text(stock_code, field_name="stock_code"),
+        trade_date=_require_text(trade_date, field_name="trade_date"),
+        event=_require_text(event, field_name="event"),
+        source_layer=_require_text(source_layer, field_name="source_layer"),
+        stage=_require_text(stage, field_name="stage"),
+        decision=_require_text(decision, field_name="decision"),
+        exit_scope=str(exit_scope or "").strip(),
+        details=str(details or "").strip(),
+        position_contract_snapshot=_copy_mapping(position_contract_snapshot),
+        evidence_ref=_copy_mapping(evidence_ref),
+    )
+
+
+def build_decision_lifecycle_log(
+    *,
+    stock_code: str,
+    events: list[Mapping[str, Any]] | None = None,
+) -> DecisionLifecycleLog:
+    """Build a formal per-stock M3 decision-lifecycle log from already-decided inputs."""
+
+    return DecisionLifecycleLog(
+        stock_code=_require_text(stock_code, field_name="stock_code"),
+        events=_copy_payload_list(events),
     )

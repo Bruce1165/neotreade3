@@ -1,6 +1,8 @@
 """Decision engine exports for NeoTrade3."""
 
 from .assembler import (
+    build_decision_lifecycle_event,
+    build_decision_lifecycle_log,
     build_exit_state,
     build_entry_state,
     build_entry_state_from_formal_inputs,
@@ -12,22 +14,34 @@ from .assembler import (
     build_tracking_state_from_formal_inputs,
 )
 from .contracts import (
+    DECISION_LIFECYCLE_EVENT_OBJECT_TYPE,
+    DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
     ENTRY_STATE_OBJECT_TYPE,
     EXIT_STATE_OBJECT_TYPE,
     HOLD_STATE_OBJECT_TYPE,
     IDENTIFY_STATE_OBJECT_TYPE,
     M3_OBJECT_VERSION,
     TRACKING_STATE_OBJECT_TYPE,
+    DecisionLifecycleEvent,
+    DecisionLifecycleLog,
     ExitState,
     EntryState,
     HoldState,
     IdentifyState,
     TrackingState,
 )
+from .decision_lifecycle_log import (
+    build_decision_lifecycle_event_from_sell_audit_entry,
+    build_decision_lifecycle_logs,
+)
 from .hold_exit_bridge import build_m3_hold_exit_bridge
 from .projections import project_lowfreq_formal_front
 
 __all__ = [
+    "build_decision_lifecycle_event",
+    "build_decision_lifecycle_event_from_sell_audit_entry",
+    "build_decision_lifecycle_log",
+    "build_decision_lifecycle_logs",
     "build_exit_state",
     "build_entry_state",
     "build_entry_state_from_formal_inputs",
@@ -38,12 +52,16 @@ __all__ = [
     "build_m1_constraints_ref",
     "build_tracking_state",
     "build_tracking_state_from_formal_inputs",
+    "DECISION_LIFECYCLE_EVENT_OBJECT_TYPE",
+    "DECISION_LIFECYCLE_LOG_OBJECT_TYPE",
     "ENTRY_STATE_OBJECT_TYPE",
     "EXIT_STATE_OBJECT_TYPE",
     "HOLD_STATE_OBJECT_TYPE",
     "IDENTIFY_STATE_OBJECT_TYPE",
     "M3_OBJECT_VERSION",
     "TRACKING_STATE_OBJECT_TYPE",
+    "DecisionLifecycleEvent",
+    "DecisionLifecycleLog",
     "ExitState",
     "EntryState",
     "HoldState",

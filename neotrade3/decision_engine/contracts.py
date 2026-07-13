@@ -11,6 +11,8 @@ TRACKING_STATE_OBJECT_TYPE = "tracking_state"
 ENTRY_STATE_OBJECT_TYPE = "entry_state"
 HOLD_STATE_OBJECT_TYPE = "hold_state"
 EXIT_STATE_OBJECT_TYPE = "exit_state"
+DECISION_LIFECYCLE_EVENT_OBJECT_TYPE = "decision_lifecycle_event"
+DECISION_LIFECYCLE_LOG_OBJECT_TYPE = "decision_lifecycle_log"
 M3_OBJECT_VERSION = 1
 
 
@@ -24,6 +26,12 @@ def _copy_text_list(value: list[str] | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _copy_payload_list(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_copy_mapping(item) for item in value if isinstance(item, dict)]
 
 
 @dataclass(frozen=True)
@@ -183,4 +191,56 @@ class ExitState:
             "evidence_ref": _copy_mapping(self.evidence_ref),
             "m2_cycle_ref": _copy_mapping(self.m2_cycle_ref),
             "m1_constraints_ref": _copy_mapping(self.m1_constraints_ref),
+        }
+
+
+@dataclass(frozen=True)
+class DecisionLifecycleEvent:
+    """Formal M3 decision-lifecycle event object skeleton."""
+
+    stock_code: str
+    trade_date: str
+    event: str
+    source_layer: str
+    stage: str
+    decision: str
+    exit_scope: str
+    details: str
+    position_contract_snapshot: dict[str, Any]
+    evidence_ref: dict[str, Any]
+    object_type: str = DECISION_LIFECYCLE_EVENT_OBJECT_TYPE
+    object_version: int = M3_OBJECT_VERSION
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "object_type": self.object_type,
+            "object_version": self.object_version,
+            "stock_code": self.stock_code,
+            "trade_date": self.trade_date,
+            "event": self.event,
+            "source_layer": self.source_layer,
+            "stage": self.stage,
+            "decision": self.decision,
+            "exit_scope": self.exit_scope,
+            "details": self.details,
+            "position_contract_snapshot": _copy_mapping(self.position_contract_snapshot),
+            "evidence_ref": _copy_mapping(self.evidence_ref),
+        }
+
+
+@dataclass(frozen=True)
+class DecisionLifecycleLog:
+    """Formal M3 per-stock decision-lifecycle log object skeleton."""
+
+    stock_code: str
+    events: list[dict[str, Any]]
+    object_type: str = DECISION_LIFECYCLE_LOG_OBJECT_TYPE
+    object_version: int = M3_OBJECT_VERSION
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "object_type": self.object_type,
+            "object_version": self.object_version,
+            "stock_code": self.stock_code,
+            "events": _copy_payload_list(self.events),
         }

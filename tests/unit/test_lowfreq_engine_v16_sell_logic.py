@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, TradeRecord
+from neotrade3.decision_engine import (
+    DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
+    build_decision_lifecycle_logs,
+)
 
 
 def _make_engine(
@@ -698,3 +702,32 @@ def test_sell_signal_audit_records_observe_review_confirm() -> None:
     )
     assert confirmed_snapshot["current_stage"] == "exit_ready"
     assert confirmed_snapshot["decision"] == "exit"
+
+
+def test_sell_signal_audit_rows_formalize_into_decision_lifecycle_logs() -> None:
+    engine = _make_engine(price=100.0, market_exit_snapshot=_market_exit_hit_snapshot(), sector_exit_snapshot=None)
+    trade = _make_trade()
+
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 18)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 19)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 20)) is not None
+
+    logs = build_decision_lifecycle_logs(engine._sell_signal_audit_current_run)
+
+    assert len(logs) == 1
+    log = logs[0]
+    assert log["object_type"] == DECISION_LIFECYCLE_LOG_OBJECT_TYPE
+    assert log["stock_code"] == trade.code
+    assert [event["event"] for event in log["events"]] == [
+        "market_exit_watch_started",
+        "market_exit_review_started",
+        "market_exit_confirmed",
+    ]
+    assert log["events"][0]["stage"] == "hold_confirmed"
+    assert log["events"][0]["decision"] == "hold"
+    assert log["events"][-1]["stage"] == "exit_ready"
+    assert log["events"][-1]["decision"] == "exit"
+    assert (
+        log["events"][-1]["position_contract_snapshot"]["local_exit_semantics"]
+        == "local_end_only"
+    )
