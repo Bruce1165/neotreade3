@@ -65,6 +65,11 @@ from .run_ledger import (
     read_benchmark_run_ledger,
     write_benchmark_run_ledger,
 )
+from .runtime import (
+    DEFAULT_BENCHMARK_MANIFEST,
+    resolve_benchmark_manifest_path,
+    run_benchmark_for_manifest,
+)
 
 __all__ = [
     "ASSESSMENT_GRADE_FAIL",
@@ -87,6 +92,7 @@ __all__ = [
     "BenchmarkSeedRegistry",
     "BenchmarkSeedSampleRegistration",
     "BenchmarkRunManifest",
+    "DEFAULT_BENCHMARK_MANIFEST",
     "DEFAULT_M4_BENCHMARK_RULE_VERSION",
     "GAP_GROUP_IDENTIFY",
     "GAP_GROUP_INTERACTION",
@@ -117,6 +123,8 @@ __all__ = [
     "read_benchmark_batch_run_result",
     "read_benchmark_run_artifact",
     "read_benchmark_run_ledger",
+    "resolve_benchmark_manifest_path",
+    "run_benchmark_for_manifest",
     "run_benchmark_manifest",
     "write_benchmark_run_ledger",
     "write_benchmark_batch_run_artifact",

@@ -121,6 +121,7 @@ def test_governance_phase_and_benchmark_run_id_survive_planning() -> None:
     )
 
     assert OrchestrationPhase.GOVERNANCE in plan.phases
+    assert OrchestrationPhase.BENCHMARK in plan.phases
     assert governance_task.phase == OrchestrationPhase.GOVERNANCE
     assert (
         governance_task.args_template["benchmark_run_id"]
@@ -236,6 +237,7 @@ def test_orchestrator_config_declares_governance_task_benchmark_run_id() -> None
     )
 
     assert payload["phases"][-1] == OrchestrationPhase.GOVERNANCE.value
+    assert payload["phases"][-2] == OrchestrationPhase.BENCHMARK.value
     assert governance_task["phase"] == OrchestrationPhase.GOVERNANCE.value
     assert (
         governance_task["args_template"]["benchmark_run_id"]

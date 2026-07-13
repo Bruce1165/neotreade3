@@ -17,6 +17,7 @@ class OrchestrationPhase(str, Enum):
     DAILY_LAB_JOBS = "daily_lab_jobs"
     LEARNING_LOOP = "learning_loop"
     ISSUE_AGGREGATION_AND_CLOSEOUT = "issue_aggregation_and_closeout"
+    BENCHMARK = "benchmark"
     GOVERNANCE = "governance"
 
 

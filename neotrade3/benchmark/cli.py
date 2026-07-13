@@ -7,8 +7,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .batch_runner import load_benchmark_run_manifest, run_benchmark_manifest
-from .run_ledger import materialize_benchmark_batch_run
+from .runtime import DEFAULT_BENCHMARK_MANIFEST, run_benchmark_for_manifest
 
 
 def _default_project_root() -> Path:
@@ -26,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--manifest",
-        default="config/benchmark/validation_seed_manifest.json",
+        default=DEFAULT_BENCHMARK_MANIFEST,
         help="Benchmark run manifest path.",
     )
     parser.add_argument(
@@ -44,18 +43,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     project_root = (
         Path(args.project_root) if args.project_root else _default_project_root()
     )
-    manifest_path = Path(args.manifest)
-    if not manifest_path.is_absolute():
-        manifest_path = project_root / manifest_path
-
-    manifest = load_benchmark_run_manifest(manifest_path)
-    batch_result = run_benchmark_manifest(
+    record = run_benchmark_for_manifest(
         project_root=project_root,
-        manifest=manifest,
-    )
-    record = materialize_benchmark_batch_run(
-        project_root=project_root,
-        batch_result=batch_result,
+        manifest=Path(args.manifest),
         dry_run=bool(args.dry_run),
     )
 

@@ -12,6 +12,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from neotrade3.benchmark.runtime import (
+    DEFAULT_BENCHMARK_MANIFEST,
+    run_benchmark_for_manifest,
+)
 from neotrade3.common.python_runtime import log_python_runtime, require_python_310
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.governance.runtime import (
@@ -254,6 +258,52 @@ class BootstrapWorkerApp:
                 )
         return executor
 
+    def _create_benchmark_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
+        """Create executor for BENCHMARK phase tasks."""
+
+        def executor(task: PlannedTask, context: dict[str, Any]) -> TaskResult:
+            project_root = Path(context.get("project_root", self.project_root))
+            dry_run = bool(context.get("dry_run", False))
+            manifest = str(
+                task.args_template.get("manifest", DEFAULT_BENCHMARK_MANIFEST)
+                or DEFAULT_BENCHMARK_MANIFEST
+            ).strip()
+            try:
+                record = run_benchmark_for_manifest(
+                    project_root=project_root,
+                    manifest=manifest,
+                    dry_run=dry_run,
+                )
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.OK,
+                    lab_id=task.lab_id,
+                    message="benchmark run materialized successfully",
+                    artifact_refs=[record.artifact_path, record.ledger_path],
+                    details={
+                        "run_id": record.run_id,
+                        "status": record.status,
+                        "sample_count": record.sample_count,
+                        "executed_sample_ids": list(record.executed_sample_ids),
+                        "grade_summary": dict(record.grade_summary),
+                        "bucket_summary": dict(record.bucket_summary),
+                        "registry_path": record.registry_path,
+                        "manifest": manifest,
+                        "dry_run": dry_run,
+                    },
+                )
+            except Exception as e:
+                return TaskResult(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    status=RunStatus.FAILED,
+                    lab_id=task.lab_id,
+                    message=f"benchmark execution error: {e}",
+                )
+
+        return executor
+
     def _create_governance_executor(self) -> "callable[[PlannedTask, dict[str, Any]], TaskResult]":
         """Create executor for GOVERNANCE phase tasks."""
 
@@ -436,6 +486,7 @@ class BootstrapWorkerApp:
             OrchestrationPhase.DAILY_LAB_JOBS: self._create_lab_executor(),
             OrchestrationPhase.LEARNING_LOOP: self._create_learning_executor(learning),
             OrchestrationPhase.ISSUE_AGGREGATION_AND_CLOSEOUT: self._create_issue_executor(issue_center),
+            OrchestrationPhase.BENCHMARK: self._create_benchmark_executor(),
             OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
             OrchestrationPhase.PREFLIGHT: self._create_preflight_executor(),
         }
