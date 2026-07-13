@@ -10,8 +10,11 @@ from neotrade3.benchmark import (
     materialize_benchmark_batch_run,
     run_benchmark_manifest,
 )
+from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.run_ledger import (
     read_governance_handoff_artifact,
+    read_governance_reject_execution_artifact,
+    read_governance_reject_execution_ledger,
     read_governance_run_ledger,
 )
 from neotrade3.orchestration import (
@@ -98,6 +101,84 @@ def _run_governance_task(
             "target_date": date(2026, 5, 19),
             "project_root": str(project_root),
             "requested_by": "test.m5.governance.orchestrator_fit",
+            "dry_run": dry_run,
+        },
+    )
+    return task, results[0]
+
+
+def _inject_rejected_validation(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    validation_id: str,
+) -> None:
+    artifact_path = (
+        project_root
+        / "var/artifacts/governance_handoffs"
+        / source_run_id
+        / "governance_handoff_bundle.json"
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    experiment_id = payload["experiment_requests"][0]["experiment_id"]
+    payload["validation_results"].append(
+        build_validation_result(
+            validation_id=validation_id,
+            experiment_id=experiment_id,
+            baseline_run_id=source_run_id,
+            candidate_run_id="candidate-run-1",
+            outcome="rejected",
+            introduced_risk_count=1,
+            cleared_guardrail_codes=[],
+            remaining_guardrail_codes=["interaction.local_global"],
+            evidence_refs=[{"kind": "validation_result"}],
+        ).to_payload()
+    )
+    artifact_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _run_governance_reject_task(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    validation_id: str,
+    dry_run: bool,
+) -> tuple[PlannedTask, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    task = PlannedTask(
+        task_id="governance.reject_execution",
+        phase=OrchestrationPhase.GOVERNANCE,
+        lab_id=None,
+        entrypoint="neotrade3.governance.runtime:run_governance_reject_execution",
+        depends_on=[],
+        outputs=["governance_reject_artifact", "governance_reject_ledger"],
+        requires_publish_status=False,
+        args_template={
+            "source_run_id": source_run_id,
+            "validation_id": validation_id,
+        },
+    )
+    plan = DailyRunPlan(
+        target_date=date(2026, 5, 19),
+        phases=[OrchestrationPhase.GOVERNANCE],
+        planned_tasks=[task],
+    )
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.reject",
             "dry_run": dry_run,
         },
     )
@@ -354,6 +435,134 @@ def test_governance_executor_fails_for_missing_benchmark_run_id(tmp_path: Path) 
 
     assert result.status == RunStatus.FAILED
     assert "missing_benchmark_run" in result.message
+
+
+def test_governance_reject_executor_dry_run_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=True,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["validation_id"] == "validation-final-reject"
+    assert result.details["source_run_id"] == run_id
+    assert result.details["decision"] == "reject"
+    assert result.details["dry_run"] is True
+    assert not (project_root / result.artifact_refs[0]).exists()
+    assert not (project_root / result.artifact_refs[1]).exists()
+    assert (
+        read_governance_reject_execution_artifact(
+            project_root=project_root,
+            validation_id="validation-final-reject",
+        )
+        is None
+    )
+    assert (
+        read_governance_reject_execution_ledger(
+            project_root=project_root,
+            validation_id="validation-final-reject",
+        )
+        is None
+    )
+
+
+def test_governance_reject_executor_materializes_outputs_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )
+
+    artifact_path = project_root / result.artifact_refs[0]
+    ledger_path = project_root / result.artifact_refs[1]
+    artifact_payload = read_governance_reject_execution_artifact(
+        project_root=project_root,
+        validation_id="validation-final-reject",
+    )
+    ledger_record = read_governance_reject_execution_ledger(
+        project_root=project_root,
+        validation_id="validation-final-reject",
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["validation_id"] == "validation-final-reject"
+    assert result.details["source_run_id"] == run_id
+    assert result.details["decision"] == "reject"
+    assert result.details["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert artifact_payload["decision_record"]["decision"] == "reject"
+    assert ledger_record.validation_id == result.details["validation_id"]
+    assert ledger_record.decision == result.details["decision"]
+
+
+def test_governance_reject_executor_fails_for_missing_validation_id(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="missing-validation",
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "validation_result not found" in result.message
+
+
+def test_governance_reject_executor_fails_for_missing_source_run_id(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    _, result = _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id="",
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "source_run_id must be provided" in result.message
 
 
 def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:

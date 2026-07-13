@@ -20,6 +20,7 @@ from neotrade3.common.python_runtime import log_python_runtime, require_python_3
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.governance.runtime import (
     run_governance_for_benchmark_run,
+    run_governance_reject_execution,
 )
 from neotrade3.issue_center import IssueCenterCollector
 from neotrade3.learning import LearningLoopPipeline
@@ -313,7 +314,43 @@ class BootstrapWorkerApp:
             benchmark_run_id = str(
                 task.args_template.get("benchmark_run_id", "") or ""
             ).strip()
+            source_run_id = str(
+                task.args_template.get("source_run_id", "") or ""
+            ).strip()
+            validation_id = str(
+                task.args_template.get("validation_id", "") or ""
+            ).strip()
             try:
+                if validation_id:
+                    if not source_run_id:
+                        raise ValueError(
+                            "source_run_id must be provided when validation_id is set"
+                        )
+                    record = run_governance_reject_execution(
+                        project_root=project_root,
+                        source_run_id=source_run_id,
+                        validation_id=validation_id,
+                        dry_run=dry_run,
+                    )
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message="governance reject execution materialized successfully",
+                        artifact_refs=[record.artifact_path, record.ledger_path],
+                        details={
+                            "validation_id": record.validation_id,
+                            "source_run_id": record.source_run_id,
+                            "status": record.status,
+                            "baseline_run_id": record.baseline_run_id,
+                            "candidate_run_id": record.candidate_run_id,
+                            "decision_id": record.decision_id,
+                            "decision": record.decision,
+                            "dry_run": dry_run,
+                        },
+                    )
+
                 if not benchmark_run_id:
                     raise ValueError("benchmark_run_id must be provided")
 
