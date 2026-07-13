@@ -52,6 +52,8 @@ from .handoff import (
     build_governance_handoff_from_assessment,
     build_governance_handoff_from_batch_run,
 )
+from .run_ledger import GovernanceStatusTransitionRecord
+from .runtime import run_governance_status_transition
 
 __all__ = [
     "CHANGE_REQUEST_OBJECT_TYPE",
@@ -83,6 +85,7 @@ __all__ = [
     "ExperimentRequest",
     "GovernanceDecisionRecord",
     "PromotionBlocker",
+    "GovernanceStatusTransitionRecord",
     "ValidationResult",
     "build_b4_local_global_guardrail_diagnostic",
     "build_attention_item",
@@ -100,4 +103,5 @@ __all__ = [
     "build_promotion_blocker_from_diagnostic",
     "build_reject_decision_record_from_validation_result",
     "build_validation_result",
+    "run_governance_status_transition",
 ]
