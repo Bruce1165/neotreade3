@@ -120,6 +120,27 @@
   - `summary`
   - `orchestration.task_results` 摘要片段
 
+### 5.4 Governance reject 按需执行
+
+当前 `worker` 还支持一个显式的治理拒绝执行入口:
+
+```bash
+./.venv/bin/python -m apps.worker.main \
+  --mode governance_reject \
+  --date 2026-05-20 \
+  --source-run-id benchmark-run-1 \
+  --validation-id validation-final-reject
+```
+
+说明:
+
+- 该入口是 `M5 governance` 的按需路径，不属于日常 `daily` 自动编排。
+- `--source-run-id` 与 `--validation-id` 都是必填；当前不会自动推导 `validation_id`。
+- 如只想验证参数与计划链路、而不写入 reject 结果，可加 `--dry-run`。
+- 该路径的正式 reject 产物使用独立命名空间，不覆盖 bootstrap 主链:
+  - `var/artifacts/governance_rejections/<validation_id>/governance_reject_execution.json`
+  - `var/ledgers/governance_rejections/<validation_id>/governance_reject_execution_run.json`
+
 ## 6. API 用法
 
 ### 6.1 启动命令
@@ -164,6 +185,39 @@ GET /api/bootstrap-snapshot?date=2026-05-19&publish_succeeded=false&write_output
 ```text
 GET /api/bootstrap-summary?date=2026-05-19&source=stored
 GET /api/issue-center?date=2026-05-19&source=stored
+```
+
+当前还提供一个写入型按需编排入口:
+
+```text
+POST /api/orchestration/run
+```
+
+说明:
+
+- 默认 `mode="daily"`，走现有 bootstrap/orchestration 主链。
+- 当 `mode="governance_reject"` 时，必须同时提供非空的 `source_run_id` 与 `validation_id`。
+- `requested_by` 建议显式填写，便于后续审计；`dry_run` 可选，默认 `false`。
+- 当 `dry_run=false` 时，该入口会额外物化一份 API 编排 envelope:
+  - `var/ledgers/orchestration_runs/<date>/orchestrator_run.json`
+  - `var/artifacts/orchestration_runs/<date>/orchestrator_result.json`
+- 对于 `governance_reject` 模式，底层 reject 执行结果仍落在独立命名空间:
+  - `var/artifacts/governance_rejections/<validation_id>/governance_reject_execution.json`
+  - `var/ledgers/governance_rejections/<validation_id>/governance_reject_execution_run.json`
+
+`governance_reject` 最小调用样例:
+
+```bash
+curl -X POST "http://127.0.0.1:18030/api/orchestration/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2026-05-20",
+    "mode": "governance_reject",
+    "source_run_id": "benchmark-run-1",
+    "validation_id": "validation-final-reject",
+    "requested_by": "ops.manual",
+    "dry_run": false
+  }'
 ```
 
 ### 6.3 细粒度只读域接口
