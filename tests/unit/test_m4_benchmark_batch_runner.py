@@ -140,19 +140,23 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[
         trading_day_status=trading_day,
         trading_profile=profile,
     )
+    cycle_linkage_state_ref = shadow_bundle["cycle_linkage_state"].to_payload()
     m3_context = {
         "m1_constraints_ref": dict(constraints),
         "identify_state": build_identify_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "tracking_state": build_tracking_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "entry_state": build_entry_state_from_formal_inputs(
             cycle=cycle,
             m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
     }
     return cycle, shadow_bundle, m1_context, m3_context
@@ -192,11 +196,29 @@ def _fixture_provider(registration):
             evidence_bundle={"override": "batch_runner_control_failure_test"},
             rule_version="m2_cycle_linkage.v1alpha1",
         )
+        bad_m3_context = {
+            "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
+            "identify_state": build_identify_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+            "tracking_state": build_tracking_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+            "entry_state": build_entry_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+        }
         return {
             "cycle": cycle,
             "shadow_bundle": {**shadow_bundle, "cycle_linkage_state": bad_linkage},
             "m1_context": m1_context,
-            "m3_context": m3_context,
+            "m3_context": bad_m3_context,
         }
 
     if registration.sample_id == "b3_boundary_complex_advancing_seed":
@@ -233,6 +255,24 @@ def _fixture_provider(registration):
             evidence_bundle={"override": "batch_runner_guardrail_test"},
             rule_version="m2_cycle_linkage.v1alpha1",
         )
+        bad_m3_context = {
+            "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
+            "identify_state": build_identify_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+            "tracking_state": build_tracking_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+            "entry_state": build_entry_state_from_formal_inputs(
+                cycle=cycle,
+                m1_constraints_ref=m3_context["m1_constraints_ref"],
+                cycle_linkage_state_ref=bad_linkage.to_payload(),
+            ).to_payload(),
+        }
         return {
             "cycle": cycle,
             "shadow_bundle": {
@@ -253,7 +293,7 @@ def _fixture_provider(registration):
                 ),
             },
             "m1_context": m1_context,
-            "m3_context": m3_context,
+            "m3_context": bad_m3_context,
         }
 
     raise KeyError(f"unsupported sample_id for fixture provider: {registration.sample_id}")

@@ -393,7 +393,7 @@ def test_build_benchmark_assessment_from_m2_shadow_projects_exit_ready_summary()
 
 
 def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
-    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     bad_linkage = build_cycle_linkage_state(
         stock_code=cycle.stock_code,
         trade_date=cycle.trade_date,
@@ -429,16 +429,44 @@ def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
                     "local_end_only",
                     "needs_global_confirmation",
                 ],
+            },
+            "tracking_state": {
+                "allowed_status": ["tracking"],
+                "allowed_maturity": ["not_ready"],
+            },
+            "entry_state": {
+                "allowed_status": ["not_ready"],
+                "allowed_decision": ["wait"],
+                "actionable": False,
             }
         },
         scenario_tags=["B2", "control_failure"],
     )
+    blocked_m3_context = {
+        "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+    }
 
     result = build_benchmark_assessment_from_m2_shadow(
         sample=sample,
         cycle=cycle,
         shadow_bundle={**shadow_bundle, "cycle_linkage_state": bad_linkage},
         m1_context=m1_context,
+        m3_context=blocked_m3_context,
     )
 
     payload = result.to_payload()
@@ -448,10 +476,14 @@ def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
     assert payload["gap_records"][0]["actual_state"]["cycle_linkage_state"][
         "supports_continuation"
     ] is False
+    assert payload["summary"]["front_quality_risk_summary"]["tracking_maturity"] == (
+        "not_ready"
+    )
+    assert payload["summary"]["front_quality_risk_summary"]["entry_actionable"] is False
 
 
 def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -> None:
-    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     mid_cycles = build_mid_cycle_states_from_m1(
         cycle=cycle,
         security_master=_sample_m1_objects()[1],
@@ -503,16 +535,44 @@ def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -
                     "local_end_only",
                     "needs_global_confirmation",
                 ],
+            },
+            "tracking_state": {
+                "allowed_status": ["tracking"],
+                "allowed_maturity": ["not_ready"],
+            },
+            "entry_state": {
+                "allowed_status": ["not_ready"],
+                "allowed_decision": ["wait"],
+                "actionable": False,
             }
         },
         scenario_tags=["B4", "guardrail"],
     )
+    blocked_m3_context = {
+        "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=m3_context["m1_constraints_ref"],
+            cycle_linkage_state_ref=bad_linkage.to_payload(),
+        ).to_payload(),
+    }
 
     result = build_benchmark_assessment_from_m2_shadow(
         sample=sample,
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=blocked_m3_context,
     )
 
     payload = result.to_payload()
@@ -524,6 +584,8 @@ def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -
         payload["interaction_guardrail_breaches"][0]["guardrail_code"]
         == GUARDRAIL_CODE_LOCAL_GLOBAL_END
     )
+    assert payload["summary"]["front_quality_risk_summary"]["entry_status"] == "not_ready"
+    assert payload["summary"]["front_quality_risk_summary"]["entry_decision"] == "wait"
 
 
 def test_build_benchmark_assessment_from_m2_shadow_flags_identify_gap_for_front_formal_mismatch() -> None:

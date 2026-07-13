@@ -27,6 +27,12 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
+from neotrade3.decision_engine import (
+    build_entry_state_from_formal_inputs,
+    build_identify_state_from_formal_inputs,
+    build_m1_constraints_ref,
+    build_tracking_state_from_formal_inputs,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -91,7 +97,12 @@ def _sample_m1_objects(*, return_20d: float = 0.12, positive_days_5d: int = 4) -
     return d1, security, trading_day, profile
 
 
-def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object], dict[str, object]]:
+def _build_reference_cycle_and_shadow_bundle() -> tuple[
+    object,
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
     d1, security, trading_day, profile = _sample_m1_objects()
     cycle = build_small_cycle_from_m1(
         d1_fact=d1,
@@ -119,11 +130,38 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object
             "positive_days_5d": profile.positive_days_5d,
         },
     }
-    return cycle, shadow_bundle, m1_context
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    cycle_linkage_state_ref = shadow_bundle["cycle_linkage_state"].to_payload()
+    m3_context = {
+        "m1_constraints_ref": dict(constraints),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+    }
+    return cycle, shadow_bundle, m1_context, m3_context
 
 
 def test_benchmark_seed_registry_loads_b1_to_b4_samples() -> None:
     registry = load_benchmark_seed_registry(BENCHMARK_SAMPLE_REGISTRY)
+    b2_sample = registry.get_sample("b2_control_failure_seed")
+    b4_sample = registry.get_sample("b4_local_global_guardrail_seed")
 
     assert isinstance(registry, BenchmarkSeedRegistry)
     assert registry.version == 1
@@ -131,19 +169,23 @@ def test_benchmark_seed_registry_loads_b1_to_b4_samples() -> None:
     assert registry.get_sample("b1_target_opportunity_seed").sample_bucket == (
         B1_TARGET_OPPORTUNITY_SAMPLE
     )
-    assert registry.get_sample("b2_control_failure_seed").sample_bucket == (
-        B2_CONTROL_FAILURE_SAMPLE
-    )
+    assert b2_sample.sample_bucket == B2_CONTROL_FAILURE_SAMPLE
     assert registry.get_sample("b3_boundary_complex_advancing_seed").sample_bucket == (
         B3_BOUNDARY_COMPLEX_SAMPLE
     )
-    assert registry.get_sample("b4_local_global_guardrail_seed").sample_bucket == (
-        B4_INTERACTION_GUARDRAIL_SAMPLE
-    )
+    assert b4_sample.sample_bucket == B4_INTERACTION_GUARDRAIL_SAMPLE
+    assert b2_sample.expected_target_state["tracking_state"]["allowed_maturity"] == [
+        "not_ready"
+    ]
+    assert b2_sample.expected_target_state["entry_state"]["allowed_decision"] == ["wait"]
+    assert b4_sample.expected_target_state["tracking_state"]["allowed_status"] == [
+        "tracking"
+    ]
+    assert b4_sample.expected_target_state["entry_state"]["actionable"] is False
 
 
 def test_benchmark_seed_registry_builds_repeatable_b3_sample_for_assessment() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     registry = load_benchmark_seed_registry(BENCHMARK_SAMPLE_REGISTRY)
     sample = registry.get_sample("b3_boundary_complex_advancing_seed").to_benchmark_sample()
 
@@ -152,6 +194,7 @@ def test_benchmark_seed_registry_builds_repeatable_b3_sample_for_assessment() ->
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
     payload = result.to_payload()
@@ -174,8 +217,8 @@ def test_benchmark_seed_registry_filters_bucket_and_keeps_fixture_metadata() -> 
 
 
 def test_benchmark_seed_registry_b4_sample_can_drive_guardrail_path() -> None:
-    cycle, _, m1_context = _build_reference_cycle_and_shadow_bundle()
-    _, security, _, profile = _sample_m1_objects()
+    cycle, _, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
+    d1, security, trading_day, profile = _sample_m1_objects()
     mid_cycles = build_mid_cycle_states_from_m1(
         cycle=cycle,
         security_master=security,
@@ -215,6 +258,31 @@ def test_benchmark_seed_registry_b4_sample_can_drive_guardrail_path() -> None:
             industry_cycle_state=mid_cycles["industry_cycle"],
         ),
     }
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    cycle_linkage_state_ref = bad_linkage.to_payload()
+    m3_context = {
+        "m1_constraints_ref": dict(constraints),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+            cycle_linkage_state_ref=cycle_linkage_state_ref,
+        ).to_payload(),
+    }
     registry = load_benchmark_seed_registry(BENCHMARK_SAMPLE_REGISTRY)
     sample = registry.get_sample("b4_local_global_guardrail_seed").to_benchmark_sample()
 
@@ -223,6 +291,7 @@ def test_benchmark_seed_registry_b4_sample_can_drive_guardrail_path() -> None:
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
     payload = result.to_payload()
@@ -231,7 +300,7 @@ def test_benchmark_seed_registry_b4_sample_can_drive_guardrail_path() -> None:
 
 
 def test_benchmark_seed_registry_b1_sample_can_drive_target_opportunity_path() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     registry = load_benchmark_seed_registry(BENCHMARK_SAMPLE_REGISTRY)
     sample = registry.get_sample("b1_target_opportunity_seed").to_benchmark_sample()
 
@@ -240,6 +309,7 @@ def test_benchmark_seed_registry_b1_sample_can_drive_target_opportunity_path() -
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
     payload = result.to_payload()

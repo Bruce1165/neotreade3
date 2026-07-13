@@ -81,6 +81,15 @@
             "local_end_only",
             "needs_global_confirmation"
           ]
+        },
+        "tracking_state": {
+          "allowed_status": ["tracking"],
+          "allowed_maturity": ["not_ready"]
+        },
+        "entry_state": {
+          "allowed_status": ["not_ready"],
+          "allowed_decision": ["wait"],
+          "actionable": false
         }
       },
       "evidence_refs": [
@@ -169,6 +178,15 @@
             "local_end_only",
             "needs_global_confirmation"
           ]
+        },
+        "tracking_state": {
+          "allowed_status": ["tracking"],
+          "allowed_maturity": ["not_ready"]
+        },
+        "entry_state": {
+          "allowed_status": ["not_ready"],
+          "allowed_decision": ["wait"],
+          "actionable": false
         }
       },
       "evidence_refs": [
