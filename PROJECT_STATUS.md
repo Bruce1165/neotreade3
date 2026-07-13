@@ -66,6 +66,7 @@
 - `var/ledgers/bootstrap_runs/<date>/` 与 `var/artifacts/bootstrap_runs/<date>/` 是当前 bootstrap 主事实源。
 - `var/ledgers/orchestration_runs/<date>/` 与 `var/artifacts/orchestration_runs/<date>/` 现在是 API 为兼容 orchestration 运行记录读取链路而写出的投影产物，不是独立执行源。
 - `var/ledgers/lab_runs/<date>/` 与 `var/artifacts/lab_runs/<date>/` 现在是 API 为兼容既有 lab 结果读取链路而补写的投影产物，不是独立执行源。
+- `M5 governance status transition` 已完成 `runtime -> CLI -> worker -> API` 闭环；当前属于 on-demand 触发面，不属于 `daily` scheduled task。
 - snapshot 根字段 `publish_succeeded` 表示本次运行的实际 publish 结果；`requested_publish_succeeded` 保留请求侧传入的 planning hint。
 - `apps/dashboard/main.py` 已退役，当前会返回 `410 Gone`；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
 
