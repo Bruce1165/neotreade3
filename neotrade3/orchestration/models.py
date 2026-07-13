@@ -114,6 +114,28 @@ class DailyRunRequest:
 
 
 @dataclass
+class OnDemandTaskItem:
+    """Explicit task item used for non-daily, manually scoped orchestration."""
+
+    task_id: str
+    phase: OrchestrationPhase
+    entrypoint: str
+    args_template: dict[str, object]
+    outputs: list[str]
+    lab_id: str | None = None
+    depends_on: list[str] = field(default_factory=list)
+    requires_publish_status: bool = False
+
+
+@dataclass
+class OnDemandTaskRequest:
+    """Explicit on-demand task request outside the daily config truth source."""
+
+    target_date: date
+    tasks: list[OnDemandTaskItem] = field(default_factory=list)
+
+
+@dataclass
 class PlannedTask:
     """Task planning result used before real execution exists."""
 

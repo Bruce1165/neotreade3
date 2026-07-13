@@ -10,6 +10,8 @@ from .ledger import (
 from .models import (
     DailyRunPlan,
     DailyRunRequest,
+    OnDemandTaskItem,
+    OnDemandTaskRequest,
     OrchestrationPhase,
     OrchestratorConfig,
     PlannedTask,
@@ -26,6 +28,8 @@ __all__ = [
     "DailyMasterOrchestrator",
     "DailyRunPlan",
     "DailyRunRequest",
+    "OnDemandTaskItem",
+    "OnDemandTaskRequest",
     "OrchestratorLedgerBuilder",
     "OrchestrationPhase",
     "OrchestratorConfig",

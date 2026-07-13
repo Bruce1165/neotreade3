@@ -18,6 +18,7 @@ from .ledger import (
 from .models import (
     DailyRunPlan,
     DailyRunRequest,
+    OnDemandTaskRequest,
     OrchestratorConfig,
     OrchestrationPhase,
     PlannedTask,
@@ -84,6 +85,33 @@ class DailyMasterOrchestrator:
             target_date=request.target_date,
             phases=self.config.phases,
             preflight_report=preflight_report,
+            planned_tasks=planned_tasks,
+        )
+
+    def build_on_demand_plan(self, request: OnDemandTaskRequest) -> DailyRunPlan:
+        planned_tasks: list[PlannedTask] = []
+        phases: list[OrchestrationPhase] = []
+
+        for task in request.tasks:
+            if task.phase not in phases:
+                phases.append(task.phase)
+            planned_tasks.append(
+                PlannedTask(
+                    task_id=task.task_id,
+                    phase=task.phase,
+                    lab_id=task.lab_id,
+                    entrypoint=task.entrypoint,
+                    depends_on=list(task.depends_on),
+                    outputs=list(task.outputs),
+                    requires_publish_status=task.requires_publish_status,
+                    args_template=dict(task.args_template),
+                    status=RunStatus.PLANNED,
+                )
+            )
+
+        return DailyRunPlan(
+            target_date=request.target_date,
+            phases=phases,
             planned_tasks=planned_tasks,
         )
 

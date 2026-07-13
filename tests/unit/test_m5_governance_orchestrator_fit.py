@@ -21,6 +21,8 @@ from neotrade3.orchestration import (
     DailyMasterOrchestrator,
     DailyRunPlan,
     DailyRunRequest,
+    OnDemandTaskItem,
+    OnDemandTaskRequest,
     OrchestrationPhase,
     PlannedTask,
     RunStatus,
@@ -152,24 +154,23 @@ def _run_governance_reject_task(
         labs_registry_path=LABS_CONFIG,
     )
     app = BootstrapWorkerApp(project_root=project_root)
-    task = PlannedTask(
-        task_id="governance.reject_execution",
-        phase=OrchestrationPhase.GOVERNANCE,
-        lab_id=None,
-        entrypoint="neotrade3.governance.runtime:run_governance_reject_execution",
-        depends_on=[],
-        outputs=["governance_reject_artifact", "governance_reject_ledger"],
-        requires_publish_status=False,
-        args_template={
-            "source_run_id": source_run_id,
-            "validation_id": validation_id,
-        },
-    )
-    plan = DailyRunPlan(
+    request = OnDemandTaskRequest(
         target_date=date(2026, 5, 19),
-        phases=[OrchestrationPhase.GOVERNANCE],
-        planned_tasks=[task],
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.reject_execution",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint="neotrade3.governance.runtime:run_governance_reject_execution",
+                args_template={
+                    "source_run_id": source_run_id,
+                    "validation_id": validation_id,
+                },
+                outputs=["governance_reject_artifact", "governance_reject_ledger"],
+            )
+        ],
     )
+    plan = orchestrator.build_on_demand_plan(request)
+    task = plan.planned_tasks[0]
     results = orchestrator.execute_run_plan(
         plan,
         {
@@ -183,6 +184,38 @@ def _run_governance_reject_task(
         },
     )
     return task, results[0]
+
+
+def test_build_on_demand_plan_preserves_explicit_task_shape() -> None:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    request = OnDemandTaskRequest(
+        target_date=date(2026, 5, 19),
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.reject_execution",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint="neotrade3.governance.runtime:run_governance_reject_execution",
+                args_template={
+                    "source_run_id": "benchmark-run-1",
+                    "validation_id": "validation-1",
+                },
+                outputs=["governance_reject_artifact", "governance_reject_ledger"],
+            )
+        ],
+    )
+
+    plan = orchestrator.build_on_demand_plan(request)
+
+    assert plan.target_date == request.target_date
+    assert plan.preflight_report is None
+    assert plan.phases == [OrchestrationPhase.GOVERNANCE]
+    assert len(plan.planned_tasks) == 1
+    assert plan.planned_tasks[0].task_id == "governance.reject_execution"
+    assert plan.planned_tasks[0].args_template["source_run_id"] == "benchmark-run-1"
+    assert plan.planned_tasks[0].args_template["validation_id"] == "validation-1"
 
 
 def _run_benchmark_then_governance_chain(
