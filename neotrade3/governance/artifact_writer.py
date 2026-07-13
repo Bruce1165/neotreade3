@@ -59,6 +59,17 @@ class GovernanceStatusTransitionArtifactRecord:
     effective_blocker_id: str
 
 
+@dataclass(frozen=True)
+class GovernanceFinalValidationArtifactRecord:
+    source_run_id: str
+    written_at: str
+    artifact_path: str
+    selected_validation_id: str
+    baseline_run_id: str
+    candidate_run_id: str
+    outcome: str
+
+
 def write_governance_handoff_artifact(
     *,
     project_root: str | Path,
@@ -253,4 +264,75 @@ def write_governance_status_transition_artifact(
         decision_id=decision_record.decision_id,
         effective_attention_id=effective_attention_item.attention_id,
         effective_blocker_id=effective_promotion_blocker.blocker_id,
+    )
+
+
+def write_governance_final_validation_artifact(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    validation_result: ValidationResult,
+    candidate_validation_artifact_path: str,
+    candidate_validation_ledger_path: str,
+    handoff_artifact_path: str,
+    selection_basis: str = "unique_persisted_candidate_validation",
+    dry_run: bool = False,
+) -> GovernanceFinalValidationArtifactRecord:
+    project_root_path = Path(project_root)
+    normalized_source_run_id = str(source_run_id or "").strip()
+    validation_id = str(validation_result.validation_id or "").strip()
+    normalized_candidate_validation_artifact_path = str(
+        candidate_validation_artifact_path or ""
+    ).strip()
+    normalized_candidate_validation_ledger_path = str(
+        candidate_validation_ledger_path or ""
+    ).strip()
+    normalized_handoff_artifact_path = str(handoff_artifact_path or "").strip()
+    normalized_selection_basis = str(selection_basis or "").strip()
+    if not normalized_source_run_id:
+        raise ValueError("source_run_id must be non-empty")
+    if not validation_id:
+        raise ValueError("validation_id must be non-empty")
+    if not normalized_candidate_validation_artifact_path:
+        raise ValueError("candidate_validation_artifact_path must be non-empty")
+    if not normalized_candidate_validation_ledger_path:
+        raise ValueError("candidate_validation_ledger_path must be non-empty")
+    if not normalized_handoff_artifact_path:
+        raise ValueError("handoff_artifact_path must be non-empty")
+    if not normalized_selection_basis:
+        raise ValueError("selection_basis must be non-empty")
+
+    artifacts_dir = (
+        project_root_path / "var/artifacts/governance_final_validations" / normalized_source_run_id
+    )
+    artifact_file = artifacts_dir / "governance_final_validation.json"
+    written_at = _now_iso()
+    payload = {
+        "source_run_id": normalized_source_run_id,
+        "selected_validation_id": validation_id,
+        "baseline_run_id": validation_result.baseline_run_id,
+        "candidate_run_id": validation_result.candidate_run_id,
+        "outcome": validation_result.outcome,
+        "selection_basis": normalized_selection_basis,
+        "candidate_validation_artifact_path": normalized_candidate_validation_artifact_path,
+        "candidate_validation_ledger_path": normalized_candidate_validation_ledger_path,
+        "handoff_artifact_path": normalized_handoff_artifact_path,
+        "written_at": written_at,
+    }
+
+    if not dry_run:
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        artifact_file.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    return GovernanceFinalValidationArtifactRecord(
+        source_run_id=normalized_source_run_id,
+        written_at=written_at,
+        artifact_path=str(artifact_file.relative_to(project_root_path)),
+        selected_validation_id=validation_id,
+        baseline_run_id=validation_result.baseline_run_id,
+        candidate_run_id=validation_result.candidate_run_id,
+        outcome=validation_result.outcome,
     )

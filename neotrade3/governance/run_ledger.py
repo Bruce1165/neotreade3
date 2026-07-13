@@ -10,9 +10,11 @@ from typing import Any
 from .artifact_writer import (
     GovernanceArtifactRecord,
     GovernanceCandidateValidationArtifactRecord,
+    GovernanceFinalValidationArtifactRecord,
     GovernanceRejectExecutionArtifactRecord,
     GovernanceStatusTransitionArtifactRecord,
     write_governance_candidate_validation_artifact,
+    write_governance_final_validation_artifact,
     write_governance_handoff_artifact,
     write_governance_reject_execution_artifact,
     write_governance_status_transition_artifact,
@@ -228,6 +230,48 @@ class GovernanceStatusTransitionRecord:
         }
 
 
+@dataclass(frozen=True)
+class GovernanceFinalValidationRecord:
+    source_run_id: str
+    status: str
+    written_at: str
+    artifact_path: str
+    ledger_path: str
+    selected_validation_id: str
+    baseline_run_id: str
+    candidate_run_id: str
+    outcome: str
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "GovernanceFinalValidationRecord":
+        if not isinstance(payload, dict):
+            raise TypeError("governance final validation ledger root must be a JSON object")
+        return cls(
+            source_run_id=str(payload.get("source_run_id") or "").strip(),
+            status=str(payload.get("status") or "").strip(),
+            written_at=str(payload.get("written_at") or "").strip(),
+            artifact_path=str(payload.get("artifact_path") or "").strip(),
+            ledger_path=str(payload.get("ledger_path") or "").strip(),
+            selected_validation_id=str(payload.get("selected_validation_id") or "").strip(),
+            baseline_run_id=str(payload.get("baseline_run_id") or "").strip(),
+            candidate_run_id=str(payload.get("candidate_run_id") or "").strip(),
+            outcome=str(payload.get("outcome") or "").strip(),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "source_run_id": self.source_run_id,
+            "status": self.status,
+            "written_at": self.written_at,
+            "artifact_path": self.artifact_path,
+            "ledger_path": self.ledger_path,
+            "selected_validation_id": self.selected_validation_id,
+            "baseline_run_id": self.baseline_run_id,
+            "candidate_run_id": self.candidate_run_id,
+            "outcome": self.outcome,
+        }
+
+
 def _normalized_source_run_id(source_run_id: str) -> str:
     normalized = str(source_run_id or "").strip()
     if not normalized:
@@ -311,6 +355,24 @@ def _status_transition_artifact_file(*, project_root: Path, validation_id: str) 
         / "var/artifacts/governance_status_transitions"
         / validation_id
         / "governance_status_transition.json"
+    )
+
+
+def _final_validation_ledger_file(*, project_root: Path, source_run_id: str) -> Path:
+    return (
+        project_root
+        / "var/ledgers/governance_final_validations"
+        / source_run_id
+        / "governance_final_validation_run.json"
+    )
+
+
+def _final_validation_artifact_file(*, project_root: Path, source_run_id: str) -> Path:
+    return (
+        project_root
+        / "var/artifacts/governance_final_validations"
+        / source_run_id
+        / "governance_final_validation.json"
     )
 
 
@@ -571,6 +633,71 @@ def materialize_governance_status_transition(
     )
 
 
+def write_governance_final_validation_ledger(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    validation_result: ValidationResult,
+    artifact_record: GovernanceFinalValidationArtifactRecord,
+    dry_run: bool = False,
+) -> GovernanceFinalValidationRecord:
+    project_root_path = Path(project_root)
+    normalized_source_run_id = _normalized_source_run_id(source_run_id)
+    ledger_file = _final_validation_ledger_file(
+        project_root=project_root_path,
+        source_run_id=normalized_source_run_id,
+    )
+    payload = {
+        "source_run_id": normalized_source_run_id,
+        "status": "completed",
+        "written_at": artifact_record.written_at,
+        "artifact_path": artifact_record.artifact_path,
+        "ledger_path": str(ledger_file.relative_to(project_root_path)),
+        "selected_validation_id": artifact_record.selected_validation_id,
+        "baseline_run_id": validation_result.baseline_run_id,
+        "candidate_run_id": validation_result.candidate_run_id,
+        "outcome": validation_result.outcome,
+    }
+
+    if not dry_run:
+        ledger_file.parent.mkdir(parents=True, exist_ok=True)
+        ledger_file.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    return GovernanceFinalValidationRecord.from_dict(payload)
+
+
+def materialize_governance_final_validation(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    validation_result: ValidationResult,
+    candidate_validation_record: GovernanceCandidateValidationRecord,
+    handoff_artifact_path: str,
+    selection_basis: str = "unique_persisted_candidate_validation",
+    dry_run: bool = False,
+) -> GovernanceFinalValidationRecord:
+    artifact_record = write_governance_final_validation_artifact(
+        project_root=project_root,
+        source_run_id=source_run_id,
+        validation_result=validation_result,
+        candidate_validation_artifact_path=candidate_validation_record.artifact_path,
+        candidate_validation_ledger_path=candidate_validation_record.ledger_path,
+        handoff_artifact_path=handoff_artifact_path,
+        selection_basis=selection_basis,
+        dry_run=dry_run,
+    )
+    return write_governance_final_validation_ledger(
+        project_root=project_root,
+        source_run_id=source_run_id,
+        validation_result=validation_result,
+        artifact_record=artifact_record,
+        dry_run=dry_run,
+    )
+
+
 def read_governance_run_ledger(
     *,
     project_root: str | Path,
@@ -720,6 +847,75 @@ def read_governance_candidate_validation_result(
     if not isinstance(validation_payload, dict):
         return None
     return ValidationResult.from_dict(validation_payload)
+
+
+def list_governance_candidate_validation_records_for_source_run(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+) -> list[GovernanceCandidateValidationRecord]:
+    try:
+        normalized_source_run_id = _normalized_source_run_id(source_run_id)
+    except ValueError:
+        return []
+    root = Path(project_root) / "var/ledgers/governance_candidate_validations"
+    if not root.exists():
+        return []
+
+    records: list[GovernanceCandidateValidationRecord] = []
+    for ledger_file in sorted(root.glob("*/governance_candidate_validation_run.json")):
+        try:
+            payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("source_run_id") or "").strip() != normalized_source_run_id:
+            continue
+        records.append(GovernanceCandidateValidationRecord.from_dict(payload))
+
+    records.sort(key=lambda item: (item.written_at, item.validation_id))
+    return records
+
+
+def read_governance_final_validation_artifact(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+) -> dict[str, Any] | None:
+    try:
+        normalized_source_run_id = _normalized_source_run_id(source_run_id)
+    except ValueError:
+        return None
+    artifact_file = _final_validation_artifact_file(
+        project_root=Path(project_root),
+        source_run_id=normalized_source_run_id,
+    )
+    if not artifact_file.exists():
+        return None
+    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else None
+
+
+def read_governance_final_validation_record(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+) -> GovernanceFinalValidationRecord | None:
+    try:
+        normalized_source_run_id = _normalized_source_run_id(source_run_id)
+    except ValueError:
+        return None
+    ledger_file = _final_validation_ledger_file(
+        project_root=Path(project_root),
+        source_run_id=normalized_source_run_id,
+    )
+    if not ledger_file.exists():
+        return None
+    payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return None
+    return GovernanceFinalValidationRecord.from_dict(payload)
 
 
 def read_governance_status_transition_artifact(

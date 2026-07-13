@@ -12,13 +12,16 @@ from .contracts import AttentionItem, GovernanceDecisionRecord, PromotionBlocker
 from .handoff import build_governance_handoff_from_batch_run
 from .run_ledger import (
     GovernanceCandidateValidationRecord,
+    GovernanceFinalValidationRecord,
     GovernanceRejectExecutionLedgerRecord,
     GovernanceRunLedgerRecord,
     GovernanceStatusTransitionRecord,
     materialize_governance_candidate_validation,
+    materialize_governance_final_validation,
     materialize_governance_handoff,
     materialize_governance_reject_execution,
     materialize_governance_status_transition,
+    list_governance_candidate_validation_records_for_source_run,
     read_governance_candidate_validation_result,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
@@ -100,6 +103,26 @@ def _resolve_candidate_validation_outcome(
             f"persisted candidate validation outcome not found for validation_id={validation_id}"
         )
     return validation_result
+
+
+def _resolve_unique_candidate_validation_record(
+    *,
+    project_root: Path,
+    source_run_id: str,
+) -> GovernanceCandidateValidationRecord:
+    records = list_governance_candidate_validation_records_for_source_run(
+        project_root=project_root,
+        source_run_id=source_run_id,
+    )
+    if not records:
+        raise ValueError(
+            f"no persisted candidate validation outcome found for source_run_id={source_run_id}"
+        )
+    if len(records) != 1:
+        raise ValueError(
+            f"ambiguous candidate validation outcomes for source_run_id={source_run_id}: {len(records)} records"
+        )
+    return records[0]
 
 
 def _strip_expected_suffix(*, value: str, suffix: str, field_name: str) -> str:
@@ -273,6 +296,65 @@ def run_governance_candidate_validation_outcome(
         project_root=project_root_path,
         source_run_id=resolved_source_run_id,
         validation_result=final_validation_result,
+        dry_run=dry_run,
+    )
+
+
+def run_governance_final_validation_selection(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    dry_run: bool = False,
+) -> GovernanceFinalValidationRecord:
+    project_root_path = Path(project_root)
+    resolved_source_run_id = resolve_governance_benchmark_run_id(
+        benchmark_run_id=source_run_id,
+    )
+    bundle = read_governance_handoff_bundle(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+    )
+    if bundle is None:
+        raise ValueError(
+            f"persisted governance handoff not found for source_run_id={resolved_source_run_id}"
+        )
+
+    selected_record = _resolve_unique_candidate_validation_record(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+    )
+    if selected_record.baseline_run_id != resolved_source_run_id:
+        raise ValueError(
+            "persisted candidate validation baseline_run_id does not match source_run_id"
+        )
+
+    final_validation_result = _resolve_candidate_validation_outcome(
+        project_root=project_root_path,
+        validation_id=selected_record.validation_id,
+    )
+    final_validation_result = _require_final_validation_result(
+        validation_result=final_validation_result,
+    )
+    if final_validation_result.baseline_run_id != resolved_source_run_id:
+        raise ValueError(
+            "persisted candidate validation baseline_run_id does not match source_run_id"
+        )
+
+    _resolve_baseline_validation_result(
+        bundle_validation_results=bundle.validation_results,
+        validation_id=selected_record.validation_id,
+    )
+
+    handoff_artifact_path = (
+        f"var/artifacts/governance_handoffs/{resolved_source_run_id}/"
+        "governance_handoff_bundle.json"
+    )
+    return materialize_governance_final_validation(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+        validation_result=final_validation_result,
+        candidate_validation_record=selected_record,
+        handoff_artifact_path=handoff_artifact_path,
         dry_run=dry_run,
     )
 
