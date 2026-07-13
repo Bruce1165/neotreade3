@@ -1316,6 +1316,102 @@ def test_orchestration_run_view_uses_governance_reject_worker_runtime(
     assert artifact_payload["tasks"][0]["task_id"] == "governance.reject_execution"
 
 
+def test_orchestration_run_view_uses_governance_status_transition_worker_runtime(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    captured: dict[str, object] = {}
+    original_require_trading_day = service.require_trading_day
+    original_worker_run = service.worker_app.run_governance_status_transition_on_demand
+    original_materialize_lab_runs = service._materialize_lab_runs_from_snapshot
+
+    def _unexpected_require_trading_day(*, target_date, requested_by="api"):
+        raise AssertionError(
+            "governance_status_transition mode should not require trading day"
+        )
+
+    def _fake_worker_run_governance_status_transition(
+        *,
+        target_date,
+        source_run_id,
+        validation_id,
+        requested_by="BootstrapWorkerApp.run_governance_status_transition_on_demand",
+        dry_run=False,
+    ):
+        captured["target_date"] = target_date.isoformat()
+        captured["source_run_id"] = source_run_id
+        captured["validation_id"] = validation_id
+        captured["requested_by"] = requested_by
+        captured["dry_run"] = dry_run
+        return {
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "task_results": [
+                    {
+                        "task_id": "governance.status_transition",
+                        "phase": "governance",
+                        "status": "ok",
+                        "message": "status transition ok",
+                        "lab_id": None,
+                        "details": {
+                            "source_run_id": source_run_id,
+                            "validation_id": validation_id,
+                        },
+                        "artifact_refs": [],
+                    }
+                ]
+            },
+            "summary": {"planned_task_count": 1},
+        }
+
+    def _unexpected_materialize_lab_runs(**kwargs):
+        raise AssertionError(
+            "governance_status_transition mode should not materialize lab runs"
+        )
+
+    service.require_trading_day = _unexpected_require_trading_day
+    service.worker_app.run_governance_status_transition_on_demand = (
+        _fake_worker_run_governance_status_transition
+    )
+    service._materialize_lab_runs_from_snapshot = _unexpected_materialize_lab_runs
+    try:
+        payload = service.orchestration_run_view(
+            target_date="2026-05-19",
+            mode="governance_status_transition",
+            publish_succeeded=False,
+            requested_by="test",
+            dry_run=False,
+            source_run_id="benchmark-run-1",
+            validation_id="validation-1",
+        )
+    finally:
+        service.require_trading_day = original_require_trading_day
+        service.worker_app.run_governance_status_transition_on_demand = (
+            original_worker_run
+        )
+        service._materialize_lab_runs_from_snapshot = original_materialize_lab_runs
+
+    ledger_path = tmp_path / "var/ledgers/orchestration_runs/2026-05-19/orchestrator_run.json"
+    artifact_path = (
+        tmp_path / "var/artifacts/orchestration_runs/2026-05-19/orchestrator_result.json"
+    )
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert captured == {
+        "target_date": "2026-05-19",
+        "source_run_id": "benchmark-run-1",
+        "validation_id": "validation-1",
+        "requested_by": "test",
+        "dry_run": False,
+    }
+    assert payload["_meta"]["status"] == "ok"
+    assert payload["orchestrator_run"]["mode"] == "governance_status_transition"
+    assert ledger_payload["mode"] == "governance_status_transition"
+    assert artifact_payload["mode"] == "governance_status_transition"
+    assert artifact_payload["tasks"][0]["task_id"] == "governance.status_transition"
+
+
 def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
     tmp_path: Path,
 ) -> None:
@@ -2073,6 +2169,64 @@ def test_bootstrap_api_router_accepts_governance_reject_orchestration_run() -> N
     }
 
 
+def test_bootstrap_api_router_accepts_governance_status_transition_orchestration_run() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    router = BootstrapApiRouter(service)
+    captured: dict[str, object] = {}
+    original_view = service.orchestration_run_view
+
+    def _fake_orchestration_run_view(
+        *,
+        target_date: str,
+        mode: str = "daily",
+        publish_succeeded: bool,
+        requested_by: str,
+        dry_run: bool = False,
+        source_run_id: str | None = None,
+        validation_id: str | None = None,
+    ) -> dict[str, object]:
+        captured.update(
+            {
+                "target_date": target_date,
+                "mode": mode,
+                "publish_succeeded": publish_succeeded,
+                "requested_by": requested_by,
+                "dry_run": dry_run,
+                "source_run_id": source_run_id,
+                "validation_id": validation_id,
+            }
+        )
+        return {"_meta": {"status": "ok"}, "orchestrator_run": {"target_date": target_date}}
+
+    service.orchestration_run_view = _fake_orchestration_run_view
+    try:
+        status, payload = router.dispatch_post(
+            "/api/orchestration/run",
+            {
+                "date": "2026-05-19",
+                "mode": "governance_status_transition",
+                "requested_by": "test",
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "validation-1",
+            },
+        )
+    finally:
+        service.orchestration_run_view = original_view
+
+    assert status == 200
+    assert payload["_meta"]["status"] == "ok"
+    assert captured == {
+        "target_date": "2026-05-19",
+        "mode": "governance_status_transition",
+        "publish_succeeded": False,
+        "requested_by": "test",
+        "dry_run": True,
+        "source_run_id": "benchmark-run-1",
+        "validation_id": "validation-1",
+    }
+
+
 def test_bootstrap_api_router_rejects_governance_reject_without_source_run_id() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)
@@ -2094,6 +2248,27 @@ def test_bootstrap_api_router_rejects_governance_reject_without_source_run_id() 
     assert payload["error"]["code"] == "invalid_source_run_id"
 
 
+def test_bootstrap_api_router_rejects_governance_status_transition_without_source_run_id() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(Exception) as exc_info:
+        router.dispatch_post(
+            "/api/orchestration/run",
+            {
+                "date": "2026-05-19",
+                "mode": "governance_status_transition",
+                "requested_by": "test",
+                "dry_run": True,
+                "validation_id": "validation-1",
+            },
+        )
+
+    status, payload = format_api_error(exc_info.value)
+    assert status == 400
+    assert payload["error"]["code"] == "invalid_source_run_id"
+
+
 def test_bootstrap_api_router_rejects_governance_reject_without_validation_id() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
     router = BootstrapApiRouter(service)
@@ -2104,6 +2279,27 @@ def test_bootstrap_api_router_rejects_governance_reject_without_validation_id() 
             {
                 "date": "2026-05-19",
                 "mode": "governance_reject",
+                "requested_by": "test",
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+            },
+        )
+
+    status, payload = format_api_error(exc_info.value)
+    assert status == 400
+    assert payload["error"]["code"] == "invalid_validation_id"
+
+
+def test_bootstrap_api_router_rejects_governance_status_transition_without_validation_id() -> None:
+    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(Exception) as exc_info:
+        router.dispatch_post(
+            "/api/orchestration/run",
+            {
+                "date": "2026-05-19",
+                "mode": "governance_status_transition",
                 "requested_by": "test",
                 "dry_run": True,
                 "source_run_id": "benchmark-run-1",

@@ -1358,13 +1358,22 @@ class BootstrapApiService:
         else:
             resolved_source_run_id = str(source_run_id or "").strip()
             resolved_validation_id = str(validation_id or "").strip()
-            snapshot = self.worker_app.run_governance_reject_on_demand(
-                target_date=target_date_obj,
-                source_run_id=resolved_source_run_id,
-                validation_id=resolved_validation_id,
-                requested_by=requested_by.strip(),
-                dry_run=dry_run,
-            )
+            if normalized_mode == "governance_reject":
+                snapshot = self.worker_app.run_governance_reject_on_demand(
+                    target_date=target_date_obj,
+                    source_run_id=resolved_source_run_id,
+                    validation_id=resolved_validation_id,
+                    requested_by=requested_by.strip(),
+                    dry_run=dry_run,
+                )
+            else:
+                snapshot = self.worker_app.run_governance_status_transition_on_demand(
+                    target_date=target_date_obj,
+                    source_run_id=resolved_source_run_id,
+                    validation_id=resolved_validation_id,
+                    requested_by=requested_by.strip(),
+                    dry_run=dry_run,
+                )
 
         ledger_path, artifact_path = self._orchestration_run_paths(
             target_date=target_date

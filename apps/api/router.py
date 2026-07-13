@@ -2580,11 +2580,18 @@ class BootstrapApiRouter:
                     details={"mode": mode},
                 )
             normalized_mode = mode.strip().lower()
-            if normalized_mode not in {"daily", "governance_reject"}:
+            if normalized_mode not in {
+                "daily",
+                "governance_reject",
+                "governance_status_transition",
+            }:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_mode",
-                    message="mode must be one of: daily, governance_reject",
+                    message=(
+                        "mode must be one of: daily, governance_reject, "
+                        "governance_status_transition"
+                    ),
                     details={"mode": mode},
                 )
 
@@ -2617,7 +2624,10 @@ class BootstrapApiRouter:
 
             source_run_id = body.get("source_run_id")
             validation_id = body.get("validation_id")
-            if normalized_mode == "governance_reject":
+            if normalized_mode in {
+                "governance_reject",
+                "governance_status_transition",
+            }:
                 if (
                     not isinstance(source_run_id, str)
                     or not source_run_id.strip()
