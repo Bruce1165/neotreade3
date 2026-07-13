@@ -10,9 +10,12 @@ from neotrade3.benchmark import (
     materialize_benchmark_batch_run,
     run_benchmark_manifest,
 )
+from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.cli import build_parser, main
 from neotrade3.governance.run_ledger import (
     read_governance_handoff_artifact,
+    read_governance_reject_execution_artifact,
+    read_governance_reject_execution_ledger,
     read_governance_run_ledger,
 )
 
@@ -52,20 +55,54 @@ def _materialize_benchmark_run(project_root: Path, manifest_name: str) -> str:
     return batch_result.run_id
 
 
-def test_governance_cli_parser_requires_benchmark_run_id() -> None:
+def _inject_rejected_validation(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    validation_id: str,
+) -> None:
+    artifact_path = (
+        project_root
+        / "var/artifacts/governance_handoffs"
+        / source_run_id
+        / "governance_handoff_bundle.json"
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    experiment_id = payload["experiment_requests"][0]["experiment_id"]
+    payload["validation_results"].append(
+        build_validation_result(
+            validation_id=validation_id,
+            experiment_id=experiment_id,
+            baseline_run_id=source_run_id,
+            candidate_run_id="candidate-run-1",
+            outcome="rejected",
+            introduced_risk_count=1,
+            cleared_guardrail_codes=[],
+            remaining_guardrail_codes=["interaction.local_global"],
+            evidence_refs=[{"kind": "validation_result"}],
+        ).to_payload()
+    )
+    artifact_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_governance_cli_parser_requires_subcommand() -> None:
     parser = build_parser()
     try:
         parser.parse_args([])
     except SystemExit as exc:
         assert exc.code == 2
     else:
-        raise AssertionError("parser should require --benchmark-run-id")
+        raise AssertionError("parser should require a subcommand")
 
 
-def test_governance_cli_parser_accepts_explicit_arguments() -> None:
+def test_governance_cli_parser_accepts_handoff_arguments() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
+            "handoff",
             "--project-root",
             "/tmp/neotrade3",
             "--benchmark-run-id",
@@ -74,8 +111,31 @@ def test_governance_cli_parser_accepts_explicit_arguments() -> None:
         ]
     )
 
+    assert args.command == "handoff"
     assert args.project_root == "/tmp/neotrade3"
     assert args.benchmark_run_id == "validation_seed_v2_batch"
+    assert args.dry_run is True
+
+
+def test_governance_cli_parser_accepts_reject_arguments() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "reject",
+            "--project-root",
+            "/tmp/neotrade3",
+            "--source-run-id",
+            "benchmark-run-1",
+            "--validation-id",
+            "validation-1",
+            "--dry-run",
+        ]
+    )
+
+    assert args.command == "reject"
+    assert args.project_root == "/tmp/neotrade3"
+    assert args.source_run_id == "benchmark-run-1"
+    assert args.validation_id == "validation-1"
     assert args.dry_run is True
 
 
@@ -87,6 +147,7 @@ def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> N
     with redirect_stdout(buffer):
         exit_code = main(
             [
+                "handoff",
                 "--project-root",
                 str(project_root),
                 "--benchmark-run-id",
@@ -129,6 +190,7 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     with redirect_stdout(buffer):
         exit_code = main(
             [
+                "handoff",
                 "--project-root",
                 str(project_root),
                 "--benchmark-run-id",
@@ -195,6 +257,7 @@ def test_governance_cli_main_raises_for_missing_benchmark_artifact(
     try:
         main(
             [
+                "handoff",
                 "--project-root",
                 str(project_root),
                 "--benchmark-run-id",
@@ -205,3 +268,126 @@ def test_governance_cli_main_raises_for_missing_benchmark_artifact(
         assert "missing_benchmark_run" in str(exc)
     else:
         raise AssertionError("missing benchmark artifact should raise FileNotFoundError")
+
+
+def test_governance_cli_reject_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    buffer = StringIO()
+
+    with redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "reject",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "validation-final-reject",
+                "--dry-run",
+            ]
+        )
+
+    payload = json.loads(buffer.getvalue())
+    assert exit_code == 0
+    assert payload["validation_id"] == "validation-final-reject"
+    assert payload["source_run_id"] == run_id
+    assert payload["decision"] == "reject"
+    assert payload["dry_run"] is True
+    assert not (project_root / payload["artifact_path"]).exists()
+    assert not (project_root / payload["ledger_path"]).exists()
+    assert (
+        read_governance_reject_execution_artifact(
+            project_root=project_root,
+            validation_id=payload["validation_id"],
+        )
+        is None
+    )
+    assert (
+        read_governance_reject_execution_ledger(
+            project_root=project_root,
+            validation_id=payload["validation_id"],
+        )
+        is None
+    )
+
+
+def test_governance_cli_reject_materializes_outputs(tmp_path: Path) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    buffer = StringIO()
+
+    with redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "reject",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "validation-final-reject",
+            ]
+        )
+
+    payload = json.loads(buffer.getvalue())
+    artifact_path = project_root / payload["artifact_path"]
+    ledger_path = project_root / payload["ledger_path"]
+    artifact_payload = read_governance_reject_execution_artifact(
+        project_root=project_root,
+        validation_id=payload["validation_id"],
+    )
+    ledger_record = read_governance_reject_execution_ledger(
+        project_root=project_root,
+        validation_id=payload["validation_id"],
+    )
+
+    assert exit_code == 0
+    assert payload["validation_id"] == "validation-final-reject"
+    assert payload["source_run_id"] == run_id
+    assert payload["decision"] == "reject"
+    assert payload["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert artifact_payload["decision_record"]["decision"] == "reject"
+    assert artifact_payload["validation_result"]["outcome"] == "rejected"
+    assert ledger_record.validation_id == payload["validation_id"]
+    assert ledger_record.decision == payload["decision"]
+
+
+def test_governance_cli_reject_raises_for_missing_validation(tmp_path: Path) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_v2_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+
+    try:
+        main(
+            [
+                "reject",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+                "--validation-id",
+                "missing-validation",
+            ]
+        )
+    except ValueError as exc:
+        assert "validation_result not found" in str(exc)
+    else:
+        raise AssertionError("missing validation should raise ValueError")
