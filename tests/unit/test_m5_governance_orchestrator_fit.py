@@ -11,7 +11,10 @@ from neotrade3.benchmark import (
     run_benchmark_manifest,
 )
 from neotrade3.governance.assembler import build_validation_result
+from neotrade3.governance.runtime import run_governance_candidate_validation_outcome
 from neotrade3.governance.run_ledger import (
+    read_governance_final_validation_artifact,
+    read_governance_final_validation_record,
     read_governance_handoff_artifact,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
@@ -229,6 +232,90 @@ def _run_governance_status_transition_task(
             "target_date": date(2026, 5, 19),
             "project_root": str(project_root),
             "requested_by": "test.m5.governance.orchestrator_fit.status_transition",
+            "dry_run": dry_run,
+        },
+    )
+    return task, results[0]
+
+
+def _materialize_candidate_validation_outcome(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    validation_id: str,
+) -> None:
+    artifact_payload = read_governance_handoff_artifact(
+        project_root=project_root,
+        source_run_id=source_run_id,
+    )
+    assert artifact_payload is not None
+    validation_payload = next(
+        item
+        for item in artifact_payload["validation_results"]
+        if item["validation_id"] == validation_id
+    )
+    experiment_id = str(validation_payload["experiment_id"])
+    validation_result = build_validation_result(
+        validation_id=validation_id,
+        experiment_id=experiment_id,
+        baseline_run_id=source_run_id,
+        candidate_run_id="candidate-run-1",
+        outcome="rejected",
+        introduced_risk_count=1,
+        cleared_guardrail_codes=[],
+        remaining_guardrail_codes=["interaction.local_global"],
+        evidence_refs=[{"kind": "candidate_validation"}],
+    )
+    run_governance_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=source_run_id,
+        validation_result=validation_result,
+        dry_run=False,
+    )
+
+
+def _run_governance_final_validation_selection_task(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    dry_run: bool,
+) -> tuple[PlannedTask, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    request = OnDemandTaskRequest(
+        target_date=date(2026, 5, 19),
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.final_validation_selection",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint=(
+                    "neotrade3.governance.runtime:"
+                    "run_governance_final_validation_selection"
+                ),
+                args_template={
+                    "source_run_id": source_run_id,
+                },
+                outputs=[
+                    "governance_final_validation_artifact",
+                    "governance_final_validation_ledger",
+                ],
+            )
+        ],
+    )
+    plan = orchestrator.build_on_demand_plan(request)
+    task = plan.planned_tasks[0]
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.final_selection",
             "dry_run": dry_run,
         },
     )
@@ -540,6 +627,11 @@ def test_governance_reject_executor_dry_run_via_execute_run_plan(
         source_run_id=run_id,
         validation_id="validation-final-reject",
     )
+    _materialize_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
     _, result = _run_governance_reject_task(
         project_root=project_root,
         source_run_id=run_id,
@@ -581,6 +673,11 @@ def test_governance_reject_executor_materializes_outputs_via_execute_run_plan(
         dry_run=False,
     )
     _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _materialize_candidate_validation_outcome(
         project_root=project_root,
         source_run_id=run_id,
         validation_id="validation-final-reject",
@@ -668,6 +765,11 @@ def test_governance_status_transition_executor_dry_run_via_execute_run_plan(
         source_run_id=run_id,
         validation_id="validation-final-reject",
     )
+    _materialize_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
     _run_governance_reject_task(
         project_root=project_root,
         source_run_id=run_id,
@@ -716,6 +818,11 @@ def test_governance_status_transition_executor_materializes_outputs_via_execute_
         dry_run=False,
     )
     _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _materialize_candidate_validation_outcome(
         project_root=project_root,
         source_run_id=run_id,
         validation_id="validation-final-reject",
@@ -779,6 +886,11 @@ def test_governance_status_transition_executor_fails_for_missing_reject_proof(
         source_run_id=run_id,
         validation_id="validation-final-reject",
     )
+    _materialize_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
     _, result = _run_governance_status_transition_task(
         project_root=project_root,
         source_run_id=run_id,
@@ -788,6 +900,138 @@ def test_governance_status_transition_executor_fails_for_missing_reject_proof(
 
     assert result.status == RunStatus.FAILED
     assert "persisted governance reject execution not found" in result.message
+
+
+def test_governance_final_validation_selection_executor_dry_run_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _materialize_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_final_validation_selection_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=True,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["selected_validation_id"] == "validation-final-reject"
+    assert result.details["baseline_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-1"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["dry_run"] is True
+    assert not (project_root / result.artifact_refs[0]).exists()
+    assert not (project_root / result.artifact_refs[1]).exists()
+    assert (
+        read_governance_final_validation_artifact(
+            project_root=project_root,
+            source_run_id=run_id,
+        )
+        is None
+    )
+    assert (
+        read_governance_final_validation_record(
+            project_root=project_root,
+            source_run_id=run_id,
+        )
+        is None
+    )
+
+
+def test_governance_final_validation_selection_executor_materializes_outputs_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _materialize_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_final_validation_selection_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    artifact_path = project_root / result.artifact_refs[0]
+    ledger_path = project_root / result.artifact_refs[1]
+    artifact_payload = read_governance_final_validation_artifact(
+        project_root=project_root,
+        source_run_id=run_id,
+    )
+    ledger_record = read_governance_final_validation_record(
+        project_root=project_root,
+        source_run_id=run_id,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["selected_validation_id"] == "validation-final-reject"
+    assert result.details["baseline_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-1"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert artifact_payload["source_run_id"] == run_id
+    assert artifact_payload["selected_validation_id"] == "validation-final-reject"
+    assert artifact_payload["selection_basis"] == "unique_persisted_candidate_validation"
+    assert ledger_record.source_run_id == run_id
+    assert ledger_record.selected_validation_id == "validation-final-reject"
+    assert ledger_record.outcome == "rejected"
+
+
+def test_governance_final_validation_selection_executor_fails_without_candidate_outcome(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_final_validation_selection_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "no persisted candidate validation outcome found" in result.message
 
 
 def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:

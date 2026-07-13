@@ -21,6 +21,7 @@ from neotrade3.data_control import DataControlPipeline
 from neotrade3.governance.contracts import ValidationResult
 from neotrade3.governance.runtime import (
     run_governance_candidate_validation_outcome,
+    run_governance_final_validation_selection,
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
     run_governance_status_transition,
@@ -432,6 +433,31 @@ class BootstrapWorkerApp:
                             "effective_attention_status": record.effective_attention_status,
                             "effective_blocker_id": record.effective_blocker_id,
                             "effective_blocker_active": record.effective_blocker_active,
+                            "dry_run": dry_run,
+                        },
+                    )
+
+                if task.task_id == "governance.final_validation_selection":
+                    if not source_run_id:
+                        raise ValueError("source_run_id must be provided")
+                    record = run_governance_final_validation_selection(
+                        project_root=project_root,
+                        source_run_id=source_run_id,
+                        dry_run=dry_run,
+                    )
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message="governance final validation selected successfully",
+                        artifact_refs=[record.artifact_path, record.ledger_path],
+                        details={
+                            "source_run_id": record.source_run_id,
+                            "selected_validation_id": record.selected_validation_id,
+                            "baseline_run_id": record.baseline_run_id,
+                            "candidate_run_id": record.candidate_run_id,
+                            "outcome": record.outcome,
                             "dry_run": dry_run,
                         },
                     )
