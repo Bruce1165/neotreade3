@@ -14,7 +14,6 @@ from neotrade3.governance.run_ledger import (
     read_governance_handoff_artifact,
     read_governance_run_ledger,
 )
-from neotrade3.governance.runtime import DEFAULT_GOVERNANCE_BENCHMARK_RUN_ID
 from neotrade3.orchestration import (
     DailyMasterOrchestrator,
     DailyRunPlan,
@@ -105,7 +104,64 @@ def _run_governance_task(
     return task, results[0]
 
 
-def test_governance_phase_and_benchmark_run_id_survive_planning() -> None:
+def _run_benchmark_then_governance_chain(
+    *,
+    project_root: Path,
+    manifest: str,
+    dry_run: bool,
+) -> tuple[object, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    benchmark_task = PlannedTask(
+        task_id="benchmark.materialize_run",
+        phase=OrchestrationPhase.BENCHMARK,
+        lab_id=None,
+        entrypoint="neotrade3.benchmark.runtime:run_benchmark_for_manifest",
+        depends_on=[],
+        outputs=["benchmark_run_artifact", "benchmark_run_ledger"],
+        requires_publish_status=False,
+        args_template={"manifest": manifest},
+    )
+    governance_task = PlannedTask(
+        task_id="governance.materialize_handoff",
+        phase=OrchestrationPhase.GOVERNANCE,
+        lab_id=None,
+        entrypoint="neotrade3.governance.runtime:run_governance_for_benchmark_run",
+        depends_on=["benchmark.materialize_run"],
+        outputs=["governance_handoff_artifact", "governance_handoff_ledger"],
+        requires_publish_status=False,
+        args_template={
+            "benchmark_run_id": {
+                "from_task": "benchmark.materialize_run",
+                "detail_key": "run_id",
+            }
+        },
+    )
+    plan = DailyRunPlan(
+        target_date=date(2026, 5, 19),
+        phases=[OrchestrationPhase.BENCHMARK, OrchestrationPhase.GOVERNANCE],
+        planned_tasks=[benchmark_task, governance_task],
+    )
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.BENCHMARK: app._create_benchmark_executor(),
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit",
+            "dry_run": dry_run,
+        },
+    )
+    return results[0], results[1]
+
+
+def test_governance_phase_and_dynamic_benchmark_run_reference_survive_planning() -> None:
     orchestrator = DailyMasterOrchestrator.from_files(
         orchestrator_config_path=ORCHESTRATOR_CONFIG,
         labs_registry_path=LABS_CONFIG,
@@ -123,10 +179,11 @@ def test_governance_phase_and_benchmark_run_id_survive_planning() -> None:
     assert OrchestrationPhase.GOVERNANCE in plan.phases
     assert OrchestrationPhase.BENCHMARK in plan.phases
     assert governance_task.phase == OrchestrationPhase.GOVERNANCE
-    assert (
-        governance_task.args_template["benchmark_run_id"]
-        == DEFAULT_GOVERNANCE_BENCHMARK_RUN_ID
-    )
+    assert governance_task.depends_on == ["benchmark.materialize_run"]
+    assert governance_task.args_template["benchmark_run_id"] == {
+        "from_task": "benchmark.materialize_run",
+        "detail_key": "run_id",
+    }
 
 
 def test_planned_task_args_template_defaults_to_empty_dict() -> None:
@@ -216,6 +273,72 @@ def test_governance_executor_materializes_outputs_via_execute_run_plan(
     ]
 
 
+def test_governance_executor_consumes_dynamic_benchmark_run_id_from_dependency(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    benchmark_result, governance_result = _run_benchmark_then_governance_chain(
+        project_root=project_root,
+        manifest="config/benchmark/validation_seed_v2_manifest.json",
+        dry_run=False,
+    )
+
+    assert benchmark_result.status == RunStatus.OK
+    assert governance_result.status == RunStatus.OK
+    assert governance_result.details["benchmark_run_id"] == benchmark_result.details[
+        "run_id"
+    ]
+    assert governance_result.details["source_run_id"] == benchmark_result.details[
+        "run_id"
+    ]
+
+
+def test_governance_blocks_when_benchmark_dependency_is_not_satisfied(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    task = PlannedTask(
+        task_id="governance.materialize_handoff",
+        phase=OrchestrationPhase.GOVERNANCE,
+        lab_id=None,
+        entrypoint="neotrade3.governance.runtime:run_governance_for_benchmark_run",
+        depends_on=["benchmark.materialize_run"],
+        outputs=["governance_handoff_artifact", "governance_handoff_ledger"],
+        requires_publish_status=False,
+        args_template={
+            "benchmark_run_id": {
+                "from_task": "benchmark.materialize_run",
+                "detail_key": "run_id",
+            }
+        },
+    )
+    plan = DailyRunPlan(
+        target_date=date(2026, 5, 19),
+        phases=[OrchestrationPhase.GOVERNANCE],
+        planned_tasks=[task],
+    )
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit",
+            "dry_run": True,
+        },
+    )
+
+    assert results[0].status == RunStatus.BLOCKED
+    assert "benchmark.materialize_run" in results[0].message
+
+
 def test_governance_executor_fails_for_missing_benchmark_run_id(tmp_path: Path) -> None:
     project_root = _prepare_project_root(tmp_path)
     _, result = _run_governance_task(
@@ -228,7 +351,7 @@ def test_governance_executor_fails_for_missing_benchmark_run_id(tmp_path: Path) 
     assert "missing_benchmark_run" in result.message
 
 
-def test_orchestrator_config_declares_governance_task_benchmark_run_id() -> None:
+def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:
     payload = json.loads(ORCHESTRATOR_CONFIG.read_text(encoding="utf-8"))
     governance_task = next(
         task
@@ -239,7 +362,8 @@ def test_orchestrator_config_declares_governance_task_benchmark_run_id() -> None
     assert payload["phases"][-1] == OrchestrationPhase.GOVERNANCE.value
     assert payload["phases"][-2] == OrchestrationPhase.BENCHMARK.value
     assert governance_task["phase"] == OrchestrationPhase.GOVERNANCE.value
-    assert (
-        governance_task["args_template"]["benchmark_run_id"]
-        == DEFAULT_GOVERNANCE_BENCHMARK_RUN_ID
-    )
+    assert governance_task["depends_on"] == ["benchmark.materialize_run"]
+    assert governance_task["args_template"]["benchmark_run_id"] == {
+        "from_task": "benchmark.materialize_run",
+        "detail_key": "run_id",
+    }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,66 @@ class DailyMasterOrchestrator:
             "phase_count": len(self.config.phases),
             "task_count": len(self.config.tasks),
             "enabled_lab_count": enabled_labs,
+        }
+
+    def _resolve_task_arg_value(
+        self,
+        *,
+        task: PlannedTask,
+        arg_name: str,
+        value: object,
+        dependency_results: dict[str, TaskResult],
+    ) -> object:
+        if not isinstance(value, dict):
+            return value
+        if "from_task" not in value and "detail_key" not in value:
+            return dict(value)
+
+        if set(value.keys()) != {"from_task", "detail_key"}:
+            raise ValueError(
+                f"invalid dynamic arg reference for {task.task_id}.{arg_name}"
+            )
+
+        from_task = str(value.get("from_task") or "").strip()
+        detail_key = str(value.get("detail_key") or "").strip()
+        if not from_task or not detail_key:
+            raise ValueError(
+                f"dynamic arg reference for {task.task_id}.{arg_name} must declare "
+                "non-empty from_task and detail_key"
+            )
+        if from_task not in task.depends_on:
+            raise ValueError(
+                f"dynamic arg reference for {task.task_id}.{arg_name} must reference "
+                "a declared dependency"
+            )
+
+        upstream_result = dependency_results.get(from_task)
+        if upstream_result is None:
+            raise ValueError(
+                f"dependency result not found for {task.task_id}.{arg_name}: "
+                f"{from_task}"
+            )
+        if detail_key not in upstream_result.details:
+            raise ValueError(
+                f"dependency detail not found for {task.task_id}.{arg_name}: "
+                f"{from_task}.{detail_key}"
+            )
+        return upstream_result.details[detail_key]
+
+    def _resolve_task_args_template(
+        self,
+        *,
+        task: PlannedTask,
+        dependency_results: dict[str, TaskResult],
+    ) -> dict[str, object]:
+        return {
+            key: self._resolve_task_arg_value(
+                task=task,
+                arg_name=key,
+                value=value,
+                dependency_results=dependency_results,
+            )
+            for key, value in task.args_template.items()
         }
 
     def build_placeholder_task_results(self, plan: DailyRunPlan) -> list[TaskResult]:
@@ -189,7 +250,8 @@ class DailyMasterOrchestrator:
                 completed_tasks[task.task_id] = blocked_result
                 continue
 
-            dep_results = [completed_tasks[dep] for dep in task.depends_on]
+            dependency_results = {dep: completed_tasks[dep] for dep in task.depends_on}
+            dep_results = list(dependency_results.values())
             non_ok_deps = [r for r in dep_results if r.status != RunStatus.OK]
             if non_ok_deps:
                 blocked_result = TaskResult(
@@ -221,7 +283,16 @@ class DailyMasterOrchestrator:
                 continue
 
             try:
-                result = executor(task, context)
+                resolved_task = replace(
+                    task,
+                    args_template=self._resolve_task_args_template(
+                        task=task,
+                        dependency_results=dependency_results,
+                    ),
+                )
+                execution_context = dict(context)
+                execution_context["dependency_results"] = dependency_results
+                result = executor(resolved_task, execution_context)
                 results.append(result)
                 completed_tasks[task.task_id] = result
             except Exception as e:

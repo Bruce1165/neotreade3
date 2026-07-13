@@ -119,9 +119,12 @@
       "phase": "governance",
       "entrypoint": "neotrade3.governance.runtime:run_governance_for_benchmark_run",
       "args_template": {
-        "benchmark_run_id": "validation_seed_v1_batch"
+        "benchmark_run_id": {
+          "from_task": "benchmark.materialize_run",
+          "detail_key": "run_id"
+        }
       },
-      "depends_on": [],
+      "depends_on": ["benchmark.materialize_run"],
       "requires_publish_status": false,
       "outputs": ["governance_handoff_artifact", "governance_handoff_ledger"],
       "failure_policy": "halt_run",
