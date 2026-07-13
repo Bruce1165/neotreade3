@@ -29,6 +29,19 @@ PATH_EXPERIMENT_VALIDATION = "P5_experiment_validation"
 PATH_HUMAN_ESCALATION = "P6_human_escalation"
 
 
+def _require_text(value: object, *, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return text
+
+
+def _require_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TypeError(f"{field_name} must be a JSON object")
+    return value
+
+
 def _copy_mapping(value: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -92,6 +105,52 @@ class DiagnosticChain:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "DiagnosticChain":
+        payload_mapping = _require_mapping(payload, field_name="diagnostic_chain")
+        return cls(
+            diagnostic_id=_require_text(
+                payload_mapping.get("diagnostic_id"),
+                field_name="diagnostic_id",
+            ),
+            symbol=_require_text(payload_mapping.get("symbol"), field_name="symbol"),
+            trade_date=_require_text(
+                payload_mapping.get("trade_date"),
+                field_name="trade_date",
+            ),
+            sample_bucket=_require_text(
+                payload_mapping.get("sample_bucket"),
+                field_name="sample_bucket",
+            ),
+            primary_root_layer=_require_text(
+                payload_mapping.get("primary_root_layer"),
+                field_name="primary_root_layer",
+            ),
+            secondary_layers=_copy_text_list(payload_mapping.get("secondary_layers")),
+            interaction_layers=_copy_text_list(payload_mapping.get("interaction_layers")),
+            problem_statement=_require_text(
+                payload_mapping.get("problem_statement"),
+                field_name="problem_statement",
+            ),
+            suspected_root_cause=_require_text(
+                payload_mapping.get("suspected_root_cause"),
+                field_name="suspected_root_cause",
+            ),
+            recommended_path=_require_text(
+                payload_mapping.get("recommended_path"),
+                field_name="recommended_path",
+            ),
+            source_gap_ids=_copy_text_list(payload_mapping.get("source_gap_ids")),
+            source_breach_ids=_copy_text_list(payload_mapping.get("source_breach_ids")),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            trace_id=str(payload_mapping.get("trace_id") or "").strip(),
+            benchmark_run_id=str(payload_mapping.get("benchmark_run_id") or "").strip(),
+            object_type=str(
+                payload_mapping.get("object_type", DIAGNOSTIC_CHAIN_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
+
 
 @dataclass(frozen=True)
 class ChangeRequest:
@@ -128,6 +187,48 @@ class ChangeRequest:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "ChangeRequest":
+        payload_mapping = _require_mapping(payload, field_name="change_request")
+        return cls(
+            cr_id=_require_text(payload_mapping.get("cr_id"), field_name="cr_id"),
+            diagnostic_id=_require_text(
+                payload_mapping.get("diagnostic_id"),
+                field_name="diagnostic_id",
+            ),
+            target_layer=_require_text(
+                payload_mapping.get("target_layer"),
+                field_name="target_layer",
+            ),
+            source_gap_ids=_copy_text_list(payload_mapping.get("source_gap_ids")),
+            problem_statement=_require_text(
+                payload_mapping.get("problem_statement"),
+                field_name="problem_statement",
+            ),
+            suspected_root_cause=_require_text(
+                payload_mapping.get("suspected_root_cause"),
+                field_name="suspected_root_cause",
+            ),
+            expected_improvement=_require_text(
+                payload_mapping.get("expected_improvement"),
+                field_name="expected_improvement",
+            ),
+            risk_scope=_require_text(
+                payload_mapping.get("risk_scope"),
+                field_name="risk_scope",
+            ),
+            priority=_require_text(payload_mapping.get("priority"), field_name="priority"),
+            requires_human_approval=bool(
+                payload_mapping.get("requires_human_approval")
+            ),
+            status=_require_text(payload_mapping.get("status"), field_name="status"),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            object_type=str(
+                payload_mapping.get("object_type", CHANGE_REQUEST_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
+
 
 @dataclass(frozen=True)
 class ExperimentRequest:
@@ -157,6 +258,37 @@ class ExperimentRequest:
             "object_type": self.object_type,
             "object_version": self.object_version,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "ExperimentRequest":
+        payload_mapping = _require_mapping(payload, field_name="experiment_request")
+        return cls(
+            experiment_id=_require_text(
+                payload_mapping.get("experiment_id"),
+                field_name="experiment_id",
+            ),
+            cr_id=_require_text(payload_mapping.get("cr_id"), field_name="cr_id"),
+            target_layer=_require_text(
+                payload_mapping.get("target_layer"),
+                field_name="target_layer",
+            ),
+            hypothesis=_require_text(
+                payload_mapping.get("hypothesis"),
+                field_name="hypothesis",
+            ),
+            expected_improvement=_require_text(
+                payload_mapping.get("expected_improvement"),
+                field_name="expected_improvement",
+            ),
+            guardrail_codes=_copy_text_list(payload_mapping.get("guardrail_codes")),
+            comparison_scope=_copy_mapping(payload_mapping.get("comparison_scope")),
+            status=_require_text(payload_mapping.get("status"), field_name="status"),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            object_type=str(
+                payload_mapping.get("object_type", EXPERIMENT_REQUEST_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
 
 
 @dataclass(frozen=True)
@@ -196,6 +328,53 @@ class AttentionItem:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "AttentionItem":
+        payload_mapping = _require_mapping(payload, field_name="attention_item")
+        return cls(
+            attention_id=_require_text(
+                payload_mapping.get("attention_id"),
+                field_name="attention_id",
+            ),
+            created_at=_require_text(
+                payload_mapping.get("created_at"),
+                field_name="created_at",
+            ),
+            source=_require_text(payload_mapping.get("source"), field_name="source"),
+            target_layer=_require_text(
+                payload_mapping.get("target_layer"),
+                field_name="target_layer",
+            ),
+            issue_type=_require_text(
+                payload_mapping.get("issue_type"),
+                field_name="issue_type",
+            ),
+            severity=_require_text(
+                payload_mapping.get("severity"),
+                field_name="severity",
+            ),
+            automation_class=_require_text(
+                payload_mapping.get("automation_class"),
+                field_name="automation_class",
+            ),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            recommended_action=_require_text(
+                payload_mapping.get("recommended_action"),
+                field_name="recommended_action",
+            ),
+            human_action_required=bool(payload_mapping.get("human_action_required")),
+            status=_require_text(payload_mapping.get("status"), field_name="status"),
+            owner=_require_text(payload_mapping.get("owner"), field_name="owner"),
+            blocking_scope=_require_text(
+                payload_mapping.get("blocking_scope"),
+                field_name="blocking_scope",
+            ),
+            object_type=str(
+                payload_mapping.get("object_type", ATTENTION_ITEM_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
+
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -228,6 +407,38 @@ class ValidationResult:
             "object_version": self.object_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "ValidationResult":
+        payload_mapping = _require_mapping(payload, field_name="validation_result")
+        return cls(
+            validation_id=_require_text(
+                payload_mapping.get("validation_id"),
+                field_name="validation_id",
+            ),
+            experiment_id=_require_text(
+                payload_mapping.get("experiment_id"),
+                field_name="experiment_id",
+            ),
+            baseline_run_id=_require_text(
+                payload_mapping.get("baseline_run_id"),
+                field_name="baseline_run_id",
+            ),
+            candidate_run_id=str(payload_mapping.get("candidate_run_id") or "").strip(),
+            outcome=_require_text(payload_mapping.get("outcome"), field_name="outcome"),
+            cleared_guardrail_codes=_copy_text_list(
+                payload_mapping.get("cleared_guardrail_codes")
+            ),
+            remaining_guardrail_codes=_copy_text_list(
+                payload_mapping.get("remaining_guardrail_codes")
+            ),
+            introduced_risk_count=int(payload_mapping.get("introduced_risk_count", 0)),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            object_type=str(
+                payload_mapping.get("object_type", VALIDATION_RESULT_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
+
 
 @dataclass(frozen=True)
 class PromotionBlocker:
@@ -255,6 +466,39 @@ class PromotionBlocker:
             "object_type": self.object_type,
             "object_version": self.object_version,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "PromotionBlocker":
+        payload_mapping = _require_mapping(payload, field_name="promotion_blocker")
+        return cls(
+            blocker_id=_require_text(
+                payload_mapping.get("blocker_id"),
+                field_name="blocker_id",
+            ),
+            diagnostic_id=_require_text(
+                payload_mapping.get("diagnostic_id"),
+                field_name="diagnostic_id",
+            ),
+            blocker_code=_require_text(
+                payload_mapping.get("blocker_code"),
+                field_name="blocker_code",
+            ),
+            severity=_require_text(
+                payload_mapping.get("severity"),
+                field_name="severity",
+            ),
+            reason=_require_text(payload_mapping.get("reason"), field_name="reason"),
+            required_clearance=_require_text(
+                payload_mapping.get("required_clearance"),
+                field_name="required_clearance",
+            ),
+            active=bool(payload_mapping.get("active")),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            object_type=str(
+                payload_mapping.get("object_type", PROMOTION_BLOCKER_OBJECT_TYPE)
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )
 
 
 @dataclass(frozen=True)
@@ -285,3 +529,49 @@ class GovernanceDecisionRecord:
             "object_type": self.object_type,
             "object_version": self.object_version,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "GovernanceDecisionRecord":
+        payload_mapping = _require_mapping(
+            payload,
+            field_name="governance_decision_record",
+        )
+        return cls(
+            decision_id=_require_text(
+                payload_mapping.get("decision_id"),
+                field_name="decision_id",
+            ),
+            subject_type=_require_text(
+                payload_mapping.get("subject_type"),
+                field_name="subject_type",
+            ),
+            subject_id=_require_text(
+                payload_mapping.get("subject_id"),
+                field_name="subject_id",
+            ),
+            decision=_require_text(
+                payload_mapping.get("decision"),
+                field_name="decision",
+            ),
+            decision_scope=_require_text(
+                payload_mapping.get("decision_scope"),
+                field_name="decision_scope",
+            ),
+            rationale=_require_text(
+                payload_mapping.get("rationale"),
+                field_name="rationale",
+            ),
+            approver=_require_text(
+                payload_mapping.get("approver"),
+                field_name="approver",
+            ),
+            status=_require_text(payload_mapping.get("status"), field_name="status"),
+            evidence_refs=_copy_mapping_list(payload_mapping.get("evidence_refs")),
+            object_type=str(
+                payload_mapping.get(
+                    "object_type",
+                    GOVERNANCE_DECISION_RECORD_OBJECT_TYPE,
+                )
+            ),
+            object_version=int(payload_mapping.get("object_version", M5_OBJECT_VERSION)),
+        )

@@ -201,6 +201,20 @@ def read_governance_handoff_artifact(
     return payload if isinstance(payload, dict) else None
 
 
+def read_governance_handoff_bundle(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+) -> GovernanceHandoffBundle | None:
+    payload = read_governance_handoff_artifact(
+        project_root=project_root,
+        source_run_id=source_run_id,
+    )
+    if payload is None:
+        return None
+    return GovernanceHandoffBundle.from_dict(payload)
+
+
 def list_governance_run_ledgers(
     *,
     project_root: str | Path,

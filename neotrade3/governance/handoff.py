@@ -37,6 +37,26 @@ def _copy_payload_list(objects: Sequence[Any]) -> list[dict[str, Any]]:
     return [item.to_payload() for item in objects]
 
 
+def _require_text(value: object, *, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return text
+
+
+def _mapping_list(value: Any, *, field_name: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TypeError(f"{field_name} must be a JSON array")
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise TypeError(f"{field_name} items must be JSON objects")
+        items.append(item)
+    return items
+
+
 @dataclass(frozen=True)
 class GovernanceHandoffBundle:
     source_run_id: str
@@ -69,6 +89,75 @@ class GovernanceHandoffBundle:
             "object_type": self.object_type,
             "object_version": self.object_version,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "GovernanceHandoffBundle":
+        if not isinstance(payload, dict):
+            raise TypeError("governance_handoff_bundle must be a JSON object")
+        return cls(
+            source_run_id=_require_text(
+                payload.get("source_run_id"),
+                field_name="source_run_id",
+            ),
+            source_layer=_require_text(
+                payload.get("source_layer"),
+                field_name="source_layer",
+            ),
+            diagnostics=tuple(
+                DiagnosticChain.from_dict(item)
+                for item in _mapping_list(payload.get("diagnostics"), field_name="diagnostics")
+            ),
+            change_requests=tuple(
+                ChangeRequest.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("change_requests"),
+                    field_name="change_requests",
+                )
+            ),
+            experiment_requests=tuple(
+                ExperimentRequest.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("experiment_requests"),
+                    field_name="experiment_requests",
+                )
+            ),
+            validation_results=tuple(
+                ValidationResult.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("validation_results"),
+                    field_name="validation_results",
+                )
+            ),
+            promotion_blockers=tuple(
+                PromotionBlocker.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("promotion_blockers"),
+                    field_name="promotion_blockers",
+                )
+            ),
+            attention_items=tuple(
+                AttentionItem.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("attention_items"),
+                    field_name="attention_items",
+                )
+            ),
+            decision_records=tuple(
+                GovernanceDecisionRecord.from_dict(item)
+                for item in _mapping_list(
+                    payload.get("decision_records"),
+                    field_name="decision_records",
+                )
+            ),
+            projected_assessment_count=int(payload.get("projected_assessment_count", 0)),
+            projected_issue_count=int(payload.get("projected_issue_count", 0)),
+            object_type=str(
+                payload.get("object_type", GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE)
+            ),
+            object_version=int(
+                payload.get("object_version", GOVERNANCE_HANDOFF_BUNDLE_OBJECT_VERSION)
+            ),
+        )
 
 
 def _empty_handoff_bundle(
