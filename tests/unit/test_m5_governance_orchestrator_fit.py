@@ -16,6 +16,8 @@ from neotrade3.governance.run_ledger import (
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
     read_governance_run_ledger,
+    read_governance_status_transition_artifact,
+    read_governance_status_transition_ledger,
 )
 from neotrade3.orchestration import (
     DailyMasterOrchestrator,
@@ -180,6 +182,53 @@ def _run_governance_reject_task(
             "target_date": date(2026, 5, 19),
             "project_root": str(project_root),
             "requested_by": "test.m5.governance.orchestrator_fit.reject",
+            "dry_run": dry_run,
+        },
+    )
+    return task, results[0]
+
+
+def _run_governance_status_transition_task(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    validation_id: str,
+    dry_run: bool,
+) -> tuple[PlannedTask, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    request = OnDemandTaskRequest(
+        target_date=date(2026, 5, 19),
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.status_transition",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint="neotrade3.governance.runtime:run_governance_status_transition",
+                args_template={
+                    "source_run_id": source_run_id,
+                    "validation_id": validation_id,
+                },
+                outputs=[
+                    "governance_status_transition_artifact",
+                    "governance_status_transition_ledger",
+                ],
+            )
+        ],
+    )
+    plan = orchestrator.build_on_demand_plan(request)
+    task = plan.planned_tasks[0]
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.status_transition",
             "dry_run": dry_run,
         },
     )
@@ -602,6 +651,143 @@ def test_governance_reject_executor_fails_for_missing_source_run_id(
 
     assert result.status == RunStatus.FAILED
     assert "source_run_id must be provided" in result.message
+
+
+def test_governance_status_transition_executor_dry_run_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )
+    _, result = _run_governance_status_transition_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=True,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["validation_id"] == "validation-final-reject"
+    assert result.details["source_run_id"] == run_id
+    assert result.details["effective_attention_status"] == "resolved"
+    assert result.details["effective_blocker_active"] is True
+    assert result.details["dry_run"] is True
+    assert not (project_root / result.artifact_refs[0]).exists()
+    assert not (project_root / result.artifact_refs[1]).exists()
+    assert (
+        read_governance_status_transition_artifact(
+            project_root=project_root,
+            validation_id="validation-final-reject",
+        )
+        is None
+    )
+    assert (
+        read_governance_status_transition_ledger(
+            project_root=project_root,
+            validation_id="validation-final-reject",
+        )
+        is None
+    )
+
+
+def test_governance_status_transition_executor_materializes_outputs_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    reject_result = _run_governance_reject_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )[1]
+    _, result = _run_governance_status_transition_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )
+
+    artifact_path = project_root / result.artifact_refs[0]
+    ledger_path = project_root / result.artifact_refs[1]
+    artifact_payload = read_governance_status_transition_artifact(
+        project_root=project_root,
+        validation_id="validation-final-reject",
+    )
+    ledger_record = read_governance_status_transition_ledger(
+        project_root=project_root,
+        validation_id="validation-final-reject",
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["validation_id"] == "validation-final-reject"
+    assert result.details["source_run_id"] == run_id
+    assert result.details["decision_id"] == reject_result.details["decision_id"]
+    assert result.details["effective_attention_status"] == "resolved"
+    assert result.details["effective_blocker_active"] is True
+    assert result.details["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert artifact_payload["validation_id"] == result.details["validation_id"]
+    assert artifact_payload["effective_attention_item"]["status"] == "resolved"
+    assert artifact_payload["effective_promotion_blocker"]["active"] is True
+    assert ledger_record.validation_id == result.details["validation_id"]
+    assert ledger_record.decision_id == result.details["decision_id"]
+    assert ledger_record.effective_attention_status == "resolved"
+    assert ledger_record.effective_blocker_active is True
+
+
+def test_governance_status_transition_executor_fails_for_missing_reject_proof(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _inject_rejected_validation(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+    )
+    _, result = _run_governance_status_transition_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        validation_id="validation-final-reject",
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "persisted governance reject execution not found" in result.message
 
 
 def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:

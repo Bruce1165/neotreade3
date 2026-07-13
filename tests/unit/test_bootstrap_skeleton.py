@@ -36,6 +36,8 @@ from neotrade3.governance.run_ledger import (
     materialize_governance_handoff,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
+    read_governance_status_transition_artifact,
+    read_governance_status_transition_ledger,
 )
 from neotrade3.issue_center import IssueCase, IssueCenterCollector, IssueSeverity
 from neotrade3.labs import LabRegistry, LabRuntimeAdapter
@@ -1692,6 +1694,56 @@ def test_worker_runs_governance_reject_on_demand(tmp_path: Path) -> None:
     assert reject_ledger.validation_id == validation_id
 
 
+def test_worker_runs_governance_status_transition_on_demand(tmp_path: Path) -> None:
+    project_root = _prepare_worker_project_root(tmp_path)
+    source_run_id, validation_id = _materialize_rejected_governance_input(project_root)
+    app = BootstrapWorkerApp(project_root=project_root)
+
+    app.run_governance_reject_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+        validation_id=validation_id,
+    )
+    snapshot = app.run_governance_status_transition_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+        validation_id=validation_id,
+    )
+
+    transition_artifact = read_governance_status_transition_artifact(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+    transition_ledger = read_governance_status_transition_ledger(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["target_date"] == "2026-05-19"
+    assert snapshot["summary"] == {
+        "planned_task_count": 1,
+        "executed_task_count": 1,
+        "ok_task_count": 1,
+    }
+    orchestration = snapshot["orchestration"]
+    assert orchestration["run_ledger"]["status"] == "ok"
+    assert orchestration["task_results"][0]["task_id"] == "governance.status_transition"
+    assert (
+        orchestration["task_results"][0]["details"]["validation_id"] == validation_id
+    )
+    assert (
+        orchestration["task_results"][0]["details"]["effective_attention_status"]
+        == "resolved"
+    )
+    assert transition_artifact is not None
+    assert transition_artifact["validation_id"] == validation_id
+    assert transition_artifact["effective_attention_item"]["status"] == "resolved"
+    assert transition_ledger is not None
+    assert transition_ledger.validation_id == validation_id
+    assert transition_ledger.effective_attention_status == "resolved"
+
+
 def test_worker_main_governance_reject_mode_returns_zero_for_ok_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1776,6 +1828,96 @@ def test_worker_main_governance_reject_mode_returns_nonzero_for_failed_snapshot(
             }
 
     monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _FailedRejectApp)
+
+    assert worker_main.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
+
+
+def test_worker_main_governance_status_transition_mode_returns_zero_for_ok_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {
+                "mode": "governance_status_transition",
+                "target_date": "2026-05-19",
+                "publish_succeeded": False,
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "validation-1",
+            },
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _OkTransitionApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run_governance_status_transition_on_demand(
+            self, *, target_date, source_run_id, validation_id, dry_run
+        ):
+            assert target_date.isoformat() == "2026-05-19"
+            assert source_run_id == "benchmark-run-1"
+            assert validation_id == "validation-1"
+            assert dry_run is True
+            return {
+                "status": "ok",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _OkTransitionApp)
+
+    assert worker_main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+
+
+def test_worker_main_governance_status_transition_mode_returns_nonzero_for_failed_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {
+                "mode": "governance_status_transition",
+                "target_date": "2026-05-19",
+                "publish_succeeded": False,
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "missing-validation",
+            },
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _FailedTransitionApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run_governance_status_transition_on_demand(
+            self, *, target_date, source_run_id, validation_id, dry_run
+        ):
+            return {
+                "status": "failed",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _FailedTransitionApp)
 
     assert worker_main.main() == 1
     payload = json.loads(capsys.readouterr().out)
