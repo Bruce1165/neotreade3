@@ -37,6 +37,7 @@ from neotrade3.governance import (
     build_governance_decision_record,
     build_pending_validation_result_from_experiment_request,
     build_promotion_blocker_from_diagnostic,
+    build_reject_decision_record_from_validation_result,
     build_validation_result,
 )
 
@@ -351,3 +352,50 @@ def test_block_decision_record_from_promotion_blocker_projects_payload() -> None
     assert decision.decision_scope == "promotion"
     assert decision.approver == "system_governance"
     assert decision.status == "recorded"
+
+
+def test_reject_decision_record_from_validation_result_projects_payload() -> None:
+    validation_result = build_validation_result(
+        validation_id="validation-1",
+        experiment_id="experiment-1",
+        baseline_run_id="baseline-run",
+        candidate_run_id="candidate-run",
+        outcome="rejected",
+        introduced_risk_count=2,
+        cleared_guardrail_codes=[],
+        remaining_guardrail_codes=[GUARDRAIL_CODE_LOCAL_GLOBAL_END],
+        evidence_refs=[{"kind": "validation_result"}],
+    )
+
+    decision = build_reject_decision_record_from_validation_result(
+        validation_result=validation_result
+    )
+
+    assert decision.decision_id == "validation-1:decision"
+    assert decision.subject_type == "validation_result"
+    assert decision.subject_id == validation_result.validation_id
+    assert decision.decision == "reject"
+    assert decision.decision_scope == "promotion"
+    assert decision.rationale == "validation outcome rejected"
+    assert decision.approver == "system_governance"
+    assert decision.status == "recorded"
+    assert decision.evidence_refs == [{"kind": "validation_result"}]
+
+
+def test_reject_decision_record_rejects_non_rejected_outcome() -> None:
+    validation_result = build_validation_result(
+        validation_id="validation-2",
+        experiment_id="experiment-1",
+        baseline_run_id="baseline-run",
+        candidate_run_id="candidate-run",
+        outcome="passed",
+        introduced_risk_count=0,
+        cleared_guardrail_codes=[GUARDRAIL_CODE_LOCAL_GLOBAL_END],
+        remaining_guardrail_codes=[],
+        evidence_refs=[],
+    )
+
+    with pytest.raises(ValueError, match="validation_result.outcome must be rejected"):
+        build_reject_decision_record_from_validation_result(
+            validation_result=validation_result
+        )

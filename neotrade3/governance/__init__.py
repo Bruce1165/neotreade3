@@ -13,6 +13,7 @@ from .assembler import (
     build_pending_validation_result_from_experiment_request,
     build_promotion_blocker,
     build_promotion_blocker_from_diagnostic,
+    build_reject_decision_record_from_validation_result,
     build_validation_result,
 )
 from .contracts import (
@@ -97,5 +98,6 @@ __all__ = [
     "build_pending_validation_result_from_experiment_request",
     "build_promotion_blocker",
     "build_promotion_blocker_from_diagnostic",
+    "build_reject_decision_record_from_validation_result",
     "build_validation_result",
 ]

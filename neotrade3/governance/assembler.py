@@ -315,6 +315,25 @@ def build_block_decision_record_from_promotion_blocker(
     )
 
 
+def build_reject_decision_record_from_validation_result(
+    *,
+    validation_result: ValidationResult,
+) -> GovernanceDecisionRecord:
+    if validation_result.outcome != "rejected":
+        raise ValueError("validation_result.outcome must be rejected")
+    return build_governance_decision_record(
+        decision_id=f"{validation_result.validation_id}:decision",
+        subject_type="validation_result",
+        subject_id=validation_result.validation_id,
+        decision="reject",
+        decision_scope="promotion",
+        rationale="validation outcome rejected",
+        approver="system_governance",
+        status="recorded",
+        evidence_refs=validation_result.evidence_refs,
+    )
+
+
 def build_b4_local_global_guardrail_diagnostic(
     *,
     gap_records: Sequence[GapRecord],
