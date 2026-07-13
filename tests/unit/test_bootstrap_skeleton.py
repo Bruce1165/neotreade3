@@ -1178,10 +1178,14 @@ def test_orchestration_run_view_uses_worker_runtime_and_writes_wrapper_files(
             "orchestration": {
                 "task_results": [
                     {
-                        "task_id": "data_control.publish",
-                        "phase": "data_pipeline",
+                        "task_id": "governance.materialize_handoff",
+                        "phase": "governance",
                         "status": "ok",
-                        "message": "publish ok",
+                        "message": "governance handoff ok",
+                        "details": {
+                            "validation_result_count": 2,
+                            "decision_record_count": 1,
+                        },
                         "artifact_refs": [],
                     }
                 ]
@@ -1217,7 +1221,9 @@ def test_orchestration_run_view_uses_worker_runtime_and_writes_wrapper_files(
     assert payload["_meta"]["status"] == "ok"
     assert payload["orchestrator_run"]["publish_succeeded"] is True
     assert ledger_payload["publish_succeeded"] is True
-    assert artifact_payload["tasks"][0]["task_id"] == "data_control.publish"
+    assert artifact_payload["tasks"][0]["task_id"] == "governance.materialize_handoff"
+    assert artifact_payload["tasks"][0]["details"]["validation_result_count"] == 2
+    assert artifact_payload["tasks"][0]["details"]["decision_record_count"] == 1
 
 
 def test_orchestration_run_view_uses_governance_reject_worker_runtime(

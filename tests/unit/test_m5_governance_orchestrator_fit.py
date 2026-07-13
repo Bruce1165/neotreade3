@@ -326,7 +326,9 @@ def test_governance_executor_dry_run_via_execute_run_plan(tmp_path: Path) -> Non
     assert result.status == RunStatus.OK
     assert result.details["source_run_id"] == run_id
     assert result.details["source_layer"] == "M4"
+    assert isinstance(result.details["validation_result_count"], int)
     assert result.details["attention_item_count"] == 1
+    assert isinstance(result.details["decision_record_count"], int)
     assert result.details["dry_run"] is True
     assert result.details["benchmark_run_id"] == run_id
     assert not (project_root / result.artifact_refs[0]).exists()
@@ -373,6 +375,8 @@ def test_governance_executor_materializes_outputs_via_execute_run_plan(
     assert result.details["source_run_id"] == run_id
     assert result.details["source_layer"] == "M4"
     assert result.details["attention_item_count"] == 0
+    assert result.details["validation_result_count"] == ledger_record.validation_result_count
+    assert result.details["decision_record_count"] == ledger_record.decision_record_count
     assert result.details["dry_run"] is False
     assert result.details["benchmark_run_id"] == run_id
     assert artifact_path.exists()
@@ -388,7 +392,9 @@ def test_governance_executor_materializes_outputs_via_execute_run_plan(
     assert artifact_payload["projected_assessment_count"] == result.details[
         "projected_assessment_count"
     ]
+    assert len(artifact_payload["validation_results"]) == result.details["validation_result_count"]
     assert len(artifact_payload["attention_items"]) == result.details["attention_item_count"]
+    assert len(artifact_payload["decision_records"]) == result.details["decision_record_count"]
 
 
 def test_governance_executor_consumes_dynamic_benchmark_run_id_from_dependency(
