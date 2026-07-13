@@ -66,7 +66,9 @@
 - `var/ledgers/bootstrap_runs/<date>/` 与 `var/artifacts/bootstrap_runs/<date>/` 是当前 bootstrap 主事实源。
 - `var/ledgers/orchestration_runs/<date>/` 与 `var/artifacts/orchestration_runs/<date>/` 现在是 API 为兼容 orchestration 运行记录读取链路而写出的投影产物，不是独立执行源。
 - `var/ledgers/lab_runs/<date>/` 与 `var/artifacts/lab_runs/<date>/` 现在是 API 为兼容既有 lab 结果读取链路而补写的投影产物，不是独立执行源。
+- `M5 candidate validation outcome` 已完成 `runtime -> CLI -> worker -> API` 闭环；当前显式输入 contract 固定为 `source_run_id` 与 `validation_result`，且仍属于 on-demand 触发面，不属于 `daily` scheduled task。
 - `M5 governance status transition` 已完成 `runtime -> CLI -> worker -> API` 闭环；当前属于 on-demand 触发面，不属于 `daily` scheduled task。
+- `M5 governance reject execution` 与 `status transition` 当前已消费 persisted `candidate validation outcome` truth，不再依赖 handoff payload 直接承载最终 validation 结论。
 - snapshot 根字段 `publish_succeeded` 表示本次运行的实际 publish 结果；`requested_publish_succeeded` 保留请求侧传入的 planning hint。
 - `apps/dashboard/main.py` 已退役，当前会返回 `410 Gone`；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
 
@@ -376,6 +378,15 @@
     - `apps/worker/main.py`
     - `config/orchestrator/daily_master_orchestrator.json`
   - `M5` 当前已在 worker/orchestrator 中注册显式 `GOVERNANCE` 阶段，且 `PlannedTask.args_template` 可透传到执行面。
+  - `M5` 已完成 candidate validation outcome 的独立真值面与外部触发面：
+    - persisted truth 位于 `governance_candidate_validations` 独立命名空间
+    - governance CLI 已支持 `candidate-validation-outcome`
+    - worker 已支持 `--mode governance_candidate_validation_outcome`
+    - API 已支持 `mode="governance_candidate_validation_outcome"`
+  - `M5 candidate validation outcome` 当前显式输入 contract 固定为：
+    - `source_run_id`
+    - `validation_result`
+  - `M5` 下游 `reject_execution` 与 `status_transition` 当前已消费 persisted outcome truth。
   - `M5` 已完成上游真值切换基线：
     - shared runtime 不再重跑 benchmark manifest
     - governance CLI 改为显式接收 `benchmark_run_id`
@@ -392,9 +403,11 @@
   - 当前必须明确的边界：
     - `M4` 仍是 validation-seed benchmark 基线，不等于完整 benchmark 层
     - `M5` 仍是治理接线基线，不等于完整 validation/promotion/reject 闭环
+    - `M5 candidate validation outcome` 当前仍是 on-demand trigger surface，不等于 scheduler-facing selection semantics 或 `daily` scheduled adoption
     - `M3 backhalf` 当前 formal object/owner 已补齐，但下游消费面与状态文档此前存在滞后，不应再把 `decision_lifecycle_log` 和局部/全局退出显式语义记为未完成
   - 当前最直接下一步：
-    - 先推进 `M5 mainline`，优先收口 `persisted M4 benchmark run -> M5 governance handoff materialization`
+    - 先审计 `scheduler-facing candidate-validation selection/projection semantics` 的最小 owner，明确谁来提供 final validation truth
+    - 在 formal owner 冻结前，不把 `candidate_validation_outcome` 注册成 `daily` scheduled task
     - 之后再推进 `M5` 完整闭环对象、`M4` 完整 benchmark、version unification、`M6 Delivery Ready`
 
 ## 文档一致性说明
@@ -407,8 +420,9 @@
   - `M3 backhalf` 已完成 position snapshot production carrier、hold/exit formal bridge、局部/全局退出显式语义与 `decision_lifecycle_log` nucleus
   - `M4` 已具备 mainline runner、artifact/ledger 与 typed readback 基线
   - `M5` 已具备 contract/handoff/persistence/ledger/runtime/orchestrator-fit 基线，且上游真值已切到 persisted `M4`
+  - `M5 candidate validation outcome` 已完成 persisted truth materialization 与 `runtime -> CLI -> worker -> API` trigger adoption，但仍未进入 scheduler-facing selection semantics 与 `daily` scheduled adoption
 - 下一步第一件事：
-  - 先推进 `M5 mainline` 的最窄正式闭环，优先收口 `persisted M4 benchmark run -> M5 governance handoff materialization`
+  - 先审计 `scheduler-facing candidate-validation selection/projection semantics` 的最小 formal owner，避免在证据不足时把 `candidate_validation_outcome` 误写成自动调度能力
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
