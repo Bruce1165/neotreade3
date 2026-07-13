@@ -38,6 +38,10 @@ def _require_text(value: str, field_name: str) -> str:
     return text
 
 
+def _optional_text(value: str) -> str:
+    return str(value or "").strip()
+
+
 def _normalize_text_list(values: Iterable[str] | None) -> list[str]:
     if values is None:
         return []
@@ -174,12 +178,19 @@ def build_validation_result(
     remaining_guardrail_codes: Sequence[str] | None = None,
     evidence_refs: Sequence[dict[str, Any]] | None = None,
 ) -> ValidationResult:
+    normalized_outcome = _require_text(outcome, "outcome")
+    normalized_candidate_run_id = _optional_text(candidate_run_id)
+    if (
+        not normalized_candidate_run_id
+        and normalized_outcome != "awaiting_candidate_validation"
+    ):
+        raise ValueError("candidate_run_id must not be empty")
     return ValidationResult(
         validation_id=_require_text(validation_id, "validation_id"),
         experiment_id=_require_text(experiment_id, "experiment_id"),
         baseline_run_id=_require_text(baseline_run_id, "baseline_run_id"),
-        candidate_run_id=_require_text(candidate_run_id, "candidate_run_id"),
-        outcome=_require_text(outcome, "outcome"),
+        candidate_run_id=normalized_candidate_run_id,
+        outcome=normalized_outcome,
         cleared_guardrail_codes=_normalize_text_list(cleared_guardrail_codes),
         remaining_guardrail_codes=_normalize_text_list(remaining_guardrail_codes),
         introduced_risk_count=int(introduced_risk_count),
@@ -232,6 +243,41 @@ def build_governance_decision_record(
         approver=_require_text(approver, "approver"),
         status=_require_text(status, "status"),
         evidence_refs=_normalize_evidence_refs(evidence_refs),
+    )
+
+
+def build_pending_validation_result_from_experiment_request(
+    *,
+    experiment_request: ExperimentRequest,
+    baseline_run_id: str,
+) -> ValidationResult:
+    return build_validation_result(
+        validation_id=f"{experiment_request.experiment_id}:validation",
+        experiment_id=experiment_request.experiment_id,
+        baseline_run_id=baseline_run_id,
+        candidate_run_id="",
+        outcome="awaiting_candidate_validation",
+        introduced_risk_count=0,
+        cleared_guardrail_codes=[],
+        remaining_guardrail_codes=experiment_request.guardrail_codes,
+        evidence_refs=experiment_request.evidence_refs,
+    )
+
+
+def build_block_decision_record_from_promotion_blocker(
+    *,
+    blocker: PromotionBlocker,
+) -> GovernanceDecisionRecord:
+    return build_governance_decision_record(
+        decision_id=f"{blocker.blocker_id}:decision",
+        subject_type="promotion_blocker",
+        subject_id=blocker.blocker_id,
+        decision="block",
+        decision_scope="promotion",
+        rationale=blocker.reason,
+        approver="system_governance",
+        status="recorded",
+        evidence_refs=blocker.evidence_refs,
     )
 
 

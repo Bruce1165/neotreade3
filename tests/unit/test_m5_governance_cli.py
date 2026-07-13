@@ -164,13 +164,23 @@ def test_governance_cli_main_materializes_outputs(tmp_path: Path) -> None:
     assert ledger_record.change_request_count == payload["change_request_count"]
     assert ledger_record.experiment_request_count == payload["experiment_request_count"]
     assert (
+        ledger_record.validation_result_count
+        == payload["validation_result_count"]
+    )
+    assert (
         ledger_record.promotion_blocker_count
         == payload["promotion_blocker_count"]
+    )
+    assert (
+        ledger_record.decision_record_count
+        == payload["decision_record_count"]
     )
     assert artifact_payload["source_run_id"] == payload["source_run_id"]
     assert artifact_payload["projected_assessment_count"] == payload[
         "projected_assessment_count"
     ]
+    assert len(artifact_payload["validation_results"]) == payload["validation_result_count"]
+    assert len(artifact_payload["decision_records"]) == payload["decision_record_count"]
 
 
 def test_governance_cli_main_raises_for_missing_benchmark_artifact(

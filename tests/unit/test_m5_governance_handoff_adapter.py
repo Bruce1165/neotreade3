@@ -202,11 +202,18 @@ def test_assessment_handoff_projects_full_b4_governance_chain() -> None:
     assert len(payload["diagnostics"]) == 1
     assert len(payload["change_requests"]) == 1
     assert len(payload["experiment_requests"]) == 1
+    assert len(payload["validation_results"]) == 1
     assert len(payload["promotion_blockers"]) == 1
+    assert len(payload["decision_records"]) == 1
     assert (
         payload["promotion_blockers"][0]["blocker_code"]
         == GUARDRAIL_CODE_LOCAL_GLOBAL_END
     )
+    assert payload["validation_results"][0]["candidate_run_id"] == ""
+    assert payload["validation_results"][0]["outcome"] == (
+        "awaiting_candidate_validation"
+    )
+    assert payload["decision_records"][0]["decision"] == "block"
 
 
 def test_assessment_handoff_returns_zero_projection_when_b4_is_clean() -> None:
@@ -225,7 +232,9 @@ def test_assessment_handoff_returns_zero_projection_when_b4_is_clean() -> None:
     assert bundle.diagnostics == ()
     assert bundle.change_requests == ()
     assert bundle.experiment_requests == ()
+    assert bundle.validation_results == ()
     assert bundle.promotion_blockers == ()
+    assert bundle.decision_records == ()
 
 
 def test_batch_handoff_preserves_deterministic_projection_order() -> None:
@@ -263,7 +272,9 @@ def test_batch_handoff_preserves_deterministic_projection_order() -> None:
     assert [item["symbol"] for item in payload["diagnostics"]] == ["600000", "600001"]
     assert len(payload["change_requests"]) == 2
     assert len(payload["experiment_requests"]) == 2
+    assert len(payload["validation_results"]) == 2
     assert len(payload["promotion_blockers"]) == 2
+    assert len(payload["decision_records"]) == 2
 
 
 def test_handoff_payload_is_defensively_copied() -> None:

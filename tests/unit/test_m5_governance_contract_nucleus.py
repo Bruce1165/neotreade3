@@ -29,9 +29,11 @@ from neotrade3.governance import (
     ROOT_LAYER_INTERACTION,
     VALIDATION_RESULT_OBJECT_TYPE,
     build_b4_local_global_guardrail_diagnostic,
+    build_block_decision_record_from_promotion_blocker,
     build_change_request_from_diagnostic,
     build_experiment_request_from_change_request,
     build_governance_decision_record,
+    build_pending_validation_result_from_experiment_request,
     build_promotion_blocker_from_diagnostic,
     build_validation_result,
 )
@@ -210,6 +212,40 @@ def test_governance_builders_reject_empty_ids() -> None:
         )
 
 
+def test_pending_validation_result_allows_empty_candidate_only_for_pending_outcome() -> None:
+    assessment = _build_b4_failing_assessment()
+    diagnostic = build_b4_local_global_guardrail_diagnostic(
+        gap_records=assessment.gap_records,
+        trace_bundle=assessment.trace_bundle,
+        interaction_guardrail_breaches=assessment.interaction_guardrail_breaches,
+    )
+    experiment = build_experiment_request_from_change_request(
+        change_request=build_change_request_from_diagnostic(diagnostic=diagnostic)
+    )
+
+    pending = build_pending_validation_result_from_experiment_request(
+        experiment_request=experiment,
+        baseline_run_id=assessment.trace_bundle.benchmark_run_id,
+    )
+
+    assert pending.candidate_run_id == ""
+    assert pending.outcome == "awaiting_candidate_validation"
+    assert pending.remaining_guardrail_codes == [GUARDRAIL_CODE_LOCAL_GLOBAL_END]
+
+    with pytest.raises(ValueError, match="candidate_run_id must not be empty"):
+        build_validation_result(
+            validation_id="validation-2",
+            experiment_id=experiment.experiment_id,
+            baseline_run_id=assessment.trace_bundle.benchmark_run_id,
+            candidate_run_id="",
+            outcome="passed",
+            introduced_risk_count=0,
+            cleared_guardrail_codes=[],
+            remaining_guardrail_codes=[],
+            evidence_refs=[],
+        )
+
+
 def test_build_b4_local_global_guardrail_diagnostic_projects_formal_truth() -> None:
     assessment = _build_b4_failing_assessment()
 
@@ -229,13 +265,12 @@ def test_build_b4_local_global_guardrail_diagnostic_projects_formal_truth() -> N
     assert payload["source_breach_ids"]
     assert payload["source_gap_ids"]
     assert payload["benchmark_run_id"] == assessment.trace_bundle.benchmark_run_id
-    assert GUARDRAIL_CODE_LOCAL_GLOBAL_END in [
-        ref.get("guardrail_code", "") for ref in payload["evidence_refs"]
-    ]
     assert any(
-        ref.get("gap_label") == GAP_LABEL_LOCAL_GLOBAL_MISREAD
+        ref.get("object_type") == "cycle_linkage_state"
+        and ref.get("field") == "supports_continuation"
         for ref in payload["evidence_refs"]
     )
+    assert any(GAP_LABEL_LOCAL_GLOBAL_MISREAD in gap_id for gap_id in payload["source_gap_ids"])
 
 
 def test_build_change_request_and_blocker_from_b4_diagnostic() -> None:
@@ -259,3 +294,22 @@ def test_build_change_request_and_blocker_from_b4_diagnostic() -> None:
     assert blocker.blocker_code == GUARDRAIL_CODE_LOCAL_GLOBAL_END
     assert blocker.active is True
     assert experiment.guardrail_codes == [GUARDRAIL_CODE_LOCAL_GLOBAL_END]
+
+
+def test_block_decision_record_from_promotion_blocker_projects_payload() -> None:
+    assessment = _build_b4_failing_assessment()
+    diagnostic = build_b4_local_global_guardrail_diagnostic(
+        gap_records=assessment.gap_records,
+        trace_bundle=assessment.trace_bundle,
+        interaction_guardrail_breaches=assessment.interaction_guardrail_breaches,
+    )
+    blocker = build_promotion_blocker_from_diagnostic(diagnostic=diagnostic)
+
+    decision = build_block_decision_record_from_promotion_blocker(blocker=blocker)
+
+    assert decision.subject_type == "promotion_blocker"
+    assert decision.subject_id == blocker.blocker_id
+    assert decision.decision == "block"
+    assert decision.decision_scope == "promotion"
+    assert decision.approver == "system_governance"
+    assert decision.status == "recorded"

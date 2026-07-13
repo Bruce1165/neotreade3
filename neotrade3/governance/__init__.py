@@ -1,6 +1,7 @@
 """Formal M5 governance objects and pure builders."""
 
 from .assembler import (
+    build_block_decision_record_from_promotion_blocker,
     build_b4_local_global_guardrail_diagnostic,
     build_change_request,
     build_change_request_from_diagnostic,
@@ -8,6 +9,7 @@ from .assembler import (
     build_experiment_request,
     build_experiment_request_from_change_request,
     build_governance_decision_record,
+    build_pending_validation_result_from_experiment_request,
     build_promotion_blocker,
     build_promotion_blocker_from_diagnostic,
     build_validation_result,
@@ -77,6 +79,7 @@ __all__ = [
     "PromotionBlocker",
     "ValidationResult",
     "build_b4_local_global_guardrail_diagnostic",
+    "build_block_decision_record_from_promotion_blocker",
     "build_change_request",
     "build_change_request_from_diagnostic",
     "build_diagnostic_chain",
@@ -85,6 +88,7 @@ __all__ = [
     "build_governance_handoff_from_assessment",
     "build_governance_handoff_from_batch_run",
     "build_governance_decision_record",
+    "build_pending_validation_result_from_experiment_request",
     "build_promotion_blocker",
     "build_promotion_blocker_from_diagnostic",
     "build_validation_result",

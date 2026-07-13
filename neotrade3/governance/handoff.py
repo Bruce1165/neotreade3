@@ -10,16 +10,20 @@ from neotrade3.benchmark.batch_runner import BenchmarkBatchRunResult
 from neotrade3.benchmark.contracts import BenchmarkAssessmentResult
 
 from .assembler import (
+    build_block_decision_record_from_promotion_blocker,
     build_b4_local_global_guardrail_diagnostic,
     build_change_request_from_diagnostic,
     build_experiment_request_from_change_request,
+    build_pending_validation_result_from_experiment_request,
     build_promotion_blocker_from_diagnostic,
 )
 from .contracts import (
     ChangeRequest,
     DiagnosticChain,
     ExperimentRequest,
+    GovernanceDecisionRecord,
     PromotionBlocker,
+    ValidationResult,
 )
 
 GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE = "governance_handoff_bundle"
@@ -38,7 +42,9 @@ class GovernanceHandoffBundle:
     diagnostics: tuple[DiagnosticChain, ...] = ()
     change_requests: tuple[ChangeRequest, ...] = ()
     experiment_requests: tuple[ExperimentRequest, ...] = ()
+    validation_results: tuple[ValidationResult, ...] = ()
     promotion_blockers: tuple[PromotionBlocker, ...] = ()
+    decision_records: tuple[GovernanceDecisionRecord, ...] = ()
     projected_assessment_count: int = 0
     projected_issue_count: int = 0
     object_type: str = GOVERNANCE_HANDOFF_BUNDLE_OBJECT_TYPE
@@ -51,7 +57,9 @@ class GovernanceHandoffBundle:
             "diagnostics": _copy_payload_list(self.diagnostics),
             "change_requests": _copy_payload_list(self.change_requests),
             "experiment_requests": _copy_payload_list(self.experiment_requests),
+            "validation_results": _copy_payload_list(self.validation_results),
             "promotion_blockers": _copy_payload_list(self.promotion_blockers),
+            "decision_records": _copy_payload_list(self.decision_records),
             "projected_assessment_count": int(self.projected_assessment_count),
             "projected_issue_count": int(self.projected_issue_count),
             "object_type": self.object_type,
@@ -103,8 +111,15 @@ def build_governance_handoff_from_assessment(
     experiment_request = build_experiment_request_from_change_request(
         change_request=change_request
     )
+    validation_result = build_pending_validation_result_from_experiment_request(
+        experiment_request=experiment_request,
+        baseline_run_id=source_run_id,
+    )
     promotion_blocker = build_promotion_blocker_from_diagnostic(
         diagnostic=diagnostic
+    )
+    decision_record = build_block_decision_record_from_promotion_blocker(
+        blocker=promotion_blocker
     )
     return GovernanceHandoffBundle(
         source_run_id=source_run_id,
@@ -112,7 +127,9 @@ def build_governance_handoff_from_assessment(
         diagnostics=(diagnostic,),
         change_requests=(change_request,),
         experiment_requests=(experiment_request,),
+        validation_results=(validation_result,),
         promotion_blockers=(promotion_blocker,),
+        decision_records=(decision_record,),
         projected_assessment_count=1,
         projected_issue_count=1,
     )
@@ -125,14 +142,18 @@ def build_governance_handoff_from_batch_run(
     diagnostics: list[DiagnosticChain] = []
     change_requests: list[ChangeRequest] = []
     experiment_requests: list[ExperimentRequest] = []
+    validation_results: list[ValidationResult] = []
     promotion_blockers: list[PromotionBlocker] = []
+    decision_records: list[GovernanceDecisionRecord] = []
 
     for assessment in batch_result.results:
         bundle = build_governance_handoff_from_assessment(assessment=assessment)
         diagnostics.extend(bundle.diagnostics)
         change_requests.extend(bundle.change_requests)
         experiment_requests.extend(bundle.experiment_requests)
+        validation_results.extend(bundle.validation_results)
         promotion_blockers.extend(bundle.promotion_blockers)
+        decision_records.extend(bundle.decision_records)
 
     return GovernanceHandoffBundle(
         source_run_id=str(batch_result.run_id or "").strip(),
@@ -140,7 +161,9 @@ def build_governance_handoff_from_batch_run(
         diagnostics=tuple(diagnostics),
         change_requests=tuple(change_requests),
         experiment_requests=tuple(experiment_requests),
+        validation_results=tuple(validation_results),
         promotion_blockers=tuple(promotion_blockers),
+        decision_records=tuple(decision_records),
         projected_assessment_count=len(batch_result.results),
         projected_issue_count=len(diagnostics),
     )

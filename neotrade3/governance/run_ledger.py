@@ -27,7 +27,9 @@ class GovernanceRunLedgerRecord:
     diagnostic_count: int = 0
     change_request_count: int = 0
     experiment_request_count: int = 0
+    validation_result_count: int = 0
     promotion_blocker_count: int = 0
+    decision_record_count: int = 0
 
     @classmethod
     def from_dict(cls, payload: Any) -> "GovernanceRunLedgerRecord":
@@ -47,7 +49,9 @@ class GovernanceRunLedgerRecord:
             diagnostic_count=int(payload.get("diagnostic_count", 0)),
             change_request_count=int(payload.get("change_request_count", 0)),
             experiment_request_count=int(payload.get("experiment_request_count", 0)),
+            validation_result_count=int(payload.get("validation_result_count", 0)),
             promotion_blocker_count=int(payload.get("promotion_blocker_count", 0)),
+            decision_record_count=int(payload.get("decision_record_count", 0)),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -63,7 +67,9 @@ class GovernanceRunLedgerRecord:
             "diagnostic_count": self.diagnostic_count,
             "change_request_count": self.change_request_count,
             "experiment_request_count": self.experiment_request_count,
+            "validation_result_count": self.validation_result_count,
             "promotion_blocker_count": self.promotion_blocker_count,
+            "decision_record_count": self.decision_record_count,
         }
 
 
@@ -117,7 +123,9 @@ def write_governance_run_ledger(
         "diagnostic_count": len(bundle.diagnostics),
         "change_request_count": len(bundle.change_requests),
         "experiment_request_count": len(bundle.experiment_requests),
+        "validation_result_count": len(bundle.validation_results),
         "promotion_blocker_count": len(bundle.promotion_blockers),
+        "decision_record_count": len(bundle.decision_records),
     }
 
     if not dry_run:

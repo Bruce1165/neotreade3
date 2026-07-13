@@ -57,7 +57,9 @@ def test_materialize_governance_handoff_persists_ledger_and_artifact(
     assert record.diagnostic_count == len(bundle.diagnostics)
     assert record.change_request_count == len(bundle.change_requests)
     assert record.experiment_request_count == len(bundle.experiment_requests)
+    assert record.validation_result_count == len(bundle.validation_results)
     assert record.promotion_blocker_count == len(bundle.promotion_blockers)
+    assert record.decision_record_count == len(bundle.decision_records)
     assert (
         tmp_path / record.ledger_path
     ).exists()
