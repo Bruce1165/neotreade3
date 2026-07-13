@@ -1324,11 +1324,13 @@ class BootstrapApiService:
         self,
         *,
         target_date: str,
+        mode: str = "daily",
         publish_succeeded: bool,
         requested_by: str,
         dry_run: bool = False,
+        source_run_id: str | None = None,
+        validation_id: str | None = None,
     ) -> dict[str, Any]:
-        self.require_trading_day(target_date=target_date)
         if not requested_by.strip():
             raise ApiError(
                 status_code=HTTPStatus.BAD_REQUEST,
@@ -1337,19 +1339,32 @@ class BootstrapApiService:
             )
 
         target_date_obj = date.fromisoformat(target_date)
-        snapshot = self.worker_app.run(
-            target_date=target_date_obj,
-            publish_succeeded=bool(publish_succeeded),
-            write_outputs=False,
-            requested_by=requested_by.strip(),
-            dry_run=dry_run,
-        )
-        self._materialize_lab_runs_from_snapshot(
-            snapshot=snapshot,
-            target_date=target_date,
-            requested_by=requested_by.strip(),
-            dry_run=dry_run,
-        )
+        normalized_mode = mode.strip().lower()
+        if normalized_mode == "daily":
+            self.require_trading_day(target_date=target_date)
+            snapshot = self.worker_app.run(
+                target_date=target_date_obj,
+                publish_succeeded=bool(publish_succeeded),
+                write_outputs=False,
+                requested_by=requested_by.strip(),
+                dry_run=dry_run,
+            )
+            self._materialize_lab_runs_from_snapshot(
+                snapshot=snapshot,
+                target_date=target_date,
+                requested_by=requested_by.strip(),
+                dry_run=dry_run,
+            )
+        else:
+            resolved_source_run_id = str(source_run_id or "").strip()
+            resolved_validation_id = str(validation_id or "").strip()
+            snapshot = self.worker_app.run_governance_reject_on_demand(
+                target_date=target_date_obj,
+                source_run_id=resolved_source_run_id,
+                validation_id=resolved_validation_id,
+                requested_by=requested_by.strip(),
+                dry_run=dry_run,
+            )
 
         ledger_path, artifact_path = self._orchestration_run_paths(
             target_date=target_date
@@ -1368,6 +1383,7 @@ class BootstrapApiService:
             "version": 1,
             "orchestrator_run_id": run_id,
             "target_date": target_date,
+            "mode": normalized_mode,
             "publish_succeeded": bool(snapshot.get("publish_succeeded", False)),
             "requested_publish_succeeded": bool(
                 snapshot.get("requested_publish_succeeded", False)
@@ -1383,6 +1399,7 @@ class BootstrapApiService:
             "version": 1,
             "orchestrator_run_id": run_id,
             "target_date": target_date,
+            "mode": normalized_mode,
             "publish_succeeded": bool(snapshot.get("publish_succeeded", False)),
             "requested_publish_succeeded": bool(
                 snapshot.get("requested_publish_succeeded", False)

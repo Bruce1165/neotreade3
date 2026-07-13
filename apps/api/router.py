@@ -2571,6 +2571,23 @@ class BootstrapApiRouter:
                     details={"date": raw_date},
                 )
 
+            mode = body.get("mode", "daily")
+            if not isinstance(mode, str) or not mode.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_mode",
+                    message="mode must be a non-empty string",
+                    details={"mode": mode},
+                )
+            normalized_mode = mode.strip().lower()
+            if normalized_mode not in {"daily", "governance_reject"}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_mode",
+                    message="mode must be one of: daily, governance_reject",
+                    details={"mode": mode},
+                )
+
             requested_by = body.get("requested_by", "api")
             if not isinstance(requested_by, str) or not requested_by.strip():
                 raise ApiError(
@@ -2598,11 +2615,46 @@ class BootstrapApiRouter:
                     details={"dry_run": dry_run},
                 )
 
+            source_run_id = body.get("source_run_id")
+            validation_id = body.get("validation_id")
+            if normalized_mode == "governance_reject":
+                if (
+                    not isinstance(source_run_id, str)
+                    or not source_run_id.strip()
+                ):
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_source_run_id",
+                        message="source_run_id must be a non-empty string",
+                        details={"source_run_id": source_run_id},
+                    )
+                if (
+                    not isinstance(validation_id, str)
+                    or not validation_id.strip()
+                ):
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_validation_id",
+                        message="validation_id must be a non-empty string",
+                        details={"validation_id": validation_id},
+                    )
+
             return HTTPStatus.OK, self.service.orchestration_run_view(
                 target_date=raw_date,
+                mode=normalized_mode,
                 publish_succeeded=publish_succeeded,
                 requested_by=requested_by.strip(),
                 dry_run=dry_run,
+                source_run_id=(
+                    source_run_id.strip()
+                    if isinstance(source_run_id, str)
+                    else None
+                ),
+                validation_id=(
+                    validation_id.strip()
+                    if isinstance(validation_id, str)
+                    else None
+                ),
             )
 
         if path == "/api/trading-calendar/rebuild":
