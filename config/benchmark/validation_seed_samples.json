@@ -34,6 +34,18 @@
         },
         "top_risk_profile": {
           "max_risk_level": "watch"
+        },
+        "identify_state": {
+          "allowed_status": ["identified"]
+        },
+        "tracking_state": {
+          "allowed_status": ["tracking"],
+          "allowed_maturity": ["ready_for_entry"]
+        },
+        "entry_state": {
+          "allowed_status": ["ready"],
+          "allowed_decision": ["enter"],
+          "actionable": true
         }
       },
       "evidence_refs": [
@@ -114,6 +126,18 @@
         },
         "top_risk_profile": {
           "max_risk_level": "watch"
+        },
+        "identify_state": {
+          "allowed_status": ["identified"]
+        },
+        "tracking_state": {
+          "allowed_status": ["tracking"],
+          "allowed_maturity": ["ready_for_entry"]
+        },
+        "entry_state": {
+          "allowed_status": ["ready"],
+          "allowed_decision": ["enter"],
+          "actionable": true
         }
       },
       "evidence_refs": [

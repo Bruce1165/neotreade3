@@ -21,6 +21,12 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
+from neotrade3.decision_engine import (
+    build_entry_state_from_formal_inputs,
+    build_identify_state_from_formal_inputs,
+    build_m1_constraints_ref,
+    build_tracking_state_from_formal_inputs,
+)
 from .sample_registry import BenchmarkSeedSampleRegistration
 
 
@@ -100,6 +106,40 @@ def _sample_m1_objects(
     return d1, security, trading_day, profile
 
 
+def _build_front_m3_context(
+    *,
+    cycle: SmallCycle,
+    d1_fact: D1DailyPriceFact,
+    security_master: D7SecurityMasterMinimal,
+    trading_day_status: D7TradingDayStatus,
+    trading_profile: PF1TradingProfile,
+) -> dict[str, Any]:
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1_fact,
+        security_master=security_master,
+        trading_day_status=trading_day_status,
+        trading_profile=trading_profile,
+    )
+    identify_state = build_identify_state_from_formal_inputs(
+        cycle=cycle,
+        m1_constraints_ref=constraints,
+    )
+    tracking_state = build_tracking_state_from_formal_inputs(
+        cycle=cycle,
+        m1_constraints_ref=constraints,
+    )
+    entry_state = build_entry_state_from_formal_inputs(
+        cycle=cycle,
+        m1_constraints_ref=constraints,
+    )
+    return {
+        "m1_constraints_ref": dict(constraints),
+        "identify_state": identify_state.to_payload(),
+        "tracking_state": tracking_state.to_payload(),
+        "entry_state": entry_state.to_payload(),
+    }
+
+
 def _build_reference_cycle_and_shadow_bundle() -> BenchmarkFixtureBundle:
     d1, security, trading_day, profile = _sample_m1_objects()
     cycle = build_small_cycle_from_m1(
@@ -128,10 +168,18 @@ def _build_reference_cycle_and_shadow_bundle() -> BenchmarkFixtureBundle:
             "positive_days_5d": profile.positive_days_5d,
         },
     }
+    m3_context = _build_front_m3_context(
+        cycle=cycle,
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
     return BenchmarkFixtureBundle(
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
 
@@ -172,6 +220,7 @@ def _build_control_failure_reference_fixture() -> BenchmarkFixtureBundle:
             "cycle_linkage_state": bad_linkage,
         },
         m1_context=reference.m1_context,
+        m3_context=reference.m3_context,
     )
 
 
@@ -222,6 +271,7 @@ def _build_local_global_guardrail_fixture() -> BenchmarkFixtureBundle:
             ),
         },
         m1_context=reference.m1_context,
+        m3_context=reference.m3_context,
     )
 
 

@@ -34,6 +34,7 @@ SEVERITY_WARN = "warn"
 SEVERITY_HIGH = "high"
 
 GAP_GROUP_IDENTIFY = "G1 Identify Gap"
+GAP_GROUP_TIMING = "G2 Timing Gap"
 GAP_GROUP_INTERACTION = "G5 Interaction Gap"
 
 GAP_LABEL_STATE_DRIFT = "L9 State-Drift"
@@ -130,6 +131,46 @@ def _build_hold_quality_risk_summary(m3_context: Mapping[str, Any] | None) -> di
     return {"status": "missing_m3_hold_exit_bridge"}
 
 
+def _front_state_payload(
+    m3_context: Mapping[str, Any] | None,
+    state_key: str,
+) -> dict[str, Any]:
+    if not isinstance(m3_context, Mapping):
+        return {}
+    payload = m3_context.get(state_key)
+    if not isinstance(payload, Mapping):
+        return {}
+    return {str(key): value for key, value in payload.items()}
+
+
+def _build_front_quality_risk_summary(
+    m3_context: Mapping[str, Any] | None,
+    *,
+    identify_gap_count: int,
+    timing_gap_count: int,
+) -> dict[str, Any]:
+    identify_payload = _front_state_payload(m3_context, "identify_state")
+    tracking_payload = _front_state_payload(m3_context, "tracking_state")
+    entry_payload = _front_state_payload(m3_context, "entry_state")
+    if not identify_payload and not tracking_payload and not entry_payload:
+        return {
+            "status": "missing_m3_front_formal",
+            "identify_gap_count": identify_gap_count,
+            "timing_gap_count": timing_gap_count,
+        }
+    return {
+        "status": "available",
+        "identify_status": str(identify_payload.get("status") or "").strip(),
+        "tracking_status": str(tracking_payload.get("status") or "").strip(),
+        "tracking_maturity": str(tracking_payload.get("maturity") or "").strip(),
+        "entry_status": str(entry_payload.get("status") or "").strip(),
+        "entry_decision": str(entry_payload.get("decision") or "").strip(),
+        "entry_actionable": bool(entry_payload.get("actionable")),
+        "identify_gap_count": identify_gap_count,
+        "timing_gap_count": timing_gap_count,
+    }
+
+
 def _make_benchmark_run_id(sample: BenchmarkSample) -> str:
     return (
         f"m4seed:{sample.sample_bucket}:{sample.stock_code}:{sample.trade_date}:"
@@ -205,6 +246,42 @@ def _build_local_global_gap(
     )
 
 
+def _build_front_state_gap(
+    *,
+    sample: BenchmarkSample,
+    benchmark_run_id: str,
+    trace_id: str,
+    state_name: str,
+    gap_group: str,
+    expected_target_state: Mapping[str, Any],
+    actual_state: Mapping[str, Any],
+    evidence_refs: list[dict[str, Any]],
+) -> Any:
+    return build_gap_record(
+        gap_id=f"{benchmark_run_id}:gap:m3:{state_name}:{GAP_LABEL_STATE_DRIFT}",
+        symbol=sample.stock_code,
+        trade_date=sample.trade_date,
+        date_range=sample.trade_date,
+        sample_bucket=sample.sample_bucket,
+        layer_scope="M3",
+        gap_group=gap_group,
+        gap_label=GAP_LABEL_STATE_DRIFT,
+        severity=(
+            SEVERITY_HIGH
+            if sample.target_state_type in {T1_PROHIBITION_TARGET, T3_STRONG_TARGET}
+            else SEVERITY_WARN
+        ),
+        target_state_type=sample.target_state_type,
+        expected_target_state=expected_target_state,
+        actual_state=actual_state,
+        evidence_refs=evidence_refs,
+        trace_id=trace_id,
+        rule_version=sample.rule_version,
+        input_data_version=sample.input_data_version,
+        benchmark_run_id=benchmark_run_id,
+    )
+
+
 def build_benchmark_assessment_from_m2_shadow(
     *,
     sample: BenchmarkSample,
@@ -215,6 +292,7 @@ def build_benchmark_assessment_from_m2_shadow(
 ) -> BenchmarkAssessmentResult:
     cycle_payload = cycle.to_payload()
     shadow_payloads = _shadow_payload_bundle(shadow_bundle)
+    m3_context_payload = dict(m3_context) if isinstance(m3_context, Mapping) else {}
     expected = sample.expected_target_state
 
     benchmark_run_id = _make_benchmark_run_id(sample)
@@ -234,6 +312,27 @@ def build_benchmark_assessment_from_m2_shadow(
                 sample=sample,
                 benchmark_run_id=benchmark_run_id,
                 trace_id=trace_id,
+                expected_target_state=expected_target_state,
+                actual_state=actual_state,
+                evidence_refs=evidence_refs,
+            )
+        )
+
+    def add_front_state_gap(
+        *,
+        state_name: str,
+        gap_group: str,
+        expected_target_state: Mapping[str, Any],
+        actual_state: Mapping[str, Any],
+        evidence_refs: list[dict[str, Any]],
+    ) -> None:
+        gaps.append(
+            _build_front_state_gap(
+                sample=sample,
+                benchmark_run_id=benchmark_run_id,
+                trace_id=trace_id,
+                state_name=state_name,
+                gap_group=gap_group,
                 expected_target_state=expected_target_state,
                 actual_state=actual_state,
                 evidence_refs=evidence_refs,
@@ -393,6 +492,115 @@ def build_benchmark_assessment_from_m2_shadow(
                 )
             )
 
+    identify_expected = expected.get("identify_state") or {}
+    identify_payload = _front_state_payload(m3_context_payload, "identify_state")
+    identify_allowed_status = identify_expected.get("allowed_status") or []
+    if identify_allowed_status and identify_payload.get("status") not in identify_allowed_status:
+        add_front_state_gap(
+            state_name="identify_state",
+            gap_group=GAP_GROUP_IDENTIFY,
+            expected_target_state={"identify_state": dict(identify_expected)},
+            actual_state={
+                "identify_state": {
+                    "status": identify_payload.get("status"),
+                    "reason": identify_payload.get("reason"),
+                }
+            },
+            evidence_refs=[
+                {
+                    "object_type": identify_payload.get("object_type") or "identify_state",
+                    "field": "status",
+                }
+            ],
+        )
+
+    tracking_expected = expected.get("tracking_state") or {}
+    tracking_payload = _front_state_payload(m3_context_payload, "tracking_state")
+    tracking_allowed_status = tracking_expected.get("allowed_status") or []
+    tracking_allowed_maturity = tracking_expected.get("allowed_maturity") or []
+    tracking_status_mismatch = (
+        bool(tracking_allowed_status)
+        and tracking_payload.get("status") not in tracking_allowed_status
+    )
+    tracking_maturity_mismatch = (
+        bool(tracking_allowed_maturity)
+        and tracking_payload.get("maturity") not in tracking_allowed_maturity
+    )
+    if tracking_status_mismatch or tracking_maturity_mismatch:
+        add_front_state_gap(
+            state_name="tracking_state",
+            gap_group=GAP_GROUP_TIMING,
+            expected_target_state={"tracking_state": dict(tracking_expected)},
+            actual_state={
+                "tracking_state": {
+                    "status": tracking_payload.get("status"),
+                    "maturity": tracking_payload.get("maturity"),
+                    "transition_reason": tracking_payload.get("transition_reason"),
+                }
+            },
+            evidence_refs=[
+                {
+                    "object_type": tracking_payload.get("object_type") or "tracking_state",
+                    "field": "status",
+                },
+                {
+                    "object_type": tracking_payload.get("object_type") or "tracking_state",
+                    "field": "maturity",
+                },
+            ],
+        )
+
+    entry_expected = expected.get("entry_state") or {}
+    entry_payload = _front_state_payload(m3_context_payload, "entry_state")
+    entry_allowed_status = entry_expected.get("allowed_status") or []
+    entry_allowed_decision = entry_expected.get("allowed_decision") or []
+    entry_expected_actionable = entry_expected.get("actionable")
+    entry_actual_actionable = (
+        entry_payload.get("actionable")
+        if "actionable" in entry_payload
+        else None
+    )
+    entry_status_mismatch = (
+        bool(entry_allowed_status)
+        and entry_payload.get("status") not in entry_allowed_status
+    )
+    entry_decision_mismatch = (
+        bool(entry_allowed_decision)
+        and entry_payload.get("decision") not in entry_allowed_decision
+    )
+    entry_actionable_mismatch = (
+        isinstance(entry_expected_actionable, bool)
+        and entry_actual_actionable is not entry_expected_actionable
+    )
+    if entry_status_mismatch or entry_decision_mismatch or entry_actionable_mismatch:
+        add_front_state_gap(
+            state_name="entry_state",
+            gap_group=GAP_GROUP_TIMING,
+            expected_target_state={"entry_state": dict(entry_expected)},
+            actual_state={
+                "entry_state": {
+                    "status": entry_payload.get("status"),
+                    "decision": entry_payload.get("decision"),
+                    "actionable": entry_actual_actionable,
+                    "blocking_reasons": list(entry_payload.get("blocking_reasons") or []),
+                }
+            },
+            evidence_refs=[
+                {
+                    "object_type": entry_payload.get("object_type") or "entry_state",
+                    "field": "status",
+                },
+                {
+                    "object_type": entry_payload.get("object_type") or "entry_state",
+                    "field": "decision",
+                },
+                {
+                    "object_type": entry_payload.get("object_type") or "entry_state",
+                    "field": "actionable",
+                },
+            ],
+        )
+
     hard_violation_count = sum(1 for gap in gaps if gap.severity == SEVERITY_HIGH) + len(
         breaches
     )
@@ -410,6 +618,8 @@ def build_benchmark_assessment_from_m2_shadow(
             gap.gap_group,
             0,
         ) + 1
+    identify_gap_count = gap_group_distribution.get(GAP_GROUP_IDENTIFY, 0)
+    timing_gap_count = gap_group_distribution.get(GAP_GROUP_TIMING, 0)
 
     summary = build_assessment_summary(
         benchmark_run_id=benchmark_run_id,
@@ -427,7 +637,12 @@ def build_benchmark_assessment_from_m2_shadow(
                 "replay_consistency_status"
             ),
         },
-        hold_quality_risk_summary=_build_hold_quality_risk_summary(m3_context),
+        front_quality_risk_summary=_build_front_quality_risk_summary(
+            m3_context_payload,
+            identify_gap_count=identify_gap_count,
+            timing_gap_count=timing_gap_count,
+        ),
+        hold_quality_risk_summary=_build_hold_quality_risk_summary(m3_context_payload),
         interaction_risk_summary={
             "guardrail_breach_count": len(breaches),
             "continuation_supported": linkage_payload.get("supports_continuation"),
@@ -444,7 +659,7 @@ def build_benchmark_assessment_from_m2_shadow(
         m1_context=dict(m1_context or {}),
         m2_formal={"small_cycle_state": cycle_payload},
         m2_shadow=shadow_payloads,
-        m3_context=dict(m3_context or {}),
+        m3_context=m3_context_payload,
         m4_assessment={
             "assessment_summary": summary.to_payload(),
             "gap_ids": [gap.gap_id for gap in gaps],

@@ -10,6 +10,7 @@ from neotrade3.benchmark import (
     BENCHMARK_SAMPLE_OBJECT_TYPE,
     GAP_GROUP_INTERACTION,
     GAP_LABEL_LOCAL_GLOBAL_MISREAD,
+    GAP_GROUP_TIMING,
     GUARDRAIL_CODE_LOCAL_GLOBAL_END,
     T3_STRONG_TARGET,
     TRACE_BUNDLE_OBJECT_TYPE,
@@ -18,7 +19,13 @@ from neotrade3.benchmark import (
     build_benchmark_assessment_from_m2_shadow,
     build_benchmark_sample,
 )
-from neotrade3.decision_engine import build_m3_hold_exit_bridge
+from neotrade3.decision_engine import (
+    build_entry_state_from_formal_inputs,
+    build_identify_state_from_formal_inputs,
+    build_m1_constraints_ref,
+    build_m3_hold_exit_bridge,
+    build_tracking_state_from_formal_inputs,
+)
 from neotrade3.cycle_intelligence import (
     build_cycle_linkage_state,
     build_growth_potential_profile_from_formal_inputs,
@@ -92,7 +99,12 @@ def _sample_m1_objects(*, return_20d: float = 0.12, positive_days_5d: int = 4) -
     return d1, security, trading_day, profile
 
 
-def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object], dict[str, object]]:
+def _build_reference_cycle_and_shadow_bundle() -> tuple[
+    object,
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
     d1, security, trading_day, profile = _sample_m1_objects()
     cycle = build_small_cycle_from_m1(
         d1_fact=d1,
@@ -120,7 +132,28 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object
             "positive_days_5d": profile.positive_days_5d,
         },
     }
-    return cycle, shadow_bundle, m1_context
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    m3_context = {
+        "m1_constraints_ref": dict(constraints),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+    }
+    return cycle, shadow_bundle, m1_context, m3_context
 
 
 def test_build_benchmark_sample_returns_formal_payload() -> None:
@@ -145,7 +178,7 @@ def test_build_benchmark_sample_returns_formal_payload() -> None:
 
 
 def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     sample = build_benchmark_sample(
         stock_code="600000",
         trade_date="2026-07-07",
@@ -165,6 +198,16 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
             },
             "growth_potential_profile": {"allowed_status": ["promising", "uncertain"]},
             "top_risk_profile": {"max_risk_level": "watch"},
+            "identify_state": {"allowed_status": ["identified"]},
+            "tracking_state": {
+                "allowed_status": ["tracking"],
+                "allowed_maturity": ["ready_for_entry"],
+            },
+            "entry_state": {
+                "allowed_status": ["ready"],
+                "allowed_decision": ["enter"],
+                "actionable": True,
+            },
         },
         scenario_tags=["B3", "boundary_complex"],
     )
@@ -174,6 +217,7 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
     payload = result.to_payload()
@@ -184,6 +228,8 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
     assert payload["summary"]["hold_quality_risk_summary"]["status"] == (
         "missing_m3_hold_exit_bridge"
     )
+    assert payload["summary"]["front_quality_risk_summary"]["status"] == "available"
+    assert payload["summary"]["front_quality_risk_summary"]["entry_decision"] == "enter"
     assert payload["trace_bundle"]["object_type"] == TRACE_BUNDLE_OBJECT_TYPE
     assert payload["trace_bundle"]["m2_shadow"]["cycle_linkage_state"][
         "supports_continuation"
@@ -191,7 +237,7 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b3_seed() -> None:
 
 
 def test_build_benchmark_assessment_from_m2_shadow_passes_b1_seed() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     sample = build_benchmark_sample(
         stock_code="600000",
         trade_date="2026-07-07",
@@ -211,6 +257,16 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b1_seed() -> None:
             },
             "growth_potential_profile": {"allowed_status": ["promising", "uncertain"]},
             "top_risk_profile": {"max_risk_level": "watch"},
+            "identify_state": {"allowed_status": ["identified"]},
+            "tracking_state": {
+                "allowed_status": ["tracking"],
+                "allowed_maturity": ["ready_for_entry"],
+            },
+            "entry_state": {
+                "allowed_status": ["ready"],
+                "allowed_decision": ["enter"],
+                "actionable": True,
+            },
         },
         scenario_tags=["B1", "target_opportunity"],
     )
@@ -220,12 +276,16 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b1_seed() -> None:
         cycle=cycle,
         shadow_bundle=shadow_bundle,
         m1_context=m1_context,
+        m3_context=m3_context,
     )
 
     payload = result.to_payload()
     assert payload["summary"]["assessment_grade"] == ASSESSMENT_GRADE_PASS
     assert payload["summary"]["hard_violation_count"] == 0
     assert payload["gap_records"] == []
+    assert payload["summary"]["front_quality_risk_summary"]["identify_status"] == (
+        "identified"
+    )
     assert payload["trace_bundle"]["m2_shadow"]["growth_potential_profile"]["status"] == (
         "promising"
     )
@@ -235,7 +295,7 @@ def test_build_benchmark_assessment_from_m2_shadow_passes_b1_seed() -> None:
 
 
 def test_build_benchmark_assessment_from_m2_shadow_projects_watch_hold_summary() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
     sample = build_benchmark_sample(
         stock_code="600000",
         trade_date="2026-07-07",
@@ -281,7 +341,7 @@ def test_build_benchmark_assessment_from_m2_shadow_projects_watch_hold_summary()
 
 
 def test_build_benchmark_assessment_from_m2_shadow_projects_exit_ready_summary() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
     sample = build_benchmark_sample(
         stock_code="600000",
         trade_date="2026-07-07",
@@ -329,7 +389,7 @@ def test_build_benchmark_assessment_from_m2_shadow_projects_exit_ready_summary()
 
 
 def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
     bad_linkage = build_cycle_linkage_state(
         stock_code=cycle.stock_code,
         trade_date=cycle.trade_date,
@@ -387,7 +447,7 @@ def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
 
 
 def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -> None:
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, _ = _build_reference_cycle_and_shadow_bundle()
     mid_cycles = build_mid_cycle_states_from_m1(
         cycle=cycle,
         security_master=_sample_m1_objects()[1],
@@ -460,3 +520,83 @@ def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -
         payload["interaction_guardrail_breaches"][0]["guardrail_code"]
         == GUARDRAIL_CODE_LOCAL_GLOBAL_END
     )
+
+
+def test_build_benchmark_assessment_from_m2_shadow_flags_identify_gap_for_front_formal_mismatch() -> None:
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
+    sample = build_benchmark_sample(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        sample_bucket=B3_BOUNDARY_COMPLEX_SAMPLE,
+        target_state_type=T2_RANGE_TARGET,
+        expected_target_state={
+            "identify_state": {"allowed_status": ["identified"]},
+        },
+        scenario_tags=["B3", "identify_gap"],
+    )
+    mismatched_m3_context = {
+        **m3_context,
+        "identify_state": {
+            **m3_context["identify_state"],
+            "status": "not_identified",
+            "reason": "forced_for_test",
+        },
+    }
+
+    result = build_benchmark_assessment_from_m2_shadow(
+        sample=sample,
+        cycle=cycle,
+        shadow_bundle=shadow_bundle,
+        m1_context=m1_context,
+        m3_context=mismatched_m3_context,
+    )
+
+    payload = result.to_payload()
+    assert payload["summary"]["assessment_grade"] == "warn"
+    assert payload["summary"]["front_quality_risk_summary"]["identify_gap_count"] == 1
+    assert payload["gap_records"][0]["gap_group"] == "G1 Identify Gap"
+    assert payload["gap_records"][0]["actual_state"]["identify_state"]["status"] == (
+        "not_identified"
+    )
+
+
+def test_build_benchmark_assessment_from_m2_shadow_flags_timing_gap_for_entry_mismatch() -> None:
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
+    sample = build_benchmark_sample(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        sample_bucket=B3_BOUNDARY_COMPLEX_SAMPLE,
+        target_state_type=T2_RANGE_TARGET,
+        expected_target_state={
+            "entry_state": {
+                "allowed_status": ["ready"],
+                "allowed_decision": ["enter"],
+                "actionable": True,
+            },
+        },
+        scenario_tags=["B3", "timing_gap"],
+    )
+    mismatched_m3_context = {
+        **m3_context,
+        "entry_state": {
+            **m3_context["entry_state"],
+            "status": "not_ready",
+            "decision": "wait",
+            "actionable": False,
+            "blocking_reasons": ["forced_for_test"],
+        },
+    }
+
+    result = build_benchmark_assessment_from_m2_shadow(
+        sample=sample,
+        cycle=cycle,
+        shadow_bundle=shadow_bundle,
+        m1_context=m1_context,
+        m3_context=mismatched_m3_context,
+    )
+
+    payload = result.to_payload()
+    assert payload["summary"]["assessment_grade"] == "warn"
+    assert payload["summary"]["front_quality_risk_summary"]["timing_gap_count"] == 1
+    assert payload["gap_records"][0]["gap_group"] == GAP_GROUP_TIMING
+    assert payload["gap_records"][0]["actual_state"]["entry_state"]["decision"] == "wait"

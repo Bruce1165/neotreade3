@@ -38,6 +38,10 @@ def test_read_benchmark_batch_run_result_round_trips_persisted_artifact(tmp_path
     assert reconstructed == batch_result
     assert reconstructed is not None
     assert reconstructed.results[0].summary == batch_result.results[0].summary
+    assert (
+        reconstructed.results[0].summary.front_quality_risk_summary
+        == batch_result.results[0].summary.front_quality_risk_summary
+    )
     assert reconstructed.results[0].gap_records == batch_result.results[0].gap_records
     assert reconstructed.results[0].trace_bundle == batch_result.results[0].trace_bundle
     assert (

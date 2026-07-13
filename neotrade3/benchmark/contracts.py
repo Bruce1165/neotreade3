@@ -104,6 +104,7 @@ class AssessmentSummary:
     sample_bucket_summary: dict[str, Any] = field(default_factory=dict)
     gap_group_distribution: dict[str, Any] = field(default_factory=dict)
     stability_risk_summary: dict[str, Any] = field(default_factory=dict)
+    front_quality_risk_summary: dict[str, Any] = field(default_factory=dict)
     hold_quality_risk_summary: dict[str, Any] = field(default_factory=dict)
     interaction_risk_summary: dict[str, Any] = field(default_factory=dict)
     rule_version: str = "m4_benchmark_seed.v1alpha1"
@@ -121,6 +122,7 @@ class AssessmentSummary:
             "sample_bucket_summary": dict(self.sample_bucket_summary),
             "gap_group_distribution": dict(self.gap_group_distribution),
             "stability_risk_summary": dict(self.stability_risk_summary),
+            "front_quality_risk_summary": dict(self.front_quality_risk_summary),
             "hold_quality_risk_summary": dict(self.hold_quality_risk_summary),
             "interaction_risk_summary": dict(self.interaction_risk_summary),
             "rule_version": self.rule_version,
@@ -155,6 +157,9 @@ class AssessmentSummary:
             ),
             stability_risk_summary=_copy_mapping(
                 payload_mapping.get("stability_risk_summary")
+            ),
+            front_quality_risk_summary=_copy_mapping(
+                payload_mapping.get("front_quality_risk_summary")
             ),
             hold_quality_risk_summary=_copy_mapping(
                 payload_mapping.get("hold_quality_risk_summary")
@@ -537,6 +542,7 @@ def build_assessment_summary(
     sample_bucket_summary: Mapping[str, Any] | None = None,
     gap_group_distribution: Mapping[str, Any] | None = None,
     stability_risk_summary: Mapping[str, Any] | None = None,
+    front_quality_risk_summary: Mapping[str, Any] | None = None,
     hold_quality_risk_summary: Mapping[str, Any] | None = None,
     interaction_risk_summary: Mapping[str, Any] | None = None,
     rule_version: str = "m4_benchmark_seed.v1alpha1",
@@ -561,6 +567,7 @@ def build_assessment_summary(
         sample_bucket_summary=_copy_mapping(sample_bucket_summary),
         gap_group_distribution=_copy_mapping(gap_group_distribution),
         stability_risk_summary=_copy_mapping(stability_risk_summary),
+        front_quality_risk_summary=_copy_mapping(front_quality_risk_summary),
         hold_quality_risk_summary=_copy_mapping(hold_quality_risk_summary),
         interaction_risk_summary=_copy_mapping(interaction_risk_summary),
         rule_version=_require_text(rule_version, field_name="rule_version"),

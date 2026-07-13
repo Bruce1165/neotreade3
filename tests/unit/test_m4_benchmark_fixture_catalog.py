@@ -35,6 +35,9 @@ def test_build_benchmark_fixture_bundle_for_b3_seed_returns_reference_fixture() 
     assert fixture["cycle"].stock_code == "600000"
     assert fixture["shadow_bundle"]["cycle_linkage_state"].supports_continuation is True
     assert fixture["m1_context"]["trading_profile"]["return_20d"] == 0.12
+    assert fixture["m3_context"]["identify_state"]["status"] == "identified"
+    assert fixture["m3_context"]["tracking_state"]["maturity"] == "ready_for_entry"
+    assert fixture["m3_context"]["entry_state"]["actionable"] is True
 
 
 def test_build_benchmark_fixture_bundle_for_b1_seed_returns_target_opportunity_fixture() -> None:
@@ -50,6 +53,9 @@ def test_build_benchmark_fixture_bundle_for_b1_seed_returns_target_opportunity_f
     assert linkage_state.local_end_vs_global_end == "local_end_only"
     assert growth_profile.status == "promising"
     assert risk_profile.risk_level == "low"
+    assert fixture["m3_context"]["identify_state"]["status"] == "identified"
+    assert fixture["m3_context"]["tracking_state"]["status"] == "tracking"
+    assert fixture["m3_context"]["entry_state"]["decision"] == "enter"
 
 
 def test_build_benchmark_fixture_bundle_for_b2_seed_returns_control_failure_fixture() -> None:

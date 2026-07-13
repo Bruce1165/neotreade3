@@ -28,6 +28,12 @@ from neotrade3.data_control import (
     D7TradingDayStatus,
     PF1TradingProfile,
 )
+from neotrade3.decision_engine import (
+    build_entry_state_from_formal_inputs,
+    build_identify_state_from_formal_inputs,
+    build_m1_constraints_ref,
+    build_tracking_state_from_formal_inputs,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -95,7 +101,12 @@ def _sample_m1_objects(*, return_20d: float = 0.12, positive_days_5d: int = 4) -
     return d1, security, trading_day, profile
 
 
-def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object], dict[str, object]]:
+def _build_reference_cycle_and_shadow_bundle() -> tuple[
+    object,
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
     d1, security, trading_day, profile = _sample_m1_objects()
     cycle = build_small_cycle_from_m1(
         d1_fact=d1,
@@ -123,16 +134,38 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[object, dict[str, object
             "positive_days_5d": profile.positive_days_5d,
         },
     }
-    return cycle, shadow_bundle, m1_context
+    constraints = build_m1_constraints_ref(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    m3_context = {
+        "m1_constraints_ref": dict(constraints),
+        "identify_state": build_identify_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+        "tracking_state": build_tracking_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+        "entry_state": build_entry_state_from_formal_inputs(
+            cycle=cycle,
+            m1_constraints_ref=constraints,
+        ).to_payload(),
+    }
+    return cycle, shadow_bundle, m1_context, m3_context
 
 
 def _fixture_provider(registration):
-    cycle, shadow_bundle, m1_context = _build_reference_cycle_and_shadow_bundle()
+    cycle, shadow_bundle, m1_context, m3_context = _build_reference_cycle_and_shadow_bundle()
     if registration.sample_id == "b1_target_opportunity_seed":
         return {
             "cycle": cycle,
             "shadow_bundle": shadow_bundle,
             "m1_context": m1_context,
+            "m3_context": m3_context,
         }
 
     if registration.sample_id == "b2_control_failure_seed":
@@ -163,6 +196,7 @@ def _fixture_provider(registration):
             "cycle": cycle,
             "shadow_bundle": {**shadow_bundle, "cycle_linkage_state": bad_linkage},
             "m1_context": m1_context,
+            "m3_context": m3_context,
         }
 
     if registration.sample_id == "b3_boundary_complex_advancing_seed":
@@ -170,6 +204,7 @@ def _fixture_provider(registration):
             "cycle": cycle,
             "shadow_bundle": shadow_bundle,
             "m1_context": m1_context,
+            "m3_context": m3_context,
         }
 
     if registration.sample_id == "b4_local_global_guardrail_seed":
@@ -218,6 +253,7 @@ def _fixture_provider(registration):
                 ),
             },
             "m1_context": m1_context,
+            "m3_context": m3_context,
         }
 
     raise KeyError(f"unsupported sample_id for fixture provider: {registration.sample_id}")
@@ -271,6 +307,9 @@ def test_run_benchmark_manifest_executes_seed_batch_and_aggregates_summary() -> 
         B4_INTERACTION_GUARDRAIL_SAMPLE: 1,
     }
     assert len(payload["results"]) == 2
+    assert payload["results"][0]["summary"]["front_quality_risk_summary"]["status"] == (
+        "available"
+    )
 
 
 def test_run_benchmark_manifest_executes_b1_b2_seed_batch_and_aggregates_summary() -> None:
@@ -297,6 +336,9 @@ def test_run_benchmark_manifest_executes_b1_b2_seed_batch_and_aggregates_summary
         B2_CONTROL_FAILURE_SAMPLE: 1,
     }
     assert len(payload["results"]) == 2
+    assert payload["results"][0]["summary"]["front_quality_risk_summary"]["status"] == (
+        "available"
+    )
 
 
 def test_run_benchmark_manifest_uses_formal_fixture_catalog_by_default() -> None:
