@@ -31,6 +31,12 @@ from neotrade3.data_control import (
     DataControlStepResult,
     SourceRegistry,
 )
+from neotrade3.governance.assembler import build_validation_result
+from neotrade3.governance.run_ledger import (
+    materialize_governance_handoff,
+    read_governance_reject_execution_artifact,
+    read_governance_reject_execution_ledger,
+)
 from neotrade3.issue_center import IssueCase, IssueCenterCollector, IssueSeverity
 from neotrade3.labs import LabRegistry, LabRuntimeAdapter
 from neotrade3.learning import EvaluationDecision, LearningLoopPipeline
@@ -49,6 +55,7 @@ from neotrade3.orchestration.config_loader import orchestrator_config_from_dict
 from neotrade3.orchestration.preflight import PreflightRunner
 from neotrade3.screeners.cli import build_parser as build_screener_cli_parser
 from neotrade3.screeners.runtime import run_placeholder as run_screener_placeholder
+from tests.unit.test_m5_governance_run_ledger import _build_reference_bundle
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LABS_CONFIG = PROJECT_ROOT / "config/labs/labs_registry.json"
@@ -87,6 +94,53 @@ class _FastLabAdapter:
 
 def _install_fast_lab_runtime(monkeypatch: pytest.MonkeyPatch, worker_app: BootstrapWorkerApp) -> None:
     monkeypatch.setattr(worker_app, "_get_lab_adapter", lambda: _FastLabAdapter())
+
+
+def _prepare_worker_project_root(tmp_path: Path) -> Path:
+    for relative_path in (
+        Path("config/labs/labs_registry.json"),
+        Path("config/orchestrator/daily_master_orchestrator.json"),
+    ):
+        destination = tmp_path / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(PROJECT_ROOT / relative_path, destination)
+    return tmp_path
+
+
+def _materialize_rejected_governance_input(
+    tmp_path: Path,
+    *,
+    validation_id: str = "validation-final-reject",
+) -> tuple[str, str]:
+    bundle = _build_reference_bundle()
+    materialize_governance_handoff(
+        project_root=tmp_path,
+        bundle=bundle,
+    )
+    validation = build_validation_result(
+        validation_id=validation_id,
+        experiment_id=bundle.experiment_requests[0].experiment_id,
+        baseline_run_id=bundle.source_run_id,
+        candidate_run_id="candidate-run-1",
+        outcome="rejected",
+        introduced_risk_count=1,
+        cleared_guardrail_codes=[],
+        remaining_guardrail_codes=["interaction.local_global"],
+        evidence_refs=[{"kind": "validation_result"}],
+    )
+    artifact_file = (
+        tmp_path
+        / "var/artifacts/governance_handoffs"
+        / bundle.source_run_id
+        / "governance_handoff_bundle.json"
+    )
+    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+    payload["validation_results"].append(validation.to_payload())
+    artifact_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return bundle.source_run_id, validation.validation_id
 
 
 def test_lab_registry_loads_expected_bootstrap_labs() -> None:
@@ -1503,6 +1557,135 @@ def test_worker_main_uses_run_ledger_status_when_snapshot_status_is_missing(
     assert worker_main.main() == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "blocked"
+
+
+def test_worker_runs_governance_reject_on_demand(tmp_path: Path) -> None:
+    project_root = _prepare_worker_project_root(tmp_path)
+    source_run_id, validation_id = _materialize_rejected_governance_input(project_root)
+    app = BootstrapWorkerApp(project_root=project_root)
+
+    snapshot = app.run_governance_reject_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+        validation_id=validation_id,
+    )
+
+    reject_artifact = read_governance_reject_execution_artifact(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+    reject_ledger = read_governance_reject_execution_ledger(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["target_date"] == "2026-05-19"
+    assert snapshot["summary"] == {
+        "planned_task_count": 1,
+        "executed_task_count": 1,
+        "ok_task_count": 1,
+    }
+    orchestration = snapshot["orchestration"]
+    assert orchestration["run_ledger"]["status"] == "ok"
+    assert orchestration["task_results"][0]["task_id"] == "governance.reject_execution"
+    assert (
+        orchestration["task_results"][0]["details"]["validation_id"] == validation_id
+    )
+    assert reject_artifact is not None
+    assert reject_artifact["validation_id"] == validation_id
+    assert reject_ledger is not None
+    assert reject_ledger.validation_id == validation_id
+
+
+def test_worker_main_governance_reject_mode_returns_zero_for_ok_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {
+                "mode": "governance_reject",
+                "target_date": "2026-05-19",
+                "publish_succeeded": False,
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "validation-1",
+            },
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _OkRejectApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run_governance_reject_on_demand(
+            self, *, target_date, source_run_id, validation_id, dry_run
+        ):
+            assert target_date.isoformat() == "2026-05-19"
+            assert source_run_id == "benchmark-run-1"
+            assert validation_id == "validation-1"
+            assert dry_run is True
+            return {
+                "status": "ok",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _OkRejectApp)
+
+    assert worker_main.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+
+
+def test_worker_main_governance_reject_mode_returns_nonzero_for_failed_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        worker_main.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: type(
+            "Args",
+            (),
+            {
+                "mode": "governance_reject",
+                "target_date": "2026-05-19",
+                "publish_succeeded": False,
+                "dry_run": True,
+                "source_run_id": "benchmark-run-1",
+                "validation_id": "missing-validation",
+            },
+        )(),
+    )
+    monkeypatch.setattr(worker_main, "require_python_310", lambda *, entrypoint: None)
+    monkeypatch.setattr(worker_main, "log_python_runtime", lambda *args, **kwargs: None)
+
+    class _FailedRejectApp:
+        def __init__(self, project_root):
+            self.project_root = project_root
+
+        def run_governance_reject_on_demand(
+            self, *, target_date, source_run_id, validation_id, dry_run
+        ):
+            return {
+                "status": "failed",
+                "target_date": target_date.isoformat(),
+                "summary": {"planned_task_count": 1},
+            }
+
+    monkeypatch.setattr(worker_main, "BootstrapWorkerApp", _FailedRejectApp)
+
+    assert worker_main.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "failed"
 
 
 def test_issue_center_loads_baseline_from_summary_artifact(tmp_path: Path) -> None:

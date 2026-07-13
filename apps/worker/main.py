@@ -29,6 +29,8 @@ from neotrade3.labs.runtime import LabRuntimeAdapter
 from neotrade3.orchestration import (
     DailyMasterOrchestrator,
     DailyRunRequest,
+    OnDemandTaskItem,
+    OnDemandTaskRequest,
     OrchestratorRunLedgerEntry,
     OrchestratorTaskLedgerEntry,
 )
@@ -593,6 +595,78 @@ class BootstrapWorkerApp:
 
         return snapshot
 
+    def run_governance_reject_on_demand(
+        self,
+        *,
+        target_date: date,
+        source_run_id: str,
+        validation_id: str,
+        requested_by: str = "BootstrapWorkerApp.run_governance_reject_on_demand",
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        orchestrator = DailyMasterOrchestrator.from_files(
+            orchestrator_config_path=self.paths["orchestrator_config"],
+            labs_registry_path=self.paths["labs_config"],
+        )
+        plan = orchestrator.build_on_demand_plan(
+            OnDemandTaskRequest(
+                target_date=target_date,
+                tasks=[
+                    OnDemandTaskItem(
+                        task_id="governance.reject_execution",
+                        phase=OrchestrationPhase.GOVERNANCE,
+                        entrypoint=(
+                            "neotrade3.governance.runtime:"
+                            "run_governance_reject_execution"
+                        ),
+                        args_template={
+                            "source_run_id": source_run_id,
+                            "validation_id": validation_id,
+                        },
+                        outputs=[
+                            "governance_reject_artifact",
+                            "governance_reject_ledger",
+                        ],
+                    )
+                ],
+            )
+        )
+        task_results = orchestrator.execute_run_plan(
+            plan,
+            {
+                OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
+            },
+            {
+                "target_date": target_date,
+                "project_root": str(self.project_root),
+                "db_path": str(self.project_root / "var/data/neotrade3.db"),
+                "requested_by": requested_by,
+                "dry_run": dry_run,
+            },
+        )
+        run_entry, task_entries = self._build_execution_run_ledger(
+            target_date=target_date,
+            execution_run_plan=plan,
+            task_results=task_results,
+        )
+        return {
+            "status": run_entry.status.value,
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "plan": self._to_jsonable(plan),
+                "task_results": self._to_jsonable(task_results),
+                "run_ledger": self._to_jsonable(run_entry),
+                "task_ledger": self._to_jsonable(task_entries),
+            },
+            "summary": {
+                "planned_task_count": len(plan.planned_tasks),
+                "executed_task_count": len(task_results),
+                "ok_task_count": sum(
+                    1 for result in task_results if result.status == RunStatus.OK
+                ),
+            },
+        }
+
     def _build_execution_run_ledger(
         self,
         *,
@@ -774,6 +848,12 @@ class BootstrapWorkerApp:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the NeoTrade3 bootstrap worker.")
     parser.add_argument(
+        "--mode",
+        choices=("daily", "governance_reject"),
+        default="daily",
+        help="Worker run mode. Defaults to the daily bootstrap flow.",
+    )
+    parser.add_argument(
         "--date", dest="target_date", help="Target date in YYYY-MM-DD format."
     )
     parser.add_argument(
@@ -785,6 +865,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Build snapshots without writing files under var/.",
+    )
+    parser.add_argument(
+        "--source-run-id",
+        help="Governance handoff source run id for governance_reject mode.",
+    )
+    parser.add_argument(
+        "--validation-id",
+        help="Validation result id for governance_reject mode.",
     )
     return parser
 
@@ -802,13 +890,29 @@ def main() -> int:
     target_date = (
         date.fromisoformat(args.target_date) if args.target_date else date.today()
     )
+    mode = str(getattr(args, "mode", "daily") or "daily").strip().lower()
+    source_run_id = str(getattr(args, "source_run_id", "") or "").strip()
+    validation_id = str(getattr(args, "validation_id", "") or "").strip()
     project_root = Path(__file__).resolve().parents[2]
     app = BootstrapWorkerApp(project_root=project_root)
-    snapshot = app.run(
-        target_date=target_date,
-        publish_succeeded=args.publish_succeeded,
-        write_outputs=not args.dry_run,
-    )
+    if mode == "governance_reject":
+        if not source_run_id or not validation_id:
+            parser.error(
+                "--source-run-id and --validation-id are required when "
+                "--mode governance_reject"
+            )
+        snapshot = app.run_governance_reject_on_demand(
+            target_date=target_date,
+            source_run_id=source_run_id,
+            validation_id=validation_id,
+            dry_run=bool(args.dry_run),
+        )
+    else:
+        snapshot = app.run(
+            target_date=target_date,
+            publish_succeeded=args.publish_succeeded,
+            write_outputs=not args.dry_run,
+        )
     orchestration = snapshot.get("orchestration", {})
     run_ledger_status = None
     if isinstance(orchestration, dict):
