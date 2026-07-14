@@ -427,6 +427,24 @@ def run_governance_candidate_outcome_upstream_producer(
     )
 
 
+def run_governance_candidate_outcome_bridge(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    dry_run: bool = False,
+) -> GovernanceCandidateValidationRecord:
+    validation_result = run_governance_candidate_outcome_upstream_producer(
+        project_root=project_root,
+        source_run_id=source_run_id,
+    )
+    return run_governance_candidate_validation_outcome(
+        project_root=project_root,
+        source_run_id=source_run_id,
+        validation_result=validation_result,
+        dry_run=dry_run,
+    )
+
+
 def run_governance_final_validation_selection(
     *,
     project_root: str | Path,

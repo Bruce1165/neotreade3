@@ -54,6 +54,7 @@ from .handoff import (
 )
 from .run_ledger import GovernanceCandidateValidationRecord, GovernanceStatusTransitionRecord
 from .runtime import (
+    run_governance_candidate_outcome_bridge,
     run_governance_candidate_outcome_upstream_producer,
     run_governance_candidate_validation_outcome,
     run_governance_status_transition,
@@ -108,6 +109,7 @@ __all__ = [
     "build_promotion_blocker_from_diagnostic",
     "build_reject_decision_record_from_validation_result",
     "build_validation_result",
+    "run_governance_candidate_outcome_bridge",
     "run_governance_candidate_outcome_upstream_producer",
     "run_governance_candidate_validation_outcome",
     "run_governance_status_transition",

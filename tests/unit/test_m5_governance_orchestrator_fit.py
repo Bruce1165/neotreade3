@@ -16,6 +16,8 @@ from neotrade3.governance.assembler import build_validation_result
 from neotrade3.governance.handoff import build_governance_handoff_from_batch_run
 from neotrade3.governance.runtime import run_governance_candidate_validation_outcome
 from neotrade3.governance.run_ledger import (
+    read_governance_candidate_validation_artifact,
+    read_governance_candidate_validation_record,
     read_governance_final_validation_artifact,
     read_governance_final_validation_record,
     read_governance_handoff_artifact,
@@ -391,6 +393,54 @@ def _run_governance_candidate_outcome_upstream_task(
             "target_date": date(2026, 5, 19),
             "project_root": str(project_root),
             "requested_by": "test.m5.governance.orchestrator_fit.candidate_outcome",
+            "dry_run": dry_run,
+        },
+    )
+    return task, results[0]
+
+
+def _run_governance_candidate_outcome_bridge_task(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    dry_run: bool,
+) -> tuple[PlannedTask, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    request = OnDemandTaskRequest(
+        target_date=date(2026, 5, 19),
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.candidate_outcome_bridge",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint=(
+                    "neotrade3.governance.runtime:"
+                    "run_governance_candidate_outcome_bridge"
+                ),
+                args_template={
+                    "source_run_id": source_run_id,
+                },
+                outputs=[
+                    "governance_candidate_validation_artifact",
+                    "governance_candidate_validation_ledger",
+                ],
+            )
+        ],
+    )
+    plan = orchestrator.build_on_demand_plan(request)
+    task = plan.planned_tasks[0]
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.candidate_bridge",
             "dry_run": dry_run,
         },
     )
@@ -1181,6 +1231,121 @@ def test_governance_candidate_outcome_upstream_executor_fails_without_candidate_
         dry_run=False,
     )
     _, result = _run_governance_candidate_outcome_upstream_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "persisted benchmark candidate_run_context not found" in result.message
+    assert result.artifact_refs == []
+
+
+def test_governance_candidate_outcome_bridge_executor_dry_run_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run_with_candidate_context(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_bridge_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=True,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-orchestrator-fit"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["dry_run"] is True
+    assert not (project_root / result.artifact_refs[0]).exists()
+    assert not (project_root / result.artifact_refs[1]).exists()
+    assert (
+        read_governance_candidate_validation_artifact(
+            project_root=project_root,
+            validation_id=result.details["validation_id"],
+        )
+        is None
+    )
+    assert (
+        read_governance_candidate_validation_record(
+            project_root=project_root,
+            validation_id=result.details["validation_id"],
+        )
+        is None
+    )
+
+
+def test_governance_candidate_outcome_bridge_executor_materializes_candidate_validation_record_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run_with_candidate_context(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_bridge_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    artifact_path = project_root / result.artifact_refs[0]
+    ledger_path = project_root / result.artifact_refs[1]
+    artifact_payload = read_governance_candidate_validation_artifact(
+        project_root=project_root,
+        validation_id=result.details["validation_id"],
+    )
+    ledger_record = read_governance_candidate_validation_record(
+        project_root=project_root,
+        validation_id=result.details["validation_id"],
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-orchestrator-fit"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["status"] == "completed"
+    assert result.details["dry_run"] is False
+    assert artifact_path.exists()
+    assert ledger_path.exists()
+    assert artifact_payload is not None
+    assert ledger_record is not None
+    assert artifact_payload["outcome"] == "rejected"
+    assert artifact_payload["validation_result"]["candidate_run_id"] == (
+        "candidate-run-orchestrator-fit"
+    )
+    assert ledger_record.validation_id == result.details["validation_id"]
+    assert ledger_record.source_run_id == run_id
+    assert ledger_record.candidate_run_id == "candidate-run-orchestrator-fit"
+
+
+def test_governance_candidate_outcome_bridge_executor_fails_without_candidate_context(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_bridge_task(
         project_root=project_root,
         source_run_id=run_id,
         dry_run=False,

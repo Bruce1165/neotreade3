@@ -20,6 +20,7 @@ from neotrade3.common.python_runtime import log_python_runtime, require_python_3
 from neotrade3.data_control import DataControlPipeline
 from neotrade3.governance.contracts import ValidationResult
 from neotrade3.governance.runtime import (
+    run_governance_candidate_outcome_bridge,
     run_governance_candidate_outcome_upstream_producer,
     run_governance_candidate_validation_outcome,
     run_governance_final_validation_selection,
@@ -488,6 +489,35 @@ class BootstrapWorkerApp:
                             "outcome": validation_result.outcome,
                             "dry_run": dry_run,
                             "validation_result": validation_result.to_payload(),
+                        },
+                    )
+
+                if task.task_id == "governance.candidate_outcome_bridge":
+                    if not source_run_id:
+                        raise ValueError("source_run_id must be provided")
+                    record = run_governance_candidate_outcome_bridge(
+                        project_root=project_root,
+                        source_run_id=source_run_id,
+                        dry_run=dry_run,
+                    )
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message=(
+                            "governance candidate outcome bridge materialized "
+                            "successfully"
+                        ),
+                        artifact_refs=[record.artifact_path, record.ledger_path],
+                        details={
+                            "validation_id": record.validation_id,
+                            "source_run_id": record.source_run_id,
+                            "status": record.status,
+                            "baseline_run_id": record.baseline_run_id,
+                            "candidate_run_id": record.candidate_run_id,
+                            "outcome": record.outcome,
+                            "dry_run": dry_run,
                         },
                     )
 
