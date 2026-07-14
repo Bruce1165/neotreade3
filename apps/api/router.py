@@ -2585,6 +2585,7 @@ class BootstrapApiRouter:
             if normalized_mode not in {
                 "daily",
                 "governance_reject",
+                "governance_reject_transition_chain",
                 "governance_status_transition",
                 "governance_candidate_validation_outcome",
             }:
@@ -2593,6 +2594,7 @@ class BootstrapApiRouter:
                     code="invalid_mode",
                     message=(
                         "mode must be one of: daily, governance_reject, "
+                        "governance_reject_transition_chain, "
                         "governance_status_transition, "
                         "governance_candidate_validation_outcome"
                     ),
@@ -2632,6 +2634,7 @@ class BootstrapApiRouter:
             resolved_validation_result: ValidationResult | None = None
             if normalized_mode in {
                 "governance_reject",
+                "governance_reject_transition_chain",
                 "governance_status_transition",
                 "governance_candidate_validation_outcome",
             }:

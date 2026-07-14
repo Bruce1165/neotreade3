@@ -1368,6 +1368,13 @@ class BootstrapApiService:
                     requested_by=requested_by.strip(),
                     dry_run=dry_run,
                 )
+            elif normalized_mode == "governance_reject_transition_chain":
+                snapshot = self.worker_app.run_governance_reject_transition_chain_on_demand(
+                    target_date=target_date_obj,
+                    source_run_id=resolved_source_run_id,
+                    requested_by=requested_by.strip(),
+                    dry_run=dry_run,
+                )
             elif normalized_mode == "governance_candidate_validation_outcome":
                 if validation_result is None:
                     raise ApiError(
