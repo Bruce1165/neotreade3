@@ -10,6 +10,7 @@ from neotrade3.benchmark import (
     B3_BOUNDARY_COMPLEX_SAMPLE,
     B4_INTERACTION_GUARDRAIL_SAMPLE,
     BenchmarkRunManifest,
+    BenchmarkCandidateRunContext,
     load_benchmark_run_manifest,
     run_benchmark_manifest,
 )
@@ -323,6 +324,26 @@ def test_load_benchmark_run_manifest_reads_b1_b2_seed_batch() -> None:
     )
 
 
+def test_benchmark_run_manifest_parses_candidate_run_context_with_default_source_run_id() -> None:
+    manifest = BenchmarkRunManifest.from_dict(
+        {
+            "run_id": "benchmark_candidate_truth_v1",
+            "registry_path": "config/benchmark/validation_seed_samples.json",
+            "sample_ids": ["b3_boundary_complex_advancing_seed"],
+            "candidate_run_context": {
+                "experiment_id": "exp-lowfreq-001",
+                "candidate_run_id": "candidate-run-001",
+            },
+        }
+    )
+
+    assert manifest.candidate_run_context == BenchmarkCandidateRunContext(
+        experiment_id="exp-lowfreq-001",
+        candidate_run_id="candidate-run-001",
+        source_run_id="benchmark_candidate_truth_v1",
+    )
+
+
 def test_run_benchmark_manifest_executes_seed_batch_and_aggregates_summary() -> None:
     manifest = load_benchmark_run_manifest(BENCHMARK_RUN_MANIFEST)
 
@@ -437,3 +458,29 @@ def test_run_benchmark_manifest_only_executes_selected_sample_ids() -> None:
     assert payload["executed_sample_ids"] == ["b3_boundary_complex_advancing_seed"]
     assert payload["grade_summary"] == {ASSESSMENT_GRADE_PASS: 1}
     assert payload["bucket_summary"] == {B3_BOUNDARY_COMPLEX_SAMPLE: 1}
+
+
+def test_run_benchmark_manifest_propagates_candidate_run_context() -> None:
+    manifest = BenchmarkRunManifest(
+        run_id="validation_seed_candidate_truth_v1",
+        registry_path="config/benchmark/validation_seed_samples.json",
+        sample_ids=("b3_boundary_complex_advancing_seed",),
+        candidate_run_context=BenchmarkCandidateRunContext(
+            experiment_id="exp-lowfreq-002",
+            candidate_run_id="candidate-run-002",
+            source_run_id="validation_seed_candidate_truth_v1",
+        ),
+    )
+
+    batch_result = run_benchmark_manifest(
+        project_root=PROJECT_ROOT,
+        manifest=manifest,
+        fixture_provider=_fixture_provider,
+    )
+
+    assert batch_result.candidate_run_context == manifest.candidate_run_context
+    assert batch_result.to_payload()["candidate_run_context"] == {
+        "experiment_id": "exp-lowfreq-002",
+        "candidate_run_id": "candidate-run-002",
+        "source_run_id": "validation_seed_candidate_truth_v1",
+    }

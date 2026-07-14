@@ -7,7 +7,10 @@ from pathlib import Path
 
 from neotrade3.benchmark.run_ledger import read_benchmark_batch_run_result
 
-from .assembler import build_reject_decision_record_from_validation_result
+from .assembler import (
+    build_reject_decision_record_from_validation_result,
+    build_validation_result,
+)
 from .contracts import AttentionItem, GovernanceDecisionRecord, PromotionBlocker, ValidationResult
 from .handoff import build_governance_handoff_from_batch_run
 from .run_ledger import (
@@ -105,6 +108,55 @@ def _resolve_candidate_validation_outcome(
     return validation_result
 
 
+def _resolve_unique_pending_validation_result(
+    *,
+    bundle_validation_results: tuple[ValidationResult, ...],
+    source_run_id: str,
+) -> ValidationResult:
+    pending_results = [
+        item
+        for item in bundle_validation_results
+        if item.outcome == "awaiting_candidate_validation"
+    ]
+    if not pending_results:
+        raise ValueError(
+            f"no pending validation_result found for source_run_id={source_run_id}"
+        )
+    if len(pending_results) != 1:
+        raise ValueError(
+            "ambiguous pending validation_results for "
+            f"source_run_id={source_run_id}: {len(pending_results)} records"
+        )
+    return pending_results[0]
+
+
+def _resolve_benchmark_candidate_context(
+    *,
+    project_root: Path,
+    source_run_id: str,
+):
+    batch_result = read_benchmark_batch_run_result(
+        project_root=project_root,
+        run_id=source_run_id,
+    )
+    if batch_result is None:
+        raise ValueError(
+            f"persisted benchmark artifact not found for run_id={source_run_id}"
+        )
+    candidate_run_context = batch_result.candidate_run_context
+    if candidate_run_context is None:
+        raise ValueError(
+            "persisted benchmark candidate_run_context not found for "
+            f"source_run_id={source_run_id}"
+        )
+    if candidate_run_context.source_run_id != source_run_id:
+        raise ValueError(
+            "persisted benchmark candidate_run_context.source_run_id does not match "
+            "source_run_id"
+        )
+    return candidate_run_context
+
+
 def _resolve_unique_candidate_validation_record(
     *,
     project_root: Path,
@@ -150,6 +202,23 @@ def _resolve_transition_object_ids(*, validation_result: ValidationResult) -> tu
     blocker_id = f"{diagnostic_id}:blocker"
     attention_id = f"{blocker_id}:attention"
     return blocker_id, attention_id
+
+
+def _resolve_active_blocker_for_validation(
+    *,
+    promotion_blockers: tuple[PromotionBlocker, ...],
+    validation_result: ValidationResult,
+) -> PromotionBlocker:
+    blocker_id, _ = _resolve_transition_object_ids(validation_result=validation_result)
+    matches = [item for item in promotion_blockers if item.blocker_id == blocker_id]
+    if not matches:
+        raise ValueError(f"promotion_blocker not found for blocker_id={blocker_id}")
+    if len(matches) != 1:
+        raise ValueError(f"ambiguous promotion_blocker for blocker_id={blocker_id}")
+    blocker = matches[0]
+    if not blocker.active:
+        raise ValueError(f"promotion_blocker must be active for blocker_id={blocker_id}")
+    return blocker
 
 
 def _find_effective_blocker(
@@ -297,6 +366,64 @@ def run_governance_candidate_validation_outcome(
         source_run_id=resolved_source_run_id,
         validation_result=final_validation_result,
         dry_run=dry_run,
+    )
+
+
+def run_governance_candidate_outcome_upstream_producer(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+) -> ValidationResult:
+    project_root_path = Path(project_root)
+    resolved_source_run_id = resolve_governance_benchmark_run_id(
+        benchmark_run_id=source_run_id,
+    )
+    bundle = read_governance_handoff_bundle(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+    )
+    if bundle is None:
+        raise ValueError(
+            f"persisted governance handoff not found for source_run_id={resolved_source_run_id}"
+        )
+
+    baseline_validation_result = _resolve_unique_pending_validation_result(
+        bundle_validation_results=bundle.validation_results,
+        source_run_id=resolved_source_run_id,
+    )
+    if not baseline_validation_result.remaining_guardrail_codes:
+        raise ValueError(
+            "pending validation_result.remaining_guardrail_codes must be non-empty"
+        )
+
+    candidate_run_context = _resolve_benchmark_candidate_context(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+    )
+    if candidate_run_context.experiment_id != baseline_validation_result.experiment_id:
+        raise ValueError(
+            "persisted benchmark candidate_run_context.experiment_id does not match "
+            "the pending validation_result"
+        )
+
+    effective_blocker = _resolve_active_blocker_for_validation(
+        promotion_blockers=bundle.promotion_blockers,
+        validation_result=baseline_validation_result,
+    )
+    evidence_refs = [
+        *baseline_validation_result.evidence_refs,
+        *effective_blocker.evidence_refs,
+    ]
+    return build_validation_result(
+        validation_id=baseline_validation_result.validation_id,
+        experiment_id=baseline_validation_result.experiment_id,
+        baseline_run_id=resolved_source_run_id,
+        candidate_run_id=candidate_run_context.candidate_run_id,
+        outcome="rejected",
+        introduced_risk_count=len(baseline_validation_result.remaining_guardrail_codes),
+        cleared_guardrail_codes=[],
+        remaining_guardrail_codes=baseline_validation_result.remaining_guardrail_codes,
+        evidence_refs=evidence_refs,
     )
 
 

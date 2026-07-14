@@ -4,6 +4,7 @@ from .artifact_writer import (
 )
 from .batch_runner import (
     BenchmarkBatchRunResult,
+    BenchmarkCandidateRunContext,
     BenchmarkRunManifest,
     load_benchmark_run_manifest,
     run_benchmark_manifest,
@@ -86,6 +87,7 @@ __all__ = [
     "BENCHMARK_SAMPLE_OBJECT_TYPE",
     "BenchmarkAssessmentResult",
     "BenchmarkBatchRunResult",
+    "BenchmarkCandidateRunContext",
     "BenchmarkFixtureBundle",
     "BenchmarkFixtureCatalog",
     "BenchmarkSample",

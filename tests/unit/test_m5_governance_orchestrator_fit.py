@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 import json
 from pathlib import Path
 
 from apps.worker.main import BootstrapWorkerApp
 from neotrade3.benchmark import (
+    BenchmarkCandidateRunContext,
     load_benchmark_run_manifest,
     materialize_benchmark_batch_run,
     run_benchmark_manifest,
 )
 from neotrade3.governance.assembler import build_validation_result
+from neotrade3.governance.handoff import build_governance_handoff_from_batch_run
 from neotrade3.governance.runtime import run_governance_candidate_validation_outcome
 from neotrade3.governance.run_ledger import (
     read_governance_final_validation_artifact,
@@ -65,6 +68,33 @@ def _materialize_benchmark_run(project_root: Path, manifest_name: str) -> str:
     batch_result = run_benchmark_manifest(
         project_root=project_root,
         manifest=manifest,
+    )
+    materialize_benchmark_batch_run(
+        project_root=project_root,
+        batch_result=batch_result,
+    )
+    return batch_result.run_id
+
+
+def _materialize_benchmark_run_with_candidate_context(
+    project_root: Path, manifest_name: str
+) -> str:
+    manifest = load_benchmark_run_manifest(
+        project_root / "config" / "benchmark" / manifest_name
+    )
+    batch_result = run_benchmark_manifest(
+        project_root=project_root,
+        manifest=manifest,
+    )
+    bundle = build_governance_handoff_from_batch_run(batch_result=batch_result)
+    assert len(bundle.validation_results) == 1
+    batch_result = replace(
+        batch_result,
+        candidate_run_context=BenchmarkCandidateRunContext(
+            experiment_id=bundle.validation_results[0].experiment_id,
+            candidate_run_id="candidate-run-orchestrator-fit",
+            source_run_id=batch_result.run_id,
+        ),
     )
     materialize_benchmark_batch_run(
         project_root=project_root,
@@ -316,6 +346,51 @@ def _run_governance_final_validation_selection_task(
             "target_date": date(2026, 5, 19),
             "project_root": str(project_root),
             "requested_by": "test.m5.governance.orchestrator_fit.final_selection",
+            "dry_run": dry_run,
+        },
+    )
+    return task, results[0]
+
+
+def _run_governance_candidate_outcome_upstream_task(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    dry_run: bool,
+) -> tuple[PlannedTask, object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    request = OnDemandTaskRequest(
+        target_date=date(2026, 5, 19),
+        tasks=[
+            OnDemandTaskItem(
+                task_id="governance.candidate_outcome_upstream",
+                phase=OrchestrationPhase.GOVERNANCE,
+                entrypoint=(
+                    "neotrade3.governance.runtime:"
+                    "run_governance_candidate_outcome_upstream_producer"
+                ),
+                args_template={
+                    "source_run_id": source_run_id,
+                },
+                outputs=[],
+            )
+        ],
+    )
+    plan = orchestrator.build_on_demand_plan(request)
+    task = plan.planned_tasks[0]
+    results = orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.candidate_outcome",
             "dry_run": dry_run,
         },
     )
@@ -1032,6 +1107,88 @@ def test_governance_final_validation_selection_executor_fails_without_candidate_
 
     assert result.status == RunStatus.FAILED
     assert "no persisted candidate validation outcome found" in result.message
+
+
+def test_governance_candidate_outcome_upstream_executor_dry_run_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run_with_candidate_context(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_upstream_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=True,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-orchestrator-fit"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["dry_run"] is True
+    assert result.details["validation_result"]["candidate_run_id"] == (
+        "candidate-run-orchestrator-fit"
+    )
+    assert result.artifact_refs == []
+
+
+def test_governance_candidate_outcome_upstream_executor_returns_validation_result_via_execute_run_plan(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run_with_candidate_context(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_upstream_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.OK
+    assert result.details["source_run_id"] == run_id
+    assert result.details["candidate_run_id"] == "candidate-run-orchestrator-fit"
+    assert result.details["outcome"] == "rejected"
+    assert result.details["validation_result"]["outcome"] == "rejected"
+    assert result.details["validation_result"]["baseline_run_id"] == run_id
+    assert result.artifact_refs == []
+
+
+def test_governance_candidate_outcome_upstream_executor_fails_without_candidate_context(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(
+        project_root,
+        "validation_seed_manifest.json",
+    )
+    _run_governance_task(
+        project_root=project_root,
+        benchmark_run_id=run_id,
+        dry_run=False,
+    )
+    _, result = _run_governance_candidate_outcome_upstream_task(
+        project_root=project_root,
+        source_run_id=run_id,
+        dry_run=False,
+    )
+
+    assert result.status == RunStatus.FAILED
+    assert "persisted benchmark candidate_run_context not found" in result.message
+    assert result.artifact_refs == []
 
 
 def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:

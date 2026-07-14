@@ -34,11 +34,52 @@ def _copy_int_dict(value: Any, *, field_name: str) -> dict[str, int]:
 
 
 @dataclass(frozen=True)
+class BenchmarkCandidateRunContext:
+    experiment_id: str
+    candidate_run_id: str
+    source_run_id: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_id": self.experiment_id,
+            "candidate_run_id": self.candidate_run_id,
+            "source_run_id": self.source_run_id,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: Any,
+        *,
+        default_source_run_id: str = "",
+    ) -> "BenchmarkCandidateRunContext":
+        if not isinstance(payload, Mapping):
+            raise TypeError("candidate_run_context must be a JSON object")
+        experiment_id = str(payload.get("experiment_id") or "").strip()
+        candidate_run_id = str(payload.get("candidate_run_id") or "").strip()
+        source_run_id = str(
+            payload.get("source_run_id") or default_source_run_id or ""
+        ).strip()
+        if not experiment_id:
+            raise ValueError("experiment_id must be non-empty")
+        if not candidate_run_id:
+            raise ValueError("candidate_run_id must be non-empty")
+        if not source_run_id:
+            raise ValueError("source_run_id must be non-empty")
+        return cls(
+            experiment_id=experiment_id,
+            candidate_run_id=candidate_run_id,
+            source_run_id=source_run_id,
+        )
+
+
+@dataclass(frozen=True)
 class BenchmarkRunManifest:
     run_id: str
     registry_path: str
     sample_ids: tuple[str, ...] = ()
     description: str = ""
+    candidate_run_context: BenchmarkCandidateRunContext | None = None
 
     @classmethod
     def from_dict(cls, payload: Any) -> "BenchmarkRunManifest":
@@ -50,11 +91,20 @@ class BenchmarkRunManifest:
             raise ValueError("run_id must be non-empty")
         if not registry_path:
             raise ValueError("registry_path must be non-empty")
+        candidate_run_context_payload = payload.get("candidate_run_context")
         return cls(
             run_id=run_id,
             registry_path=registry_path,
             sample_ids=_copy_str_list(payload.get("sample_ids"), field_name="sample_ids"),
             description=str(payload.get("description", "") or "").strip(),
+            candidate_run_context=(
+                None
+                if candidate_run_context_payload is None
+                else BenchmarkCandidateRunContext.from_dict(
+                    candidate_run_context_payload,
+                    default_source_run_id=run_id,
+                )
+            ),
         )
 
     @classmethod
@@ -71,9 +121,10 @@ class BenchmarkBatchRunResult:
     grade_summary: dict[str, int] = field(default_factory=dict)
     bucket_summary: dict[str, int] = field(default_factory=dict)
     results: tuple[BenchmarkAssessmentResult, ...] = ()
+    candidate_run_context: BenchmarkCandidateRunContext | None = None
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "run_id": self.run_id,
             "registry_path": self.registry_path,
             "executed_sample_ids": list(self.executed_sample_ids),
@@ -81,6 +132,9 @@ class BenchmarkBatchRunResult:
             "bucket_summary": dict(self.bucket_summary),
             "results": [item.to_payload() for item in self.results],
         }
+        if self.candidate_run_context is not None:
+            payload["candidate_run_context"] = self.candidate_run_context.to_payload()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Any) -> "BenchmarkBatchRunResult":
@@ -94,6 +148,7 @@ class BenchmarkBatchRunResult:
             raise ValueError("registry_path must be non-empty")
 
         results_payload = payload.get("results", [])
+        candidate_run_context_payload = payload.get("candidate_run_context")
         if not isinstance(results_payload, list):
             raise TypeError("results must be a JSON array")
 
@@ -114,6 +169,14 @@ class BenchmarkBatchRunResult:
             ),
             results=tuple(
                 BenchmarkAssessmentResult.from_dict(item) for item in results_payload
+            ),
+            candidate_run_context=(
+                None
+                if candidate_run_context_payload is None
+                else BenchmarkCandidateRunContext.from_dict(
+                    candidate_run_context_payload,
+                    default_source_run_id=run_id,
+                )
             ),
         )
 
@@ -185,4 +248,5 @@ def run_benchmark_manifest(
         grade_summary=grade_summary,
         bucket_summary=bucket_summary,
         results=tuple(results),
+        candidate_run_context=manifest.candidate_run_context,
     )

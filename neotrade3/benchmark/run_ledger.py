@@ -20,6 +20,9 @@ class BenchmarkRunLedgerRecord:
     registry_path: str
     artifact_path: str
     ledger_path: str
+    experiment_id: str = ""
+    candidate_run_id: str = ""
+    source_run_id: str = ""
     executed_sample_ids: tuple[str, ...] = ()
     grade_summary: dict[str, int] = field(default_factory=dict)
     bucket_summary: dict[str, int] = field(default_factory=dict)
@@ -36,6 +39,9 @@ class BenchmarkRunLedgerRecord:
             registry_path=str(payload.get("registry_path") or "").strip(),
             artifact_path=str(payload.get("artifact_path") or "").strip(),
             ledger_path=str(payload.get("ledger_path") or "").strip(),
+            experiment_id=str(payload.get("experiment_id") or "").strip(),
+            candidate_run_id=str(payload.get("candidate_run_id") or "").strip(),
+            source_run_id=str(payload.get("source_run_id") or "").strip(),
             executed_sample_ids=tuple(
                 str(item).strip()
                 for item in payload.get("executed_sample_ids", [])
@@ -60,6 +66,9 @@ class BenchmarkRunLedgerRecord:
             "registry_path": self.registry_path,
             "artifact_path": self.artifact_path,
             "ledger_path": self.ledger_path,
+            "experiment_id": self.experiment_id,
+            "candidate_run_id": self.candidate_run_id,
+            "source_run_id": self.source_run_id,
             "executed_sample_ids": list(self.executed_sample_ids),
             "grade_summary": dict(self.grade_summary),
             "bucket_summary": dict(self.bucket_summary),
@@ -93,6 +102,7 @@ def write_benchmark_run_ledger(
 ) -> BenchmarkRunLedgerRecord:
     project_root_path = Path(project_root)
     ledger_file = _ledger_file(project_root=project_root_path, run_id=batch_result.run_id)
+    candidate_run_context = batch_result.candidate_run_context
     payload = {
         "run_id": batch_result.run_id,
         "status": "completed",
@@ -101,6 +111,17 @@ def write_benchmark_run_ledger(
         "registry_path": batch_result.registry_path,
         "artifact_path": artifact_record.artifact_path,
         "ledger_path": str(ledger_file.relative_to(project_root_path)),
+        "experiment_id": (
+            candidate_run_context.experiment_id if candidate_run_context is not None else ""
+        ),
+        "candidate_run_id": (
+            candidate_run_context.candidate_run_id
+            if candidate_run_context is not None
+            else ""
+        ),
+        "source_run_id": (
+            candidate_run_context.source_run_id if candidate_run_context is not None else ""
+        ),
         "executed_sample_ids": list(batch_result.executed_sample_ids),
         "grade_summary": dict(batch_result.grade_summary),
         "bucket_summary": dict(batch_result.bucket_summary),

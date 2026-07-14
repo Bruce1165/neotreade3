@@ -8,6 +8,8 @@ from neotrade3.benchmark import (
     ASSESSMENT_GRADE_PASS,
     B3_BOUNDARY_COMPLEX_SAMPLE,
     B4_INTERACTION_GUARDRAIL_SAMPLE,
+    BenchmarkBatchRunResult,
+    BenchmarkCandidateRunContext,
     load_benchmark_run_manifest,
     run_benchmark_manifest,
     write_benchmark_batch_run_artifact,
@@ -63,3 +65,38 @@ def test_write_benchmark_batch_run_artifact_dry_run_does_not_write_file(tmp_path
     artifact_path = tmp_path / record.artifact_path
     assert not artifact_path.exists()
     assert record.sample_count == 2
+
+
+def test_write_benchmark_batch_run_artifact_persists_candidate_run_context(
+    tmp_path,
+) -> None:
+    manifest = load_benchmark_run_manifest(BENCHMARK_RUN_MANIFEST)
+    batch_result = run_benchmark_manifest(
+        project_root=PROJECT_ROOT,
+        manifest=manifest,
+    )
+    batch_result = BenchmarkBatchRunResult(
+        run_id=batch_result.run_id,
+        registry_path=batch_result.registry_path,
+        executed_sample_ids=batch_result.executed_sample_ids,
+        grade_summary=batch_result.grade_summary,
+        bucket_summary=batch_result.bucket_summary,
+        results=batch_result.results,
+        candidate_run_context=BenchmarkCandidateRunContext(
+            experiment_id="exp-lowfreq-005",
+            candidate_run_id="candidate-run-005",
+            source_run_id=batch_result.run_id,
+        ),
+    )
+
+    record = write_benchmark_batch_run_artifact(
+        project_root=tmp_path,
+        batch_result=batch_result,
+    )
+
+    payload = json.loads((tmp_path / record.artifact_path).read_text(encoding="utf-8"))
+    assert payload["candidate_run_context"] == {
+        "experiment_id": "exp-lowfreq-005",
+        "candidate_run_id": "candidate-run-005",
+        "source_run_id": batch_result.run_id,
+    }

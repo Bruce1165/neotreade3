@@ -5,6 +5,7 @@ from pathlib import Path
 import neotrade3.benchmark as benchmark
 from neotrade3.benchmark import (
     BenchmarkBatchRunResult,
+    BenchmarkCandidateRunContext,
     load_benchmark_run_manifest,
     materialize_benchmark_batch_run,
     read_benchmark_batch_run_result,
@@ -76,6 +77,41 @@ def test_benchmark_batch_run_result_from_dict_ignores_artifact_envelope_keys(
     assert reconstructed == batch_result
     assert not hasattr(reconstructed, "written_at")
     assert not hasattr(reconstructed, "sample_count")
+
+
+def test_read_benchmark_batch_run_result_round_trips_candidate_run_context(
+    tmp_path,
+) -> None:
+    manifest = load_benchmark_run_manifest(BENCHMARK_RUN_MANIFEST)
+    batch_result = run_benchmark_manifest(
+        project_root=PROJECT_ROOT,
+        manifest=manifest,
+    )
+    batch_result = BenchmarkBatchRunResult(
+        run_id=batch_result.run_id,
+        registry_path=batch_result.registry_path,
+        executed_sample_ids=batch_result.executed_sample_ids,
+        grade_summary=batch_result.grade_summary,
+        bucket_summary=batch_result.bucket_summary,
+        results=batch_result.results,
+        candidate_run_context=BenchmarkCandidateRunContext(
+            experiment_id="exp-lowfreq-004",
+            candidate_run_id="candidate-run-004",
+            source_run_id=batch_result.run_id,
+        ),
+    )
+    materialize_benchmark_batch_run(
+        project_root=tmp_path,
+        batch_result=batch_result,
+    )
+
+    reconstructed = read_benchmark_batch_run_result(
+        project_root=tmp_path,
+        run_id=batch_result.run_id,
+    )
+
+    assert reconstructed is not None
+    assert reconstructed.candidate_run_context == batch_result.candidate_run_context
 
 
 def test_read_benchmark_batch_run_result_returns_none_for_missing_artifact(

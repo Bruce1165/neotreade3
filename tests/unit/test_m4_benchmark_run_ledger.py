@@ -8,6 +8,7 @@ from neotrade3.benchmark import (
     B3_BOUNDARY_COMPLEX_SAMPLE,
     B4_INTERACTION_GUARDRAIL_SAMPLE,
     BenchmarkBatchRunResult,
+    BenchmarkCandidateRunContext,
     list_benchmark_run_ledgers,
     load_benchmark_run_manifest,
     materialize_benchmark_batch_run,
@@ -115,3 +116,35 @@ def test_list_benchmark_run_ledgers_returns_latest_run_first(tmp_path) -> None:
         "validation_seed_v2_batch",
         "validation_seed_v1_batch",
     ]
+
+
+def test_materialize_benchmark_batch_run_projects_candidate_run_context_into_ledger(
+    tmp_path,
+) -> None:
+    manifest = load_benchmark_run_manifest(BENCHMARK_RUN_MANIFEST)
+    batch_result = run_benchmark_manifest(
+        project_root=PROJECT_ROOT,
+        manifest=manifest,
+    )
+    batch_result = BenchmarkBatchRunResult(
+        run_id=batch_result.run_id,
+        registry_path=batch_result.registry_path,
+        executed_sample_ids=batch_result.executed_sample_ids,
+        grade_summary=batch_result.grade_summary,
+        bucket_summary=batch_result.bucket_summary,
+        results=batch_result.results,
+        candidate_run_context=BenchmarkCandidateRunContext(
+            experiment_id="exp-lowfreq-003",
+            candidate_run_id="candidate-run-003",
+            source_run_id=batch_result.run_id,
+        ),
+    )
+
+    record = materialize_benchmark_batch_run(
+        project_root=tmp_path,
+        batch_result=batch_result,
+    )
+
+    assert record.experiment_id == "exp-lowfreq-003"
+    assert record.candidate_run_id == "candidate-run-003"
+    assert record.source_run_id == batch_result.run_id
