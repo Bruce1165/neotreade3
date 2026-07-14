@@ -181,8 +181,8 @@
 - `--validation-result` 必须是一个显式 JSON payload，且必须匹配 `ValidationResult` contract；当前不会从 `validation_id` 自动推导完整结果。
 - 如只想验证参数与计划链路、而不写入 outcome 结果，可加 `--dry-run`。
 - 该路径的正式 outcome 产物使用独立命名空间，不覆盖 bootstrap 主链:
-  - `var/artifacts/governance_candidate_validations/<validation_id>/governance_candidate_validation_outcome.json`
-  - `var/ledgers/governance_candidate_validations/<validation_id>/governance_candidate_validation_outcome_run.json`
+  - `var/artifacts/governance_candidate_validations/<validation_id>/governance_candidate_validation.json`
+  - `var/ledgers/governance_candidate_validations/<validation_id>/governance_candidate_validation_run.json`
 
 当前 `governance CLI` 也提供对称入口:
 
@@ -199,6 +199,24 @@
   - `source_run_id`
   - `validation_result`
 - 该入口的作用是物化独立的 candidate validation outcome truth，不会替代或覆盖已有 handoff / reject / status transition 产物。
+
+### 5.7 Governance final validation selection 当前边界
+
+当前 `M5` 还存在一个独立的 final validation truth owner：
+
+- final truth 位于独立命名空间:
+  - `var/artifacts/governance_final_validations/<source_run_id>/governance_final_validation.json`
+  - `var/ledgers/governance_final_validations/<source_run_id>/governance_final_validation_run.json`
+- 该 owner 的显式输入 contract 当前固定为:
+  - `source_run_id`
+- 当前已接入 `worker/orchestrator` 的显式 on-demand carrier，`task_id` 固定为:
+  - `governance.final_validation_selection`
+- 当前不会自动从 `candidate_validation_outcome` 进入 `daily` 主链，也不提供独立 `worker --mode` / `governance CLI` / API mode。
+- 因此，这一能力当前应表述为:
+  - 已存在 formal owner
+  - 已存在 worker/orchestrator explicit on-demand adoption
+  - 尚未进入 operator-facing standalone surface
+  - 尚未进入日常 `daily` 自动编排
 
 ## 6. API 用法
 
@@ -268,9 +286,10 @@ POST /api/orchestration/run
   - `var/artifacts/governance_status_transitions/<validation_id>/governance_status_transition.json`
   - `var/ledgers/governance_status_transitions/<validation_id>/governance_status_transition_run.json`
 - 对于 `governance_candidate_validation_outcome` 模式，底层 outcome 结果仍落在独立命名空间:
-  - `var/artifacts/governance_candidate_validations/<validation_id>/governance_candidate_validation_outcome.json`
-  - `var/ledgers/governance_candidate_validations/<validation_id>/governance_candidate_validation_outcome_run.json`
+  - `var/artifacts/governance_candidate_validations/<validation_id>/governance_candidate_validation.json`
+  - `var/ledgers/governance_candidate_validations/<validation_id>/governance_candidate_validation_run.json`
 - `governance_reject`、`governance_status_transition` 与 `governance_candidate_validation_outcome` 都是 on-demand surface，不属于日常 `daily` 自动编排。
+- `final validation selection` 当前尚未暴露为 `/api/orchestration/run` 的独立 `mode`；现阶段只存在 worker/orchestrator explicit on-demand carrier，不应表述成 API 已支持。
 
 `governance_reject` 最小调用样例:
 
