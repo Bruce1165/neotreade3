@@ -387,12 +387,17 @@
   - `M5 candidate validation outcome` 当前显式输入 contract 固定为：
     - `source_run_id`
     - `validation_result`
+  - `M5` 已完成 `candidate outcome upstream -> candidate_validation_outcome` bridge owner，并进入 `worker/orchestrator` on-demand 与 `daily` scheduled adoption：
+    - shared runtime 已支持 `run_governance_candidate_outcome_bridge(...)`
+    - worker governance executor 已支持 `task_id="governance.candidate_outcome_bridge"`
+    - `daily_master_orchestrator` 已注册 `governance.candidate_outcome_bridge`
+    - 当前显式输入 contract 固定为 `source_run_id`
   - `M5` 已完成 final validation selection/projection 的独立真值面与 worker/orchestrator on-demand adoption：
     - persisted truth 位于 `governance_final_validations` 独立命名空间
     - shared runtime 已支持 `run_governance_final_validation_selection(...)`
     - worker governance executor 已支持 `task_id="governance.final_validation_selection"`
     - 当前显式输入 contract 固定为 `source_run_id`
-    - 当前未暴露为独立 CLI / API mode，也未进入 `daily` scheduled adoption
+    - 当前未暴露为独立 CLI / API mode，但已进入 `daily` scheduled adoption
   - `M5` 下游 `reject_execution` 与 `status_transition` 当前已消费 persisted outcome truth。
   - `M5` 已完成上游真值切换基线：
     - shared runtime 不再重跑 benchmark manifest
@@ -410,12 +415,12 @@
   - 当前必须明确的边界：
     - `M4` 仍是 validation-seed benchmark 基线，不等于完整 benchmark 层
     - `M5` 仍是治理接线基线，不等于完整 validation/promotion/reject 闭环
-    - `M5 candidate validation outcome` 与 `M5 final validation selection` 当前都仍是 on-demand surface，不等于完整的 scheduler-facing 主链或 `daily` scheduled adoption
+    - `M5 candidate validation outcome` 的显式人工触发面当前仍是 on-demand contract；scheduler-facing `daily` 主链当前通过 `candidate_outcome_bridge -> final_validation_selection` 闭环，不等于更宽的 CLI / API adoption
     - `M3 backhalf` 当前 formal object/owner 已补齐，但下游消费面与状态文档此前存在滞后，不应再把 `decision_lifecycle_log` 和局部/全局退出显式语义记为未完成
   - 当前最直接下一步：
-    - 先审计谁来提供非人工的 `candidate_validation_outcome` upstream producer，再决定 `final_validation_selection` 是否能安全进入 `daily` 主链
-    - 在 upstream producer 未冻结前，不把 `final_validation_selection` 注册成 `daily` scheduled task
-    - 之后再决定 `final_validation_selection` 是否需要更宽的 CLI / API adoption，并继续推进 `M5` 完整闭环对象、`M4` 完整 benchmark、version unification、`M6 Delivery Ready`
+    - 审计 `reject_execution` 与 `status_transition` 是否需要 scheduler-facing adoption，并明确它们与 `daily` 主链的依赖与失败闭合语义
+    - 决定 `final_validation_selection` 是否需要更宽的 CLI / API adoption
+    - 继续推进 `M5` 完整闭环对象、`M4` 完整 benchmark、version unification、`M6 Delivery Ready`
 
 ## 文档一致性说明
 
@@ -428,9 +433,10 @@
   - `M4` 已具备 mainline runner、artifact/ledger 与 typed readback 基线
   - `M5` 已具备 contract/handoff/persistence/ledger/runtime/orchestrator-fit 基线，且上游真值已切到 persisted `M4`
   - `M5 candidate validation outcome` 已完成 persisted truth materialization 与 `runtime -> CLI -> worker -> API` trigger adoption
-  - `M5 final validation selection` 已完成 persisted final truth owner 与 `worker/orchestrator` explicit on-demand adoption，但仍未进入 `daily` scheduled adoption，也未暴露独立 CLI / API mode
+  - `M5 candidate outcome bridge` 已完成 persisted outcome bridge owner 与 `worker/orchestrator` explicit on-demand、`daily` scheduled adoption
+  - `M5 final validation selection` 已完成 persisted final truth owner 与 `worker/orchestrator` explicit on-demand、`daily` scheduled adoption，但仍未暴露独立 CLI / API mode
 - 下一步第一件事：
-  - 先审计谁来提供非人工的 `candidate_validation_outcome` upstream producer，避免在证据不足时把 `final_validation_selection` 或 `candidate_validation_outcome` 误写成自动调度能力
+  - 先审计 `reject_execution` 与 `status_transition` 是否需要进入 scheduler-facing 主链，避免在证据不足时把下游治理动作误写成自动调度能力
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 

@@ -5,5 +5,10 @@
     "b3_boundary_complex_advancing_seed",
     "b4_local_global_guardrail_seed"
   ],
-  "description": "NeoTrade3 M4 validation seed batch manifest. v1 scope: execute the first repeatable B3/B4 benchmark seeds as one batch run."
+  "description": "NeoTrade3 M4 validation seed batch manifest. v1 scope: execute the first repeatable B3/B4 benchmark seeds as one batch run.",
+  "candidate_run_context": {
+    "experiment_id": "m4seed:B4_interaction_guardrail:600000:2026-07-07:T1_prohibition_target:trace:C_GUARD_LOCAL_GLOBAL_END:diagnostic:cr:experiment",
+    "candidate_run_id": "candidate-run-validation-seed-v1",
+    "source_run_id": "validation_seed_v1_batch"
+  }
 }

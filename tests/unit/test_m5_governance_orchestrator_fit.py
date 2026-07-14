@@ -45,6 +45,12 @@ ORCHESTRATOR_CONFIG = (
     PROJECT_ROOT / "config" / "orchestrator" / "daily_master_orchestrator.json"
 )
 BENCHMARK_CONFIG_DIR = PROJECT_ROOT / "config" / "benchmark"
+DAILY_GOVERNANCE_CHAIN_TASK_IDS = (
+    "benchmark.materialize_run",
+    "governance.materialize_handoff",
+    "governance.candidate_outcome_bridge",
+    "governance.final_validation_selection",
+)
 
 
 def _prepare_project_root(tmp_path: Path) -> Path:
@@ -76,6 +82,18 @@ def _materialize_benchmark_run(project_root: Path, manifest_name: str) -> str:
         batch_result=batch_result,
     )
     return batch_result.run_id
+
+
+def _remove_candidate_run_context_from_manifest(
+    project_root: Path, manifest_name: str
+) -> None:
+    manifest_path = project_root / "config" / "benchmark" / manifest_name
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.pop("candidate_run_context", None)
+    manifest_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _materialize_benchmark_run_with_candidate_context(
@@ -446,7 +464,6 @@ def _run_governance_candidate_outcome_bridge_task(
     )
     return task, results[0]
 
-
 def test_build_on_demand_plan_preserves_explicit_task_shape() -> None:
     orchestrator = DailyMasterOrchestrator.from_files(
         orchestrator_config_path=ORCHESTRATOR_CONFIG,
@@ -536,6 +553,55 @@ def _run_benchmark_then_governance_chain(
     return results[0], results[1]
 
 
+def _build_scheduled_governance_daily_chain_plan() -> DailyRunPlan:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    full_plan = orchestrator.build_run_plan(
+        DailyRunRequest(target_date=date(2026, 5, 19), publish_succeeded=False)
+    )
+    selected_tasks = [
+        task
+        for task in full_plan.planned_tasks
+        if task.task_id in DAILY_GOVERNANCE_CHAIN_TASK_IDS
+    ]
+    assert [task.task_id for task in selected_tasks] == list(
+        DAILY_GOVERNANCE_CHAIN_TASK_IDS
+    )
+    return DailyRunPlan(
+        target_date=full_plan.target_date,
+        phases=[OrchestrationPhase.BENCHMARK, OrchestrationPhase.GOVERNANCE],
+        planned_tasks=selected_tasks,
+    )
+
+
+def _run_scheduled_governance_daily_chain(
+    *,
+    project_root: Path,
+    dry_run: bool,
+) -> list[object]:
+    orchestrator = DailyMasterOrchestrator.from_files(
+        orchestrator_config_path=ORCHESTRATOR_CONFIG,
+        labs_registry_path=LABS_CONFIG,
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    plan = _build_scheduled_governance_daily_chain_plan()
+    return orchestrator.execute_run_plan(
+        plan,
+        {
+            OrchestrationPhase.BENCHMARK: app._create_benchmark_executor(),
+            OrchestrationPhase.GOVERNANCE: app._create_governance_executor(),
+        },
+        {
+            "target_date": date(2026, 5, 19),
+            "project_root": str(project_root),
+            "requested_by": "test.m5.governance.orchestrator_fit.daily_chain",
+            "dry_run": dry_run,
+        },
+    )
+
+
 def test_governance_phase_and_dynamic_benchmark_run_reference_survive_planning() -> None:
     orchestrator = DailyMasterOrchestrator.from_files(
         orchestrator_config_path=ORCHESTRATOR_CONFIG,
@@ -558,6 +624,34 @@ def test_governance_phase_and_dynamic_benchmark_run_reference_survive_planning()
     assert governance_task.args_template["benchmark_run_id"] == {
         "from_task": "benchmark.materialize_run",
         "detail_key": "run_id",
+    }
+
+
+def test_governance_daily_chain_tasks_survive_planning() -> None:
+    plan = _build_scheduled_governance_daily_chain_plan()
+    task_ids = [task.task_id for task in plan.planned_tasks]
+    bridge_task = next(
+        task
+        for task in plan.planned_tasks
+        if task.task_id == "governance.candidate_outcome_bridge"
+    )
+    final_task = next(
+        task
+        for task in plan.planned_tasks
+        if task.task_id == "governance.final_validation_selection"
+    )
+
+    assert plan.phases == [OrchestrationPhase.BENCHMARK, OrchestrationPhase.GOVERNANCE]
+    assert task_ids == list(DAILY_GOVERNANCE_CHAIN_TASK_IDS)
+    assert bridge_task.depends_on == ["governance.materialize_handoff"]
+    assert bridge_task.args_template["source_run_id"] == {
+        "from_task": "governance.materialize_handoff",
+        "detail_key": "source_run_id",
+    }
+    assert final_task.depends_on == ["governance.candidate_outcome_bridge"]
+    assert final_task.args_template["source_run_id"] == {
+        "from_task": "governance.candidate_outcome_bridge",
+        "detail_key": "source_run_id",
     }
 
 
@@ -677,6 +771,63 @@ def test_governance_executor_consumes_dynamic_benchmark_run_id_from_dependency(
         "run_id"
     ]
     assert governance_result.details["attention_item_count"] == 0
+
+
+def test_scheduled_governance_daily_chain_executes_bridge_and_final_selection(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    results = _run_scheduled_governance_daily_chain(
+        project_root=project_root,
+        dry_run=False,
+    )
+    benchmark_result, handoff_result, bridge_result, final_result = results
+
+    assert benchmark_result.status == RunStatus.OK
+    assert handoff_result.status == RunStatus.OK
+    assert bridge_result.status == RunStatus.OK
+    assert final_result.status == RunStatus.OK
+    assert handoff_result.details["source_run_id"] == benchmark_result.details["run_id"]
+    assert bridge_result.details["source_run_id"] == benchmark_result.details["run_id"]
+    assert bridge_result.details["candidate_run_id"] == "candidate-run-validation-seed-v1"
+    assert final_result.details["source_run_id"] == benchmark_result.details["run_id"]
+    assert final_result.details["selected_validation_id"] == bridge_result.details[
+        "validation_id"
+    ]
+    assert final_result.details["candidate_run_id"] == "candidate-run-validation-seed-v1"
+    assert final_result.details["outcome"] == "rejected"
+    assert (project_root / bridge_result.artifact_refs[0]).exists()
+    assert (project_root / bridge_result.artifact_refs[1]).exists()
+    assert (project_root / final_result.artifact_refs[0]).exists()
+    assert (project_root / final_result.artifact_refs[1]).exists()
+
+
+def test_scheduled_governance_daily_chain_blocks_final_selection_when_bridge_fails(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    manifest_path = (
+        project_root / "config" / "benchmark" / "validation_seed_manifest.json"
+    )
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload.pop("candidate_run_context", None)
+    manifest_path.write_text(
+        json.dumps(manifest_payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    results = _run_scheduled_governance_daily_chain(
+        project_root=project_root,
+        dry_run=False,
+    )
+    benchmark_result, handoff_result, bridge_result, final_result = results
+
+    assert benchmark_result.status == RunStatus.OK
+    assert handoff_result.status == RunStatus.OK
+    assert bridge_result.status == RunStatus.FAILED
+    assert "persisted benchmark candidate_run_context not found" in bridge_result.message
+    assert final_result.status == RunStatus.BLOCKED
+    assert "governance.candidate_outcome_bridge" in final_result.message
 
 
 def test_governance_blocks_when_benchmark_dependency_is_not_satisfied(
@@ -1221,6 +1372,10 @@ def test_governance_candidate_outcome_upstream_executor_fails_without_candidate_
     tmp_path: Path,
 ) -> None:
     project_root = _prepare_project_root(tmp_path)
+    _remove_candidate_run_context_from_manifest(
+        project_root,
+        "validation_seed_manifest.json",
+    )
     run_id = _materialize_benchmark_run(
         project_root,
         "validation_seed_manifest.json",
@@ -1336,6 +1491,10 @@ def test_governance_candidate_outcome_bridge_executor_fails_without_candidate_co
     tmp_path: Path,
 ) -> None:
     project_root = _prepare_project_root(tmp_path)
+    _remove_candidate_run_context_from_manifest(
+        project_root,
+        "validation_seed_manifest.json",
+    )
     run_id = _materialize_benchmark_run(
         project_root,
         "validation_seed_manifest.json",
@@ -1358,17 +1517,37 @@ def test_governance_candidate_outcome_bridge_executor_fails_without_candidate_co
 
 def test_orchestrator_config_declares_governance_task_dynamic_benchmark_reference() -> None:
     payload = json.loads(ORCHESTRATOR_CONFIG.read_text(encoding="utf-8"))
-    governance_task = next(
+    handoff_task = next(
         task
         for task in payload["tasks"]
         if task["task_id"] == "governance.materialize_handoff"
     )
+    bridge_task = next(
+        task
+        for task in payload["tasks"]
+        if task["task_id"] == "governance.candidate_outcome_bridge"
+    )
+    final_task = next(
+        task
+        for task in payload["tasks"]
+        if task["task_id"] == "governance.final_validation_selection"
+    )
 
     assert payload["phases"][-1] == OrchestrationPhase.GOVERNANCE.value
     assert payload["phases"][-2] == OrchestrationPhase.BENCHMARK.value
-    assert governance_task["phase"] == OrchestrationPhase.GOVERNANCE.value
-    assert governance_task["depends_on"] == ["benchmark.materialize_run"]
-    assert governance_task["args_template"]["benchmark_run_id"] == {
+    assert handoff_task["phase"] == OrchestrationPhase.GOVERNANCE.value
+    assert handoff_task["depends_on"] == ["benchmark.materialize_run"]
+    assert handoff_task["args_template"]["benchmark_run_id"] == {
         "from_task": "benchmark.materialize_run",
         "detail_key": "run_id",
+    }
+    assert bridge_task["depends_on"] == ["governance.materialize_handoff"]
+    assert bridge_task["args_template"]["source_run_id"] == {
+        "from_task": "governance.materialize_handoff",
+        "detail_key": "source_run_id",
+    }
+    assert final_task["depends_on"] == ["governance.candidate_outcome_bridge"]
+    assert final_task["args_template"]["source_run_id"] == {
+        "from_task": "governance.candidate_outcome_bridge",
+        "detail_key": "source_run_id",
     }

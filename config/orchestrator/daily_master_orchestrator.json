@@ -130,6 +130,50 @@
       "failure_policy": "halt_run",
       "retry_policy": "no_retry",
       "issue_tags": ["governance", "handoff"]
+    },
+    {
+      "task_id": "governance.candidate_outcome_bridge",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "governance",
+      "entrypoint": "neotrade3.governance.runtime:run_governance_candidate_outcome_bridge",
+      "args_template": {
+        "source_run_id": {
+          "from_task": "governance.materialize_handoff",
+          "detail_key": "source_run_id"
+        }
+      },
+      "depends_on": ["governance.materialize_handoff"],
+      "requires_publish_status": false,
+      "outputs": [
+        "governance_candidate_validation_artifact",
+        "governance_candidate_validation_ledger"
+      ],
+      "failure_policy": "halt_run",
+      "retry_policy": "no_retry",
+      "issue_tags": ["governance", "candidate_validation"]
+    },
+    {
+      "task_id": "governance.final_validation_selection",
+      "lab_id": null,
+      "trigger_type": "scheduled_entry",
+      "phase": "governance",
+      "entrypoint": "neotrade3.governance.runtime:run_governance_final_validation_selection",
+      "args_template": {
+        "source_run_id": {
+          "from_task": "governance.candidate_outcome_bridge",
+          "detail_key": "source_run_id"
+        }
+      },
+      "depends_on": ["governance.candidate_outcome_bridge"],
+      "requires_publish_status": false,
+      "outputs": [
+        "governance_final_validation_artifact",
+        "governance_final_validation_ledger"
+      ],
+      "failure_policy": "halt_run",
+      "retry_policy": "no_retry",
+      "issue_tags": ["governance", "final_validation"]
     }
   ]
 }
