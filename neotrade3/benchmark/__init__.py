@@ -5,7 +5,9 @@ from .artifact_writer import (
 from .batch_runner import (
     BenchmarkBatchRunResult,
     BenchmarkCandidateRunContext,
+    BenchmarkReplaySample,
     BenchmarkRunManifest,
+    INLINE_REPLAY_REGISTRY_PATH,
     load_benchmark_run_manifest,
     run_benchmark_manifest,
 )
@@ -90,6 +92,7 @@ __all__ = [
     "BenchmarkCandidateRunContext",
     "BenchmarkFixtureBundle",
     "BenchmarkFixtureCatalog",
+    "BenchmarkReplaySample",
     "BenchmarkSample",
     "BenchmarkRunLedgerRecord",
     "BenchmarkSeedRegistry",
@@ -105,6 +108,7 @@ __all__ = [
     "GAP_RECORD_OBJECT_TYPE",
     "GUARDRAIL_CODE_LOCAL_GLOBAL_END",
     "GapRecord",
+    "INLINE_REPLAY_REGISTRY_PATH",
     "INTERACTION_GUARDRAIL_BREACH_OBJECT_TYPE",
     "InteractionGuardrailBreach",
     "T1_PROHIBITION_TARGET",

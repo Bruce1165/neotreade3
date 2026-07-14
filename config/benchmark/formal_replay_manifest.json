@@ -1,0 +1,220 @@
+{
+  "run_id": "formal_replay_v1_batch",
+  "description": "NeoTrade3 M4 replay manifest minimal slice for inline formal snapshot benchmark.",
+  "replay_sample": {
+    "sample_id": "formal_front_replay_seed_v1",
+    "sample_bucket": "R1_formal_front_replay",
+    "stock_code": "600000",
+    "trade_date": "2026-07-07",
+    "target_state_type": "T3_strong_target",
+    "expected_target_state": {
+      "small_cycle_state": {
+        "allowed": ["S2 Advancing"]
+      },
+      "wave_hypothesis": {
+        "replay_consistency_status": "pending_benchmark"
+      },
+      "fund_cycle": {
+        "allowed": ["advancing", "repairing"]
+      },
+      "industry_cycle": {
+        "allowed": ["advancing", "repairing"]
+      },
+      "cycle_linkage_state": {
+        "supports_continuation": true,
+        "local_end_vs_global_end": ["local_end_only", "needs_global_confirmation"]
+      },
+      "growth_potential_profile": {
+        "allowed_status": ["promising", "uncertain"]
+      },
+      "top_risk_profile": {
+        "max_risk_level": "watch"
+      },
+      "identify_state": {
+        "allowed_status": ["identified"]
+      },
+      "tracking_state": {
+        "allowed_status": ["tracking"],
+        "allowed_maturity": ["ready_for_entry"]
+      },
+      "entry_state": {
+        "allowed_status": ["ready"],
+        "allowed_decision": ["enter"],
+        "actionable": true
+      }
+    },
+    "m2_cycle": {
+      "object_type": "small_cycle",
+      "object_version": 1,
+      "stock_code": "600000",
+      "trade_date": "2026-07-07",
+      "cycle_state": "S2 Advancing",
+      "state_stability_level": "stable",
+      "evidence_bundle": {
+        "e1_price_structure": {
+          "status": "supported"
+        }
+      },
+      "confidence": {
+        "level": "high"
+      },
+      "invalidation": {
+        "status": "not_triggered"
+      },
+      "state_transition_log": [],
+      "input_data_version": "m1_phase1.v1",
+      "rule_version": "m2_small_cycle.v1alpha1"
+    },
+    "m2_shadow_bundle": {
+      "wave_hypothesis": {
+        "object_type": "small_cycle_wave_hypothesis",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "replay_consistency_status": "pending_benchmark",
+        "wave_label_candidate": "advancing",
+        "evidence_bundle": {},
+        "rule_version": "m2_wave_hypothesis_shadow.v1alpha1"
+      },
+      "mid_cycle_states": {
+        "fund_cycle": {
+          "object_type": "mid_cycle_state",
+          "object_version": 1,
+          "stock_code": "600000",
+          "trade_date": "2026-07-07",
+          "scope": "fund_cycle",
+          "state": "advancing",
+          "confidence": {
+            "level": "high"
+          },
+          "evidence_bundle": {},
+          "rule_version": "m2_mid_cycle_shadow.v1alpha1"
+        },
+        "industry_cycle": {
+          "object_type": "mid_cycle_state",
+          "object_version": 1,
+          "stock_code": "600000",
+          "trade_date": "2026-07-07",
+          "scope": "industry_cycle",
+          "state": "advancing",
+          "confidence": {
+            "level": "high"
+          },
+          "evidence_bundle": {},
+          "rule_version": "m2_mid_cycle_shadow.v1alpha1"
+        }
+      },
+      "cycle_linkage_state": {
+        "object_type": "cycle_linkage_state",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "small_cycle_ref": {
+          "object_type": "small_cycle",
+          "stock_code": "600000",
+          "cycle_state": "S2 Advancing"
+        },
+        "mid_cycle_ref": {
+          "fund_cycle_state": "advancing",
+          "industry_cycle_state": "advancing"
+        },
+        "linkage_phase": "continuation",
+        "supports_continuation": true,
+        "local_end_vs_global_end": "local_end_only",
+        "confidence": {
+          "level": "high"
+        },
+        "evidence_bundle": {},
+        "rule_version": "m2_cycle_linkage.v1alpha1"
+      },
+      "growth_potential_profile": {
+        "object_type": "growth_potential_profile",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "status": "promising",
+        "confidence": {
+          "level": "medium"
+        },
+        "evidence_bundle": {},
+        "rule_version": "m2_growth_potential_shadow.v1alpha1"
+      },
+      "top_risk_profile": {
+        "object_type": "top_risk_profile",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "risk_level": "watch",
+        "risk_flags": [],
+        "evidence_bundle": {},
+        "rule_version": "m2_top_risk_shadow.v1alpha1"
+      }
+    },
+    "m3_context": {
+      "m1_constraints_ref": {
+        "tradeable": true
+      },
+      "identify_state": {
+        "object_type": "identify_state",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "status": "identified",
+        "reason": "benchmark_replay_ready",
+        "evidence_ref": {},
+        "m2_cycle_ref": {
+          "cycle_state": "S2 Advancing"
+        },
+        "m1_constraints_ref": {
+          "tradeable": true
+        }
+      },
+      "tracking_state": {
+        "object_type": "tracking_state",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "status": "tracking",
+        "maturity": "ready_for_entry",
+        "transition_reason": "benchmark_replay_ready",
+        "evidence_ref": {},
+        "m2_cycle_ref": {
+          "cycle_state": "S2 Advancing"
+        },
+        "m1_constraints_ref": {
+          "tradeable": true
+        }
+      },
+      "entry_state": {
+        "object_type": "entry_state",
+        "object_version": 1,
+        "stock_code": "600000",
+        "trade_date": "2026-07-07",
+        "status": "ready",
+        "decision": "enter",
+        "actionable": true,
+        "blocking_reasons": [],
+        "evidence_ref": {},
+        "m2_cycle_ref": {
+          "cycle_state": "S2 Advancing"
+        },
+        "m1_constraints_ref": {
+          "tradeable": true
+        }
+      }
+    },
+    "m1_context": {
+      "source": "inline_replay_manifest"
+    },
+    "evidence_refs": [
+      {
+        "layer": "M2/M3",
+        "focus": "formal_replay"
+      }
+    ],
+    "scenario_tags": ["replay", "formal_front", "minimal_slice"],
+    "note": "最小 inline replay benchmark 样例，用于验证 M4 可直接消费 formal snapshot 形状。",
+    "input_data_version": "m1_phase1.v1",
+    "rule_version": "m4_benchmark_replay.v1alpha1"
+  }
+}
