@@ -504,6 +504,99 @@ def run_governance_final_validation_selection(
     )
 
 
+def run_governance_reject_transition_chain(
+    *,
+    project_root: str | Path,
+    source_run_id: str,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    project_root_path = Path(project_root)
+    resolved_source_run_id = resolve_governance_benchmark_run_id(
+        benchmark_run_id=source_run_id,
+    )
+    final_record = run_governance_final_validation_selection(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+        dry_run=dry_run,
+    )
+    result: dict[str, object] = {
+        "source_run_id": resolved_source_run_id,
+        "selected_validation_id": final_record.selected_validation_id,
+        "outcome": final_record.outcome,
+        "executed_reject_execution": False,
+        "executed_status_transition": False,
+        "dry_run": dry_run,
+        "final_validation_artifact_path": final_record.artifact_path,
+        "final_validation_ledger_path": final_record.ledger_path,
+    }
+    if final_record.outcome != "rejected":
+        return result
+
+    reject_record = run_governance_reject_execution(
+        project_root=project_root_path,
+        source_run_id=resolved_source_run_id,
+        validation_id=final_record.selected_validation_id,
+        dry_run=dry_run,
+    )
+    if dry_run:
+        bundle = read_governance_handoff_bundle(
+            project_root=project_root_path,
+            source_run_id=resolved_source_run_id,
+        )
+        if bundle is None:
+            raise ValueError(
+                "persisted governance handoff not found for "
+                f"source_run_id={resolved_source_run_id}"
+            )
+        validation_result = _resolve_candidate_validation_outcome(
+            project_root=project_root_path,
+            validation_id=final_record.selected_validation_id,
+        )
+        _resolve_baseline_validation_result(
+            bundle_validation_results=bundle.validation_results,
+            validation_id=final_record.selected_validation_id,
+        )
+        blocker_id, attention_id = _resolve_transition_object_ids(
+            validation_result=validation_result
+        )
+        transition_record = materialize_governance_status_transition(
+            project_root=project_root_path,
+            source_run_id=resolved_source_run_id,
+            validation_result=validation_result,
+            decision_record=build_reject_decision_record_from_validation_result(
+                validation_result=validation_result
+            ),
+            effective_attention_item=_find_effective_attention_item(
+                attention_items=bundle.attention_items,
+                attention_id=attention_id,
+            ),
+            effective_promotion_blocker=_find_effective_blocker(
+                promotion_blockers=bundle.promotion_blockers,
+                blocker_id=blocker_id,
+            ),
+            trigger_artifact_path=reject_record.artifact_path,
+            dry_run=True,
+        )
+    else:
+        transition_record = run_governance_status_transition(
+            project_root=project_root_path,
+            source_run_id=resolved_source_run_id,
+            validation_id=final_record.selected_validation_id,
+            dry_run=False,
+        )
+    result.update(
+        {
+            "executed_reject_execution": True,
+            "executed_status_transition": True,
+            "reject_artifact_path": reject_record.artifact_path,
+            "reject_ledger_path": reject_record.ledger_path,
+            "status_transition_artifact_path": transition_record.artifact_path,
+            "status_transition_ledger_path": transition_record.ledger_path,
+        }
+    )
+    return result
+
+
 def run_governance_reject_execution(
     *,
     project_root: str | Path,

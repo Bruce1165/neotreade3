@@ -36,6 +36,7 @@ from neotrade3.governance.run_ledger import (
     read_governance_candidate_validation_artifact,
     read_governance_candidate_validation_record,
     materialize_governance_handoff,
+    read_governance_final_validation_artifact,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
     read_governance_status_transition_artifact,
@@ -2005,6 +2006,61 @@ def test_worker_runs_governance_status_transition_on_demand(tmp_path: Path) -> N
     assert transition_ledger is not None
     assert transition_ledger.validation_id == validation_id
     assert transition_ledger.effective_attention_status == "resolved"
+
+
+def test_worker_runs_governance_reject_transition_chain_on_demand(tmp_path: Path) -> None:
+    project_root = _prepare_worker_project_root(tmp_path)
+    source_run_id, validation_result_payload = _build_candidate_validation_input(
+        project_root,
+        outcome="rejected",
+    )
+    app = BootstrapWorkerApp(project_root=project_root)
+    app.run_governance_candidate_validation_outcome_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+        validation_result=worker_main._resolve_validation_result_argument(
+            validation_result_payload
+        ),
+    )
+
+    snapshot = app.run_governance_reject_transition_chain_on_demand(
+        target_date=date(2026, 5, 19),
+        source_run_id=source_run_id,
+    )
+
+    orchestration = snapshot["orchestration"]
+    task_result = orchestration["task_results"][0]
+    validation_id = task_result["details"]["selected_validation_id"]
+    final_validation = read_governance_final_validation_artifact(
+        project_root=project_root,
+        source_run_id=source_run_id,
+    )
+    reject_artifact = read_governance_reject_execution_artifact(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+    transition_artifact = read_governance_status_transition_artifact(
+        project_root=project_root,
+        validation_id=validation_id,
+    )
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["target_date"] == "2026-05-19"
+    assert snapshot["summary"] == {
+        "planned_task_count": 1,
+        "executed_task_count": 1,
+        "ok_task_count": 1,
+    }
+    assert orchestration["run_ledger"]["status"] == "ok"
+    assert task_result["task_id"] == "governance.reject_transition_chain"
+    assert task_result["details"]["source_run_id"] == source_run_id
+    assert task_result["details"]["outcome"] == "rejected"
+    assert task_result["details"]["executed_reject_execution"] is True
+    assert task_result["details"]["executed_status_transition"] is True
+    assert len(task_result["artifact_refs"]) == 6
+    assert final_validation is not None
+    assert reject_artifact is not None
+    assert transition_artifact is not None
 
 
 def test_worker_runs_governance_candidate_validation_outcome_on_demand(

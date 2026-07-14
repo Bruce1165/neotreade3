@@ -26,6 +26,7 @@ from neotrade3.governance.runtime import (
     run_governance_final_validation_selection,
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
+    run_governance_reject_transition_chain,
     run_governance_status_transition,
 )
 from neotrade3.issue_center import IssueCenterCollector
@@ -521,6 +522,42 @@ class BootstrapWorkerApp:
                         },
                     )
 
+                if task.task_id == "governance.reject_transition_chain":
+                    if not source_run_id:
+                        raise ValueError("source_run_id must be provided")
+                    chain_result = run_governance_reject_transition_chain(
+                        project_root=project_root,
+                        source_run_id=source_run_id,
+                        dry_run=dry_run,
+                    )
+                    artifact_refs = [
+                        str(chain_result["final_validation_artifact_path"]),
+                        str(chain_result["final_validation_ledger_path"]),
+                    ]
+                    if bool(chain_result["executed_reject_execution"]):
+                        artifact_refs.extend(
+                            [
+                                str(chain_result["reject_artifact_path"]),
+                                str(chain_result["reject_ledger_path"]),
+                            ]
+                        )
+                    if bool(chain_result["executed_status_transition"]):
+                        artifact_refs.extend(
+                            [
+                                str(chain_result["status_transition_artifact_path"]),
+                                str(chain_result["status_transition_ledger_path"]),
+                            ]
+                        )
+                    return TaskResult(
+                        task_id=task.task_id,
+                        phase=task.phase,
+                        status=RunStatus.OK,
+                        lab_id=task.lab_id,
+                        message="governance reject transition chain completed",
+                        artifact_refs=artifact_refs,
+                        details=chain_result,
+                    )
+
                 if validation_id:
                     if not source_run_id:
                         raise ValueError(
@@ -900,6 +937,82 @@ class BootstrapWorkerApp:
                         outputs=[
                             "governance_reject_artifact",
                             "governance_reject_ledger",
+                        ],
+                    )
+                ],
+            )
+        )
+        task_results = orchestrator.execute_run_plan(
+            plan,
+            {
+                OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
+            },
+            {
+                "target_date": target_date,
+                "project_root": str(self.project_root),
+                "db_path": str(self.project_root / "var/data/neotrade3.db"),
+                "requested_by": requested_by,
+                "dry_run": dry_run,
+            },
+        )
+        run_entry, task_entries = self._build_execution_run_ledger(
+            target_date=target_date,
+            execution_run_plan=plan,
+            task_results=task_results,
+        )
+        return {
+            "status": run_entry.status.value,
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "plan": self._to_jsonable(plan),
+                "task_results": self._to_jsonable(task_results),
+                "run_ledger": self._to_jsonable(run_entry),
+                "task_ledger": self._to_jsonable(task_entries),
+            },
+            "summary": {
+                "planned_task_count": len(plan.planned_tasks),
+                "executed_task_count": len(task_results),
+                "ok_task_count": sum(
+                    1 for result in task_results if result.status == RunStatus.OK
+                ),
+            },
+        }
+
+    def run_governance_reject_transition_chain_on_demand(
+        self,
+        *,
+        target_date: date,
+        source_run_id: str,
+        requested_by: str = (
+            "BootstrapWorkerApp.run_governance_reject_transition_chain_on_demand"
+        ),
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        orchestrator = DailyMasterOrchestrator.from_files(
+            orchestrator_config_path=self.paths["orchestrator_config"],
+            labs_registry_path=self.paths["labs_config"],
+        )
+        plan = orchestrator.build_on_demand_plan(
+            OnDemandTaskRequest(
+                target_date=target_date,
+                tasks=[
+                    OnDemandTaskItem(
+                        task_id="governance.reject_transition_chain",
+                        phase=OrchestrationPhase.GOVERNANCE,
+                        entrypoint=(
+                            "neotrade3.governance.runtime:"
+                            "run_governance_reject_transition_chain"
+                        ),
+                        args_template={
+                            "source_run_id": source_run_id,
+                        },
+                        outputs=[
+                            "governance_final_validation_artifact",
+                            "governance_final_validation_ledger",
+                            "governance_reject_artifact",
+                            "governance_reject_ledger",
+                            "governance_status_transition_artifact",
+                            "governance_status_transition_ledger",
                         ],
                     )
                 ],

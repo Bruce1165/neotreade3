@@ -58,6 +58,7 @@ from .runtime import (
     run_governance_candidate_outcome_upstream_producer,
     run_governance_candidate_validation_outcome,
     run_governance_status_transition,
+    run_governance_reject_transition_chain,
 )
 
 __all__ = [
@@ -112,5 +113,6 @@ __all__ = [
     "run_governance_candidate_outcome_bridge",
     "run_governance_candidate_outcome_upstream_producer",
     "run_governance_candidate_validation_outcome",
+    "run_governance_reject_transition_chain",
     "run_governance_status_transition",
 ]
