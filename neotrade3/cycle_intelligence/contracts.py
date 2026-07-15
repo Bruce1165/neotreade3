@@ -67,6 +67,43 @@ class SmallCycle:
             "rule_version": self.rule_version,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "SmallCycle":
+        if not isinstance(payload, dict):
+            raise TypeError("small_cycle must be a JSON object")
+        stock_code = str(payload.get("stock_code") or "").strip()
+        trade_date = str(payload.get("trade_date") or "").strip()
+        cycle_state = str(payload.get("cycle_state") or "").strip()
+        state_stability_level = str(payload.get("state_stability_level") or "").strip()
+        input_data_version = str(payload.get("input_data_version") or "").strip()
+        rule_version = str(payload.get("rule_version") or "").strip()
+        if not stock_code:
+            raise ValueError("small_cycle.stock_code must be non-empty")
+        if not trade_date:
+            raise ValueError("small_cycle.trade_date must be non-empty")
+        if not cycle_state:
+            raise ValueError("small_cycle.cycle_state must be non-empty")
+        if not state_stability_level:
+            raise ValueError("small_cycle.state_stability_level must be non-empty")
+        if not input_data_version:
+            raise ValueError("small_cycle.input_data_version must be non-empty")
+        if not rule_version:
+            raise ValueError("small_cycle.rule_version must be non-empty")
+        return cls(
+            stock_code=stock_code,
+            trade_date=trade_date,
+            cycle_state=cycle_state,
+            state_stability_level=state_stability_level,
+            evidence_bundle=_copy_mapping(payload.get("evidence_bundle")),
+            confidence=_copy_mapping(payload.get("confidence")),
+            invalidation=_copy_mapping(payload.get("invalidation")),
+            state_transition_log=_copy_mapping_list(payload.get("state_transition_log")),
+            input_data_version=input_data_version,
+            rule_version=rule_version,
+            object_type=str(payload.get("object_type") or SMALL_CYCLE_OBJECT_TYPE),
+            object_version=int(payload.get("object_version", SMALL_CYCLE_OBJECT_VERSION)),
+        )
+
 
 @dataclass(frozen=True)
 class MidCycleState:

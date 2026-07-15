@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from neotrade3.cycle_intelligence import SmallCycle
+from neotrade3.cycle_intelligence import (
+    SMALL_CYCLE_OBJECT_TYPE,
+    SmallCycle,
+    read_small_cycle,
+)
 from .contracts import build_benchmark_sample
 from .assembler import build_benchmark_assessment_from_m2_shadow
 from .contracts import BenchmarkAssessmentResult
@@ -21,7 +25,11 @@ from .sample_registry import (
 
 INLINE_REPLAY_REGISTRY_PATH = "inline_replay_manifest"
 RESOLVER_STUB_SOURCE_TYPE = "resolver_stub"
-ALLOWED_PERSISTED_REF_SOURCE_TYPES = (RESOLVER_STUB_SOURCE_TYPE,)
+M2_SMALL_CYCLE_SOURCE_TYPE = "m2_small_cycle_persisted"
+ALLOWED_PERSISTED_REF_SOURCE_TYPES = (
+    RESOLVER_STUB_SOURCE_TYPE,
+    M2_SMALL_CYCLE_SOURCE_TYPE,
+)
 ALLOWED_PERSISTED_REF_KINDS = ("artifact", "ledger_projection", "inline_fallback")
 
 
@@ -672,13 +680,47 @@ def _resolve_stub_ref_payload(
     return _copy_nested_mapping(stub_record["payload"])
 
 
+def _resolve_m2_small_cycle_ref_payload(
+    ref: BenchmarkPersistedRef,
+    *,
+    project_root: str | Path,
+    field_name: str,
+) -> dict[str, Any]:
+    if ref.source_type != M2_SMALL_CYCLE_SOURCE_TYPE:
+        raise ValueError(f"{field_name}.source_type is not supported by small-cycle owner")
+    if ref.object_type != SMALL_CYCLE_OBJECT_TYPE:
+        raise ValueError(
+            f"{field_name}.object_type mismatch: expected {SMALL_CYCLE_OBJECT_TYPE}"
+        )
+    if ref.object_version is None:
+        raise ValueError(f"{field_name}.object_version must be provided")
+    small_cycle = read_small_cycle(project_root=project_root, record_id=ref.ref_id)
+    if small_cycle is None:
+        raise ValueError(f"{field_name}.ref_id is not resolvable in small-cycle owner")
+    if ref.object_version != small_cycle.object_version:
+        raise ValueError(
+            f"{field_name}.object_version mismatch: expected {small_cycle.object_version}"
+        )
+    return small_cycle.to_payload()
+
+
 def _resolve_replay_stub_payloads(
+    *,
+    project_root: str | Path,
     resolver_refs: BenchmarkReplayResolverRefs,
 ) -> _ResolvedReplayPayloads:
     return _ResolvedReplayPayloads(
-        m2_cycle=_resolve_stub_ref_payload(
-            resolver_refs.m2_cycle_ref,
-            field_name="resolver_refs.m2_cycle_ref",
+        m2_cycle=(
+            _resolve_m2_small_cycle_ref_payload(
+                resolver_refs.m2_cycle_ref,
+                project_root=project_root,
+                field_name="resolver_refs.m2_cycle_ref",
+            )
+            if resolver_refs.m2_cycle_ref.source_type == M2_SMALL_CYCLE_SOURCE_TYPE
+            else _resolve_stub_ref_payload(
+                resolver_refs.m2_cycle_ref,
+                field_name="resolver_refs.m2_cycle_ref",
+            )
         ),
         m2_shadow_bundle=_resolve_stub_ref_payload(
             resolver_refs.m2_shadow_bundle_ref,
@@ -697,6 +739,7 @@ def _resolve_replay_stub_payloads(
 
 def _run_benchmark_replay_manifest(
     *,
+    project_root: str | Path,
     manifest: BenchmarkRunManifest,
 ) -> BenchmarkBatchRunResult:
     replay_sample = manifest.replay_sample
@@ -712,7 +755,10 @@ def _run_benchmark_replay_manifest(
             raise ValueError(
                 "replay_sample must include complete inline payloads or resolver_refs"
             )
-        resolved_payloads = _resolve_replay_stub_payloads(replay_sample.resolver_refs)
+        resolved_payloads = _resolve_replay_stub_payloads(
+            project_root=project_root,
+            resolver_refs=replay_sample.resolver_refs,
+        )
         m2_cycle_payload = resolved_payloads.m2_cycle
         m2_shadow_bundle = resolved_payloads.m2_shadow_bundle
         m1_context = resolved_payloads.m1_context
@@ -746,7 +792,10 @@ def run_benchmark_manifest(
     | None = None,
 ) -> BenchmarkBatchRunResult:
     if manifest.replay_sample is not None:
-        return _run_benchmark_replay_manifest(manifest=manifest)
+        return _run_benchmark_replay_manifest(
+            project_root=project_root,
+            manifest=manifest,
+        )
 
     registry_path = _resolve_registry_path(project_root, manifest.registry_path)
     registry = load_benchmark_seed_registry(registry_path)

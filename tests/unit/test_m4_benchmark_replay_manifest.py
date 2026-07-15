@@ -13,9 +13,11 @@ from neotrade3.benchmark import (
 )
 from neotrade3.benchmark.batch_runner import (
     INLINE_REPLAY_REGISTRY_PATH,
+    M2_SMALL_CYCLE_SOURCE_TYPE,
     RESOLVER_STUB_SOURCE_TYPE,
     BenchmarkRunManifest,
 )
+from neotrade3.cycle_intelligence import SmallCycle, build_small_cycle_record_id, materialize_small_cycle
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -140,6 +142,77 @@ def test_replay_refs_manifest_materializes_benchmark_artifact(tmp_path: Path) ->
     assert reconstructed.results[0].summary.assessment_grade == "pass"
 
 
+def test_replay_refs_materializes_with_real_m2_cycle_ref(tmp_path: Path) -> None:
+    small_cycle = SmallCycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S2 Advancing",
+        state_stability_level="stable",
+        evidence_bundle={"e1_price_structure": {"status": "supported"}},
+        confidence={"level": "high"},
+        invalidation={"status": "not_triggered"},
+        state_transition_log=[],
+        input_data_version="m1_phase1.v1",
+        rule_version="m2_small_cycle.v1alpha1",
+    )
+    record_id = build_small_cycle_record_id(small_cycle=small_cycle)
+    materialize_small_cycle(project_root=tmp_path, small_cycle=small_cycle)
+
+    manifest = BenchmarkRunManifest.from_dict(
+        {
+            "run_id": "real_m2_cycle_replay_batch",
+            "replay_sample": {
+                "sample_id": "formal_front_replay_refs_seed_v1",
+                "sample_bucket": "R2_formal_refs_replay",
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "target_state_type": "T3_strong_target",
+                "expected_target_state": {
+                    "small_cycle_state": {"allowed": ["S2 Advancing"]}
+                },
+                "resolver_refs": {
+                    "m2_cycle_ref": {
+                        "source_type": M2_SMALL_CYCLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": record_id,
+                        "object_type": "small_cycle",
+                        "object_version": 1
+                    },
+                    "m2_shadow_bundle_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m2-shadow-ref-600000-2026-07-07",
+                        "object_type": "m2_shadow_bundle",
+                        "object_version": 1
+                    },
+                    "m1_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "ledger_projection",
+                        "ref_id": "m1-context-ref-600000-2026-07-07",
+                        "object_type": "m1_context_projection",
+                        "object_version": 1
+                    },
+                    "m3_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m3-context-ref-600000-2026-07-07",
+                        "object_type": "m3_context_bundle",
+                        "object_version": 1
+                    }
+                }
+            }
+        }
+    )
+
+    batch_result = run_benchmark_manifest(
+        project_root=tmp_path,
+        manifest=manifest,
+    )
+
+    assert batch_result.executed_sample_ids == ("formal_front_replay_refs_seed_v1",)
+    assert batch_result.grade_summary == {"pass": 1}
+
+
 def test_replay_refs_contract_fails_closed_when_required_ref_missing() -> None:
     with pytest.raises(
         TypeError,
@@ -234,5 +307,60 @@ def test_replay_refs_runtime_fails_closed_on_object_type_mismatch() -> None:
     ):
         run_benchmark_manifest(
             project_root=PROJECT_ROOT,
+            manifest=manifest,
+        )
+
+
+def test_replay_refs_runtime_fails_closed_when_real_m2_cycle_missing(tmp_path: Path) -> None:
+    manifest = BenchmarkRunManifest.from_dict(
+        {
+            "run_id": "missing_real_m2_cycle_replay_batch",
+            "replay_sample": {
+                "sample_id": "formal_front_replay_refs_seed_v1",
+                "sample_bucket": "R2_formal_refs_replay",
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "target_state_type": "T3_strong_target",
+                "expected_target_state": {},
+                "resolver_refs": {
+                    "m2_cycle_ref": {
+                        "source_type": M2_SMALL_CYCLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": "missing-small-cycle-record",
+                        "object_type": "small_cycle",
+                        "object_version": 1
+                    },
+                    "m2_shadow_bundle_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m2-shadow-ref-600000-2026-07-07",
+                        "object_type": "m2_shadow_bundle",
+                        "object_version": 1
+                    },
+                    "m1_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "ledger_projection",
+                        "ref_id": "m1-context-ref-600000-2026-07-07",
+                        "object_type": "m1_context_projection",
+                        "object_version": 1
+                    },
+                    "m3_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m3-context-ref-600000-2026-07-07",
+                        "object_type": "m3_context_bundle",
+                        "object_version": 1
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="resolver_refs.m2_cycle_ref.ref_id is not resolvable in small-cycle owner",
+    ):
+        run_benchmark_manifest(
+            project_root=tmp_path,
             manifest=manifest,
         )
