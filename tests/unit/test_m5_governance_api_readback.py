@@ -8,6 +8,7 @@ import pytest
 
 from apps.api.main import BootstrapApiService
 from apps.api.router import BootstrapApiRouter
+from apps.api.shared import ApiBinaryResponse
 from apps.api.shared import ApiError
 
 
@@ -134,3 +135,25 @@ def test_governance_final_validations_list_endpoint_returns_latest_records(
     assert payload["_meta"]["returned_count"] == 2
     assert payload["final_validations"][0]["source_run_id"] == "benchmark-run-2"
     assert payload["final_validations"][1]["source_run_id"] == "benchmark-run-1"
+
+
+def test_governance_final_validation_download_endpoint_returns_artifact(
+    tmp_path: Path,
+) -> None:
+    source_run_id = "benchmark-run-1"
+    _write_governance_final_validation_fixtures(
+        project_root=tmp_path,
+        source_run_id=source_run_id,
+    )
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, response = router.dispatch(
+        f"/api/governance/final-validations/{source_run_id}/download"
+    )
+
+    assert status == HTTPStatus.OK
+    assert isinstance(response, ApiBinaryResponse)
+    assert "attachment" in response.headers.get("Content-Disposition", "")
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload["source_run_id"] == source_run_id

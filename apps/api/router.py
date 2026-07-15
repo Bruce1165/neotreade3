@@ -105,6 +105,7 @@ class BootstrapApiRouter:
                         "/api/orchestration/runs — 编排运行记录",
                         "/api/governance/final-validations/<source_run_id> — 治理终审选择结果",
                         "/api/governance/final-validations?limit=... — 治理终审选择列表",
+                        "/api/governance/final-validations/<source_run_id>/download — 下载终审选择 artifact",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1334,20 +1335,31 @@ class BootstrapApiRouter:
             "/api/v1/governance/final-validations/"
         ):
             parts = [part for part in parsed.path.split("/") if part]
-            if len(parts) != 4:
+            if len(parts) not in {4, 5}:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_path",
                     message="expected /api/governance/final-validations/<source_run_id>",
                     details={"path": parsed.path},
                 )
-            _, _, _, source_run_id = parts
+            _, _, _, source_run_id, *rest = parts
             if not source_run_id.strip():
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_source_run_id",
                     message="source_run_id must be a non-empty string",
                     details={"source_run_id": source_run_id},
+                )
+            if rest:
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message="expected /api/governance/final-validations/<source_run_id>/download",
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_final_validation_download_view(
+                    source_run_id=source_run_id
                 )
             return HTTPStatus.OK, self.service.governance_final_validation_view(
                 source_run_id=source_run_id
