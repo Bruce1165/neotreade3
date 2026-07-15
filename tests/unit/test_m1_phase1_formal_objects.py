@@ -18,6 +18,33 @@ from tests._support.screeners_config import prepare_screeners_config_root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _prepare_preflight_project_root(*, project_root: Path) -> None:
+    (project_root / "config/data_control").mkdir(parents=True, exist_ok=True)
+    (project_root / "config/labs").mkdir(parents=True, exist_ok=True)
+    (project_root / "config/orchestrator").mkdir(parents=True, exist_ok=True)
+    (project_root / "var/db").mkdir(parents=True, exist_ok=True)
+    (project_root / "var/ledgers/trading_calendar").mkdir(parents=True, exist_ok=True)
+    (project_root / "config/data_control/source_registry.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (project_root / "config/labs/labs_registry.json").write_text("{}", encoding="utf-8")
+    (project_root / "config/orchestrator/daily_master_orchestrator.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    _, isolated_registry_path = prepare_screeners_config_root(
+        tmp_path=project_root,
+        screener_ids=[],
+    )
+    isolated_registry_path.write_text("{}", encoding="utf-8")
+    (project_root / "var/db/stock_data.db").write_text("", encoding="utf-8")
+    (project_root / "var/ledgers/trading_calendar/trading_calendar.json").write_text(
+        json.dumps({"trading_days": ["2026-07-07"]}),
+        encoding="utf-8",
+    )
+
+
 def _seed_m1_phase1_db(db_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
@@ -314,24 +341,7 @@ def test_issue_center_collects_m1_formal_artifact_degradation() -> None:
 
 def test_preflight_skips_formal_contract_gating_without_same_day_artifacts(monkeypatch, tmp_path: Path) -> None:
     project_root = tmp_path
-    (project_root / "config/data_control").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/labs").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/orchestrator").mkdir(parents=True, exist_ok=True)
-    (project_root / "var/db").mkdir(parents=True, exist_ok=True)
-    (project_root / "var/ledgers/trading_calendar").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/data_control/source_registry.json").write_text("{}", encoding="utf-8")
-    (project_root / "config/labs/labs_registry.json").write_text("{}", encoding="utf-8")
-    (project_root / "config/orchestrator/daily_master_orchestrator.json").write_text("{}", encoding="utf-8")
-    _, isolated_registry_path = prepare_screeners_config_root(
-        tmp_path=project_root,
-        screener_ids=[],
-    )
-    isolated_registry_path.write_text("{}", encoding="utf-8")
-    (project_root / "var/db/stock_data.db").write_text("", encoding="utf-8")
-    (project_root / "var/ledgers/trading_calendar/trading_calendar.json").write_text(
-        json.dumps({"trading_days": ["2026-07-07"]}),
-        encoding="utf-8",
-    )
+    _prepare_preflight_project_root(project_root=project_root)
     monkeypatch.setattr(PreflightRunner, "_project_root", staticmethod(lambda: project_root))
 
     report = PreflightRunner().build_report(date(2026, 7, 7))
@@ -343,25 +353,8 @@ def test_preflight_skips_formal_contract_gating_without_same_day_artifacts(monke
 
 def test_preflight_fails_when_existing_formal_artifacts_are_not_ready(monkeypatch, tmp_path: Path) -> None:
     project_root = tmp_path
-    (project_root / "config/data_control").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/labs").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/orchestrator").mkdir(parents=True, exist_ok=True)
-    (project_root / "var/db").mkdir(parents=True, exist_ok=True)
-    (project_root / "var/ledgers/trading_calendar").mkdir(parents=True, exist_ok=True)
     (project_root / "var/ledgers/data_control/2026-07-07").mkdir(parents=True, exist_ok=True)
-    (project_root / "config/data_control/source_registry.json").write_text("{}", encoding="utf-8")
-    (project_root / "config/labs/labs_registry.json").write_text("{}", encoding="utf-8")
-    (project_root / "config/orchestrator/daily_master_orchestrator.json").write_text("{}", encoding="utf-8")
-    _, isolated_registry_path = prepare_screeners_config_root(
-        tmp_path=project_root,
-        screener_ids=[],
-    )
-    isolated_registry_path.write_text("{}", encoding="utf-8")
-    (project_root / "var/db/stock_data.db").write_text("", encoding="utf-8")
-    (project_root / "var/ledgers/trading_calendar/trading_calendar.json").write_text(
-        json.dumps({"trading_days": ["2026-07-07"]}),
-        encoding="utf-8",
-    )
+    _prepare_preflight_project_root(project_root=project_root)
     (project_root / "var/ledgers/data_control/2026-07-07/data_control_publish_ledger.json").write_text(
         json.dumps(
             {
