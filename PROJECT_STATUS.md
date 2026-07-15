@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-13
+**Last Updated**: 2026-07-14
 
 ---
 
@@ -421,22 +421,115 @@
     - 审计 `reject_execution` 与 `status_transition` 是否需要 scheduler-facing adoption，并明确它们与 `daily` 主链的依赖与失败闭合语义
     - 决定 `final_validation_selection` 是否需要更宽的 CLI / API adoption
     - 继续推进 `M5` 完整闭环对象、`M4` 完整 benchmark、version unification、`M6 Delivery Ready`
+- 2026-07-14（M5 治理收口与验收入口更新）：
+  - `M5 candidate outcome upstream producer` 已完成，并以实验侧持久化真相作为唯一 `candidate_run_id` 来源：
+    - shared runtime 已支持 `run_governance_candidate_outcome_upstream_producer(...)`
+    - fail-closed 语义已收紧为：证据不足、pending 不唯一或 blocker 非 active 时禁止产出治理结果
+  - `M5 candidate outcome bridge` 已形成 scheduler-facing 自动真相物化链：
+    - `daily` 当前固定执行 `benchmark.materialize_run -> governance.materialize_handoff -> governance.candidate_outcome_bridge -> governance.final_validation_selection`
+    - `config/benchmark/validation_seed_manifest.json` 已补齐 `candidate_run_context`，用于满足 `daily` 基线的治理真相输入要求
+  - `M5 final validation selection` 当前边界已明确：
+    - shared runtime 已支持 `run_governance_final_validation_selection(...)`
+    - worker/orchestrator 已支持 explicit on-demand 与 `daily` scheduled adoption
+    - 当前仍未暴露独立 CLI / API mode
+  - `M5 reject_execution` 与 `status_transition` 的调度边界已明确：
+    - 两者属于强副作用治理动作
+    - 当前明确不进入 `daily` 主链
+    - 当前仅允许在显式 on-demand 链路中触发，避免自动化误写治理结果
+  - `M5` 已完成显式治理动作串联链：
+    - shared runtime 已支持 `run_governance_reject_transition_chain(...)`
+    - worker governance executor 已支持 `task_id="governance.reject_transition_chain"`
+    - bootstrap worker 已支持 `run_governance_reject_transition_chain_on_demand(...)`
+    - API 已支持 `mode="governance_reject_transition_chain"`
+    - 当前显式输入 contract 固定为 `source_run_id`
+    - 仅当 final validation outcome 为 `rejected` 时继续执行 `reject_execution -> status_transition`
+  - `M5` 已补齐最小 HTTP 级端到端验收入口：
+    - 已新增 integration smoke：`tests/integration/test_m5_governance_end_to_end_smoke.py`
+    - 已新增 runner：`scripts/smoke_m5_governance_end_to_end.sh`
+    - 当前可用单命令验收 `daily` 治理真相物化链与 `governance_reject_transition_chain` 显式链路
+  - 当前必须明确的边界补充：
+    - `daily` 只自动物化治理真相，不自动执行带强副作用的 reject/status transition
+    - `M5` 当前已具备 scheduler-facing 真相物化与 on-demand 治理动作链，但仍不等于完整 promotion/reject 全闭环
+    - 当前最新 smoke 仅覆盖 `validation_seed` 基线，不等于 `M4` 已完成正式 benchmark 扩展
+- 2026-07-14（M4 replay manifest 最小切片更新）：
+  - `M4` 已新增 `inline replay manifest` 输入模式（与 `validation_seed` 并行，不替代 seed 基线）：
+    - `config/benchmark/formal_replay_manifest.json`
+    - 当前 replay 样例固定为单样本最小载荷，用于验证 benchmark 可直接消费 `M2/M3` formal snapshot 形状
+  - `M4` runner 已完成 seed/replay 双分支收口：
+    - `BenchmarkRunManifest` 已支持 `replay_sample`
+    - 有 `replay_sample` 时允许省略 `registry_path`（内部标记为 `inline_replay_manifest`）
+    - replay 分支通过 payload 还原 `SmallCycle` 后复用现有 assembler，统一产出 `BenchmarkBatchRunResult` artifact/ledger
+  - `M4` 已补齐 replay 聚焦回归：
+    - `tests/unit/test_m4_benchmark_replay_manifest.py`
+    - 覆盖 replay manifest 解析、materialize/readback、缺关键字段 fail-closed
+  - 当前必须明确的边界补充：
+    - 本次仍是 `inline replay`，未对接 persisted formal artifact refs
+    - 不改 `daily`、API、worker、governance 触发面
+    - replay 当前仅验证最小单样本 contract，不等于完整 benchmark 扩展完成
+- 2026-07-14（M4 persisted refs resolver contract + mock/stub resolver 更新）：
+  - `M4` 已新增 `resolver_refs` 输入 contract，用于把 replay 从 `inline payload` 向 `persisted refs` 演进：
+    - `BenchmarkPersistedRef`
+    - `BenchmarkReplayResolverRefs`
+    - `config/benchmark/formal_replay_refs_manifest.json`
+  - `M4` 当前已完成 `resolver_stub` 路径验证：
+    - replay runner 可在 `benchmark` 子域内把 `resolver_refs` 解为与 `inline replay` 等价的 `m2_cycle / m2_shadow_bundle / m1_context / m3_context` payload
+    - `resolver_stub` 当前仅用于验证 resolver 落点、类型校验与失败闭合语义，不等于已接入真实 persisted truth-source
+  - `M4` 已补齐 resolver 聚焦回归：
+    - `tests/unit/test_m4_benchmark_replay_manifest.py` 已覆盖 `resolver_refs` 解析成功、materialize/readback 成功、缺 ref 失败、`object_type mismatch` 失败
+  - 当前必须明确的边界补充：
+    - `resolver_refs` 当前只支持 `resolver_stub`，不支持真实 `M2/M3` persisted artifact/ledger/readback owner
+    - 当前仍未新增独立 `M2/M3` persisted truth-source；`lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source
+    - 本次仍只改 `benchmark` 子域输入解析层，不改 `BenchmarkBatchRunResult` 输出契约，不改 `G/M5` 消费面
 
 ## 文档一致性说明
 
 - 本仓库存在 [NeoTrade3实施交接文档.md](file:///Users/mac/NeoTrade3/NeoTrade3实施交接文档.md) 作为历史交接材料，其中部分描述可能来自较早阶段或不同实现路径，未必与当前代码完全一致。
 - 新会话续接以本文件为准：只记录“已经存在且可运行”的入口、约束与验收口径；其它文档仅作为背景参考，使用前需按代码现状核对。
-- 进行中：
-  - `M1 Phase 1` 已进入实现态，当前正式对象链已贯通至 API / data_control 产物 / issue_center / preflight 的最小消费面
-  - `M2/M3` 前半段最小正式消费切换已完成多段窄提交收口；正式对象/组装器、引擎 formal front 接线、API formal-front 消费切片与 workbench 优先级修正都已进入提交历史，top200 attribution report 所依赖的公共投影与 report 拆分也已在 `HEAD`
-  - `M3 backhalf` 已完成 position snapshot production carrier、hold/exit formal bridge、局部/全局退出显式语义与 `decision_lifecycle_log` nucleus
-  - `M4` 已具备 mainline runner、artifact/ledger 与 typed readback 基线
-  - `M5` 已具备 contract/handoff/persistence/ledger/runtime/orchestrator-fit 基线，且上游真值已切到 persisted `M4`
-  - `M5 candidate validation outcome` 已完成 persisted truth materialization 与 `runtime -> CLI -> worker -> API` trigger adoption
-  - `M5 candidate outcome bridge` 已完成 persisted outcome bridge owner 与 `worker/orchestrator` explicit on-demand、`daily` scheduled adoption
-  - `M5 final validation selection` 已完成 persisted final truth owner 与 `worker/orchestrator` explicit on-demand、`daily` scheduled adoption，但仍未暴露独立 CLI / API mode
-- 下一步第一件事：
-  - 先审计 `reject_execution` 与 `status_transition` 是否需要进入 scheduler-facing 主链，避免在证据不足时把下游治理动作误写成自动调度能力
+
+## 当前项目进度总览
+
+### 已完成部分
+
+- `M1 Phase 1（首批正式对象）`
+  - 已完成 `D1 / D7 / D8` 正式契约、API 独立读取入口、`quality_status / freshness_proof / attention_items`、data_control artifact 汇总、issue_center/preflight 最小消费。
+- `M2/M3 前半段（formal front）`
+  - 已完成 `small_cycle / identify_state / tracking_state / entry_state` 正式对象与组装器。
+  - 已完成引擎 formal front 接线、API formal-front 消费切片、workbench 优先级修正、top200 attribution report 依赖的公共投影拆分。
+- `M3 backhalf（最小主链）`
+  - 已完成 `position_contract_snapshot` carrier、`HoldState / ExitState / DecisionLifecycleLog` formal object/owner、局部/全局退出显式语义。
+- `M4 benchmark 基线`
+  - 已完成 mainline runner、artifact/ledger、typed readback、`validation_seed` manifest 基线。
+  - 已完成 `inline replay manifest` 最小切片（commit `0b84a4a`）。
+  - 已完成 `resolver_refs` contract 与 `mock/stub resolver` 路径（commit `bca1876`），并验证其可在 `benchmark` 子域内解为 `inline replay` 等价 payload。
+- `M5 governance 基线`
+  - 已完成 governance contracts / handoff / artifact / ledger / runtime / CLI / worker / orchestrator-fit 基线。
+  - 已完成 `candidate validation outcome` persisted truth 与 `runtime -> CLI -> worker -> API` adoption。
+  - 已完成 `candidate outcome upstream producer`、`candidate_outcome_bridge`、`final_validation_selection`，并形成 `daily` 真相物化链。
+  - 已完成 `reject_transition_chain` 的 `runtime -> worker -> API` adoption；`reject_execution` 与 `status_transition` 保持 on-demand，不进入 `daily`。
+  - 已完成最小 HTTP 级 end-to-end smoke 与 runner。
+
+### 未完成部分
+
+- `M1`
+  - 仅首批正式对象已落地；`M1 Phase 1` 不是整体完成态。
+- `M2/M3`
+  - formal front 与 backhalf 主干已落地，但这不等于 `M2/M3` 全域完成；后续仍需继续按消费面与真相源收口。
+- `M4`
+  - 当前仍不是完整 benchmark 层。
+  - 当前 `resolver_refs` 只支持 `resolver_stub`，不支持真实 `M2/M3` persisted artifact/ledger/readback owner。
+  - 当前仍未新增独立 `M2/M3` persisted truth-source；`lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source。
+- `M5`
+  - 当前已具备治理真相物化链与显式治理动作链，但仍不等于完整 `validation / promotion / reject` 全闭环。
+  - `final_validation_selection` 当前仍未暴露独立 CLI / API mode。
+- `M6 Delivery Ready`
+  - 仍未启动最小正式交付与观测主链建设。
+- `统一版本体系`
+  - 当前脚本策略线与系统内 `analysis_version` 仍未统一为单一版本真相源。
+
+### 当前建议下一步
+
+- 在 `M4 resolver_stub` 已验证的前提下，优先决定是否进入真实 `M2/M3` persisted truth-source 基线建设。
+- 在未确认真相源 owner 前，不把 `resolver_refs` 表述成正式 refs 能力。
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
