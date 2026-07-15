@@ -13,6 +13,7 @@ from neotrade3.benchmark import (
 )
 from neotrade3.benchmark.batch_runner import (
     BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
+    BENCHMARK_M3_CONTEXT_SOURCE_TYPE,
     DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE,
     INLINE_REPLAY_REGISTRY_PATH,
     M2_SMALL_CYCLE_SOURCE_TYPE,
@@ -22,8 +23,11 @@ from neotrade3.benchmark.batch_runner import (
 )
 from neotrade3.benchmark import (
     BenchmarkM1ContextProjection,
+    BenchmarkM3ContextProjection,
     build_benchmark_m1_context_projection_record_id,
+    build_benchmark_m3_context_projection_record_id,
     materialize_benchmark_m1_context_projection,
+    materialize_benchmark_m3_context_projection,
 )
 from neotrade3.cycle_intelligence import (
     ShadowCycleIntelligenceBundle,
@@ -169,6 +173,55 @@ def _build_m3_front_context_from_cycle(
     )
 
 
+def _materialize_official_replay_refs_fixture(*, project_root: Path) -> None:
+    small_cycle = SmallCycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S2 Advancing",
+        state_stability_level="stable",
+        evidence_bundle={"e1_price_structure": {"status": "supported"}},
+        confidence={"level": "high"},
+        invalidation={"status": "not_triggered"},
+        state_transition_log=[],
+        input_data_version="m1_phase1.v1",
+        rule_version="m2_small_cycle.v1alpha1",
+    )
+    materialize_small_cycle(project_root=project_root, small_cycle=small_cycle)
+
+    shadow_bundle = _build_shadow_bundle_from_cycle(cycle=small_cycle)
+    materialize_shadow_cycle_intelligence_bundle(
+        project_root=project_root,
+        bundle=shadow_bundle,
+    )
+
+    materialize_benchmark_m1_context_projection(
+        project_root=project_root,
+        record_id=build_benchmark_m1_context_projection_record_id(
+            stock_code="600000",
+            trade_date="2026-07-07",
+        ),
+        projection=BenchmarkM1ContextProjection(source="benchmark_local_projection"),
+    )
+
+    front_context = _build_m3_front_context_from_cycle(
+        cycle=small_cycle,
+        cycle_linkage_state_ref=shadow_bundle.to_replay_payload()["cycle_linkage_state"],
+    )
+    materialize_benchmark_m3_context_projection(
+        project_root=project_root,
+        record_id=build_benchmark_m3_context_projection_record_id(
+            stock_code="600000",
+            trade_date="2026-07-07",
+        ),
+        projection=BenchmarkM3ContextProjection(
+            m1_constraints_ref=dict(front_context.m1_constraints_ref),
+            identify_state=dict(front_context.identify_state),
+            tracking_state=dict(front_context.tracking_state),
+            entry_state=dict(front_context.entry_state),
+        ),
+    )
+
+
 def test_replay_manifest_parses_without_registry_path() -> None:
     manifest = load_benchmark_run_manifest(REPLAY_MANIFEST)
 
@@ -254,17 +307,30 @@ def test_replay_refs_manifest_parses_contract_without_inline_payloads() -> None:
     assert manifest.replay_sample.resolver_refs is not None
     assert (
         manifest.replay_sample.resolver_refs.m2_cycle_ref.source_type
-        == RESOLVER_STUB_SOURCE_TYPE
+        == M2_SMALL_CYCLE_SOURCE_TYPE
+    )
+    assert (
+        manifest.replay_sample.resolver_refs.m2_shadow_bundle_ref.source_type
+        == M2_SHADOW_BUNDLE_SOURCE_TYPE
+    )
+    assert (
+        manifest.replay_sample.resolver_refs.m1_context_ref.source_type
+        == BENCHMARK_M1_CONTEXT_SOURCE_TYPE
+    )
+    assert (
+        manifest.replay_sample.resolver_refs.m3_context_ref.source_type
+        == BENCHMARK_M3_CONTEXT_SOURCE_TYPE
     )
     assert manifest.replay_sample.resolver_refs.m3_context_ref.object_type == (
-        "m3_context_bundle"
+        "m3_context_projection"
     )
 
 
 def test_replay_refs_manifest_materializes_benchmark_artifact(tmp_path: Path) -> None:
     manifest = load_benchmark_run_manifest(REPLAY_REFS_MANIFEST)
+    _materialize_official_replay_refs_fixture(project_root=tmp_path)
     batch_result = run_benchmark_manifest(
-        project_root=PROJECT_ROOT,
+        project_root=tmp_path,
         manifest=manifest,
     )
     materialize_benchmark_batch_run(
