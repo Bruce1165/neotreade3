@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-14
+**Last Updated**: 2026-07-15
 
 ---
 
@@ -480,6 +480,22 @@
     - `resolver_refs` 当前只支持 `resolver_stub`，不支持真实 `M2/M3` persisted artifact/ledger/readback owner
     - 当前仍未新增独立 `M2/M3` persisted truth-source；`lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source
     - 本次仍只改 `benchmark` 子域输入解析层，不改 `BenchmarkBatchRunResult` 输出契约，不改 `G/M5` 消费面
+- 2026-07-15（M4 persisted refs real truth-source / local projection 更新）：
+  - `M4 resolver_refs` 当前四块输入都已具备真实路径：
+    - `m2_cycle_ref(real)` -> `5d6b394 feat(m2): add small cycle persisted truth source`
+    - `m2_shadow_bundle_ref(real)` -> `d90a3c6 feat(m2): add shadow bundle persisted truth source`
+    - `m1_context_ref(real-local)` -> `ec8b1ce feat(m4): add m1 context local projection`
+    - `m3_context_ref(real-local)` -> `50c5c4b feat(m4): add m3 context local projection`
+  - 当前 `resolver_refs` 已不再只停留在 `resolver_stub`：
+    - `m2_cycle_ref` 与 `m2_shadow_bundle_ref` 已接入 `M2` persisted truth-source
+    - `m1_context_ref` 与 `m3_context_ref` 已接入 `benchmark` 子域 local persisted projection
+  - `tests/unit/test_m4_benchmark_replay_manifest.py` 当前已覆盖 mixed mode success 与 fail-closed：
+    - `real m2_cycle_ref + real m2_shadow_bundle_ref + real m1_context_ref + real m3_context_ref`
+    - 缺失 ref / `object_type mismatch` / `object_version mismatch`
+  - 当前必须明确的边界补充：
+    - `m1_context_ref` 与 `m3_context_ref` 当前仍是 `benchmark local projection`，不是 `M2/M3` 全域 canonical truth-source
+    - 本轮真实化仍只改 `benchmark` 输入解析层与局部 owner，不改 `BenchmarkBatchRunResult` 输出契约，不改 `G/M5` 消费面
+    - `lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source
 
 ## 文档一致性说明
 
@@ -501,6 +517,11 @@
   - 已完成 mainline runner、artifact/ledger、typed readback、`validation_seed` manifest 基线。
   - 已完成 `inline replay manifest` 最小切片（commit `0b84a4a`）。
   - 已完成 `resolver_refs` contract 与 `mock/stub resolver` 路径（commit `bca1876`），并验证其可在 `benchmark` 子域内解为 `inline replay` 等价 payload。
+  - 已完成 `resolver_refs` 四块真实路径收口：
+    - `m2_cycle_ref(real)`（commit `5d6b394`）
+    - `m2_shadow_bundle_ref(real)`（commit `d90a3c6`）
+    - `m1_context_ref(real-local)`（commit `ec8b1ce`）
+    - `m3_context_ref(real-local)`（commit `50c5c4b`）
 - `M5 governance 基线`
   - 已完成 governance contracts / handoff / artifact / ledger / runtime / CLI / worker / orchestrator-fit 基线。
   - 已完成 `candidate validation outcome` persisted truth 与 `runtime -> CLI -> worker -> API` adoption。
@@ -516,8 +537,8 @@
   - formal front 与 backhalf 主干已落地，但这不等于 `M2/M3` 全域完成；后续仍需继续按消费面与真相源收口。
 - `M4`
   - 当前仍不是完整 benchmark 层。
-  - 当前 `resolver_refs` 只支持 `resolver_stub`，不支持真实 `M2/M3` persisted artifact/ledger/readback owner。
-  - 当前仍未新增独立 `M2/M3` persisted truth-source；`lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source。
+  - 当前 `resolver_refs` 已具备真实路径，但其中 `m1_context_ref` / `m3_context_ref` 仍是 `benchmark local projection`，不是 `M2/M3` 全域 canonical truth-source。
+  - 当前已新增 `M2` persisted truth-source（`small_cycle` / `shadow_bundle`），但 `lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source。
 - `M5`
   - 当前已具备治理真相物化链与显式治理动作链，但仍不等于完整 `validation / promotion / reject` 全闭环。
   - `final_validation_selection` 当前仍未暴露独立 CLI / API mode。
@@ -528,8 +549,8 @@
 
 ### 当前建议下一步
 
-- 在 `M4 resolver_stub` 已验证的前提下，优先决定是否进入真实 `M2/M3` persisted truth-source 基线建设。
-- 在未确认真相源 owner 前，不把 `resolver_refs` 表述成正式 refs 能力。
+- 在 `resolver_refs` 四块已具备真实路径的前提下，优先决定是否需要把 `m1_context_ref` / `m3_context_ref` 从 `benchmark local projection` 上提为 `M2/M3` 全域 canonical owner。
+- 在未确认 owner 前，不把 `m1_context_ref(real-local)` / `m3_context_ref(real-local)` 表述成 `M2/M3` 全域 truth-source。
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
