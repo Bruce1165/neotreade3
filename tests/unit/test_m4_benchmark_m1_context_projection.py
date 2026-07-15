@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from neotrade3.benchmark import (
     BenchmarkM1ContextProjection,
     build_benchmark_m1_context_projection_record_id,
@@ -42,3 +44,17 @@ def test_materialize_benchmark_m1_context_projection(tmp_path: Path) -> None:
     assert artifact_payload["source"] == "benchmark_local_projection"
     assert reconstructed == projection
     assert reconstructed_ledger == ledger_record
+
+
+def test_m1_context_projection_from_dict_fails_closed_on_object_type_mismatch() -> None:
+    with pytest.raises(
+        ValueError,
+        match="m1_context_projection.object_type must equal m1_context_projection",
+    ):
+        BenchmarkM1ContextProjection.from_dict(
+            {
+                "source": "benchmark_local_projection",
+                "object_type": "wrong_m1_context_projection",
+                "object_version": 1,
+            }
+        )

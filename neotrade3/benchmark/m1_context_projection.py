@@ -1,4 +1,9 @@
-"""Local persisted projection owner for benchmark replay m1_context."""
+"""Compatibility-only local projection for benchmark replay m1_context.
+
+This object is intentionally not a canonical M1 truth-source. It is kept only
+to preserve benchmark replay compatibility while formal M1 semantics are
+expected to migrate toward higher-fidelity upstream objects.
+"""
 
 from __future__ import annotations
 
@@ -37,17 +42,29 @@ class BenchmarkM1ContextProjection:
         source = str(payload.get("source") or "").strip()
         if not source:
             raise ValueError("m1_context_projection.source must be non-empty")
+        object_type = str(
+            payload.get("object_type") or BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE
+        )
+        if object_type != BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE:
+            raise ValueError(
+                "m1_context_projection.object_type must equal "
+                f"{BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE}"
+            )
+        object_version = int(
+            payload.get(
+                "object_version",
+                BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_VERSION,
+            )
+        )
+        if object_version != BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_VERSION:
+            raise ValueError(
+                "m1_context_projection.object_version must equal "
+                f"{BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_VERSION}"
+            )
         return cls(
             source=source,
-            object_type=str(
-                payload.get("object_type") or BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE
-            ),
-            object_version=int(
-                payload.get(
-                    "object_version",
-                    BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_VERSION,
-                )
-            ),
+            object_type=object_type,
+            object_version=object_version,
         )
 
 
