@@ -58,6 +58,7 @@ from neotrade3.orchestration import (
     load_orchestrator_config,
 )
 from neotrade3.orchestration.config_loader import orchestrator_config_from_dict
+from tests._support.screeners_config import prepare_screeners_config_root
 from neotrade3.orchestration.preflight import PreflightRunner
 from neotrade3.screeners.cli import build_parser as build_screener_cli_parser
 from neotrade3.screeners.runtime import run_placeholder as run_screener_placeholder
@@ -3239,22 +3240,12 @@ def test_bootstrap_api_handler_serves_screeners_endpoint() -> None:
 
 def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT, api_key="test-key")
-    isolated_screeners_dir = tmp_path / "config" / "screeners"
-    isolated_screeners_dir.mkdir(parents=True, exist_ok=True)
-    registry_source = PROJECT_ROOT / "config/screeners/screeners_registry.json"
-    config_source = PROJECT_ROOT / "config/screeners/cup_handle_v4.json"
-    (isolated_screeners_dir / "screeners_registry.json").write_text(
-        registry_source.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (isolated_screeners_dir / "cup_handle_v4.json").write_text(
-        config_source.read_text(encoding="utf-8"),
-        encoding="utf-8",
+    isolated_screeners_dir, isolated_registry_path = prepare_screeners_config_root(
+        tmp_path=tmp_path,
+        screener_ids=["cup_handle_v4"],
     )
     service._screeners_config_dir = isolated_screeners_dir
-    service._screeners_registry_config = (
-        isolated_screeners_dir / "screeners_registry.json"
-    )
+    service._screeners_registry_config = isolated_registry_path
     handler = build_handler(service)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, daemon=True)
