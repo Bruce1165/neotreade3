@@ -77,6 +77,9 @@ FEATURE_INVENTORY_FILE = (
 TRADING_CALENDAR_PATH = (
     PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
 )
+SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH = Path(
+    "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+)
 
 _TEST_DB_RELATIVE_PATHS: dict[str, str] = {
     "daily_hot_cold": "var/db/test_daily_hot_cold_stock_data.db",
@@ -259,7 +262,7 @@ def test_cup_handle_lab_returns_failed_when_screener_artifact_is_corrupt(
 ) -> None:
     artifact_path = (
         tmp_path
-        / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+        / SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH
     )
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("{not-json", encoding="utf-8")
@@ -1812,7 +1815,7 @@ def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
                         "message": "upstream artifact unreadable",
                         "details": {"reason": "corrupt json"},
                         "artifact_refs": [
-                            "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+                            str(SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH)
                         ],
                     }
                 ]
@@ -1838,7 +1841,7 @@ def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
     assert artifact_payload["message"] == "upstream artifact unreadable"
     assert artifact_payload["details"] == {"reason": "corrupt json"}
     assert artifact_payload["artifact_refs"] == [
-        "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+        str(SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH)
     ]
 
 
@@ -1923,7 +1926,7 @@ def test_lab_run_view_executes_runtime_and_writes_contract_artifact(
 
     screener_artifact_path = (
         tmp_path
-        / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+        / SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH
     )
     screener_artifact_path.parent.mkdir(parents=True, exist_ok=True)
     screener_artifact_path.write_text(
@@ -3435,7 +3438,7 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
 
         artifact_path = (
             PROJECT_ROOT
-            / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+            / SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH
         )
         artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
         artifact_payload["status"] = "ok"
@@ -5132,7 +5135,7 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
         screener_artifact_path = (
             PROJECT_ROOT
-            / "var/artifacts/screener_runs/2026-05-19/screener_cup_handle_v4_result.json"
+            / SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH
         )
         screener_artifact_path.parent.mkdir(parents=True, exist_ok=True)
         previous_screener_artifact_text = (
