@@ -86,12 +86,12 @@ BULK_RUN_RESULT_RELATIVE_PATH = Path(
 SCREENER_CUP_HANDLE_V4_RUN_LEDGER_RELATIVE_PATH = Path(
     "var/ledgers/screener_runs/2026-05-19/screener_cup_handle_v4_run.json"
 )
-LAB_CUP_HANDLE_LAB_RUN_LEDGER_RELATIVE_PATH = Path(
-    "var/ledgers/lab_runs/2026-05-19/lab_cup_handle_lab_run.json"
-)
-LAB_CUP_HANDLE_LAB_RESULT_ARTIFACT_RELATIVE_PATH = Path(
-    "var/artifacts/lab_runs/2026-05-19/lab_cup_handle_lab_result.json"
-)
+_LAB_RUN_RELATIVE_PATHS: dict[str, tuple[Path, Path]] = {
+    "cup_handle_lab": (
+        Path("var/ledgers/lab_runs/2026-05-19/lab_cup_handle_lab_run.json"),
+        Path("var/artifacts/lab_runs/2026-05-19/lab_cup_handle_lab_result.json"),
+    ),
+}
 
 _TEST_DB_RELATIVE_PATHS: dict[str, str] = {
     "daily_hot_cold": "var/db/test_daily_hot_cold_stock_data.db",
@@ -1838,11 +1838,14 @@ def test_materialize_lab_runs_from_snapshot_persists_failed_lab_results(
         dry_run=False,
     )
 
+    ledger_relative_path, artifact_relative_path = _LAB_RUN_RELATIVE_PATHS[
+        "cup_handle_lab"
+    ]
     ledger_path = (
-        tmp_path / LAB_CUP_HANDLE_LAB_RUN_LEDGER_RELATIVE_PATH
+        tmp_path / ledger_relative_path
     )
     artifact_path = (
-        tmp_path / LAB_CUP_HANDLE_LAB_RESULT_ARTIFACT_RELATIVE_PATH
+        tmp_path / artifact_relative_path
     )
 
     ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -1888,11 +1891,14 @@ def test_materialize_lab_runs_from_snapshot_persists_skipped_without_rerun(
         dry_run=False,
     )
 
+    ledger_relative_path, artifact_relative_path = _LAB_RUN_RELATIVE_PATHS[
+        "cup_handle_lab"
+    ]
     ledger_path = (
-        tmp_path / LAB_CUP_HANDLE_LAB_RUN_LEDGER_RELATIVE_PATH
+        tmp_path / ledger_relative_path
     )
     artifact_path = (
-        tmp_path / LAB_CUP_HANDLE_LAB_RESULT_ARTIFACT_RELATIVE_PATH
+        tmp_path / artifact_relative_path
     )
     ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
     artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
