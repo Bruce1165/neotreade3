@@ -3569,6 +3569,14 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+        shutil.rmtree(
+            PROJECT_ROOT / "var/artifacts/screener_runs" / "2026-05-19",
+            ignore_errors=True,
+        )
+        shutil.rmtree(
+            PROJECT_ROOT / "var/ledgers/screener_runs" / "2026-05-19",
+            ignore_errors=True,
+        )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
                 if calendar_path.exists():
