@@ -15,6 +15,10 @@ from neotrade3.cycle_intelligence import (
     read_shadow_cycle_intelligence_bundle,
     read_small_cycle,
 )
+from neotrade3.decision_engine import (
+    DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE,
+    read_decision_m3_front_context,
+)
 from .m1_context_projection import (
     BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE,
     read_benchmark_m1_context_projection,
@@ -38,12 +42,14 @@ RESOLVER_STUB_SOURCE_TYPE = "resolver_stub"
 M2_SMALL_CYCLE_SOURCE_TYPE = "m2_small_cycle_persisted"
 M2_SHADOW_BUNDLE_SOURCE_TYPE = "m2_shadow_bundle_persisted"
 BENCHMARK_M1_CONTEXT_SOURCE_TYPE = "benchmark_m1_context_projection"
+DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE = "decision_engine_m3_front_context"
 BENCHMARK_M3_CONTEXT_SOURCE_TYPE = "benchmark_m3_context_projection"
 ALLOWED_PERSISTED_REF_SOURCE_TYPES = (
     RESOLVER_STUB_SOURCE_TYPE,
     M2_SMALL_CYCLE_SOURCE_TYPE,
     M2_SHADOW_BUNDLE_SOURCE_TYPE,
     BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
+    DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE,
     BENCHMARK_M3_CONTEXT_SOURCE_TYPE,
 )
 ALLOWED_PERSISTED_REF_KINDS = ("artifact", "ledger_projection", "inline_fallback")
@@ -813,6 +819,38 @@ def _resolve_benchmark_m3_context_ref_payload(
     return projection.to_payload()
 
 
+def _resolve_decision_engine_m3_front_context_ref_payload(
+    ref: BenchmarkPersistedRef,
+    *,
+    project_root: str | Path,
+    field_name: str,
+) -> dict[str, Any]:
+    if ref.source_type != DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE:
+        raise ValueError(
+            f"{field_name}.source_type is not supported by decision_engine m3 front owner"
+        )
+    if ref.object_type != DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE:
+        raise ValueError(
+            f"{field_name}.object_type mismatch: "
+            f"expected {DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE}"
+        )
+    if ref.object_version is None:
+        raise ValueError(f"{field_name}.object_version must be provided")
+    front_context = read_decision_m3_front_context(
+        project_root=project_root,
+        record_id=ref.ref_id,
+    )
+    if front_context is None:
+        raise ValueError(
+            f"{field_name}.ref_id is not resolvable in decision_engine m3 front owner"
+        )
+    if ref.object_version != front_context.object_version:
+        raise ValueError(
+            f"{field_name}.object_version mismatch: expected {front_context.object_version}"
+        )
+    return front_context.to_payload()
+
+
 def _resolve_replay_stub_payloads(
     *,
     project_root: str | Path,
@@ -858,7 +896,14 @@ def _resolve_replay_stub_payloads(
             )
         ),
         m3_context=(
-            _resolve_benchmark_m3_context_ref_payload(
+            _resolve_decision_engine_m3_front_context_ref_payload(
+                resolver_refs.m3_context_ref,
+                project_root=project_root,
+                field_name="resolver_refs.m3_context_ref",
+            )
+            if resolver_refs.m3_context_ref.source_type
+            == DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE
+            else _resolve_benchmark_m3_context_ref_payload(
                 resolver_refs.m3_context_ref,
                 project_root=project_root,
                 field_name="resolver_refs.m3_context_ref",

@@ -5,6 +5,7 @@ from .artifact_writer import (
 from .batch_runner import (
     BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
     BENCHMARK_M3_CONTEXT_SOURCE_TYPE,
+    DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE,
     BenchmarkBatchRunResult,
     BenchmarkCandidateRunContext,
     BenchmarkPersistedRef,
@@ -122,6 +123,7 @@ __all__ = [
     "BENCHMARK_M3_CONTEXT_PROJECTION_OBJECT_TYPE",
     "BENCHMARK_M3_CONTEXT_PROJECTION_OBJECT_VERSION",
     "BENCHMARK_M3_CONTEXT_SOURCE_TYPE",
+    "DECISION_ENGINE_M3_FRONT_CONTEXT_SOURCE_TYPE",
     "BenchmarkArtifactRecord",
     "B1_TARGET_OPPORTUNITY_SAMPLE",
     "B2_CONTROL_FAILURE_SAMPLE",
