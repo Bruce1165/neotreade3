@@ -83,6 +83,9 @@ SCREENER_CUP_HANDLE_V4_RESULT_RELATIVE_PATH = Path(
 BULK_RUN_RESULT_RELATIVE_PATH = Path(
     "var/artifacts/screener_runs/2026-05-19/bulk_run_result.json"
 )
+SCREENER_CUP_HANDLE_V4_RUN_LEDGER_RELATIVE_PATH = Path(
+    "var/ledgers/screener_runs/2026-05-19/screener_cup_handle_v4_run.json"
+)
 
 _TEST_DB_RELATIVE_PATHS: dict[str, str] = {
     "daily_hot_cold": "var/db/test_daily_hot_cold_stock_data.db",
@@ -3499,7 +3502,7 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
 
         ledger_path = (
             PROJECT_ROOT
-            / "var/ledgers/screener_runs/2026-05-19/screener_cup_handle_v4_run.json"
+            / SCREENER_CUP_HANDLE_V4_RUN_LEDGER_RELATIVE_PATH
         )
         if ledger_path.exists():
             ledger_path.unlink()
