@@ -13,6 +13,10 @@ from neotrade3.cycle_intelligence import (
     SmallCycle,
     read_small_cycle,
 )
+from .m1_context_projection import (
+    BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE,
+    read_benchmark_m1_context_projection,
+)
 from .contracts import build_benchmark_sample
 from .assembler import build_benchmark_assessment_from_m2_shadow
 from .contracts import BenchmarkAssessmentResult
@@ -26,9 +30,11 @@ from .sample_registry import (
 INLINE_REPLAY_REGISTRY_PATH = "inline_replay_manifest"
 RESOLVER_STUB_SOURCE_TYPE = "resolver_stub"
 M2_SMALL_CYCLE_SOURCE_TYPE = "m2_small_cycle_persisted"
+BENCHMARK_M1_CONTEXT_SOURCE_TYPE = "benchmark_m1_context_projection"
 ALLOWED_PERSISTED_REF_SOURCE_TYPES = (
     RESOLVER_STUB_SOURCE_TYPE,
     M2_SMALL_CYCLE_SOURCE_TYPE,
+    BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
 )
 ALLOWED_PERSISTED_REF_KINDS = ("artifact", "ledger_projection", "inline_fallback")
 
@@ -704,6 +710,38 @@ def _resolve_m2_small_cycle_ref_payload(
     return small_cycle.to_payload()
 
 
+def _resolve_benchmark_m1_context_ref_payload(
+    ref: BenchmarkPersistedRef,
+    *,
+    project_root: str | Path,
+    field_name: str,
+) -> dict[str, Any]:
+    if ref.source_type != BENCHMARK_M1_CONTEXT_SOURCE_TYPE:
+        raise ValueError(
+            f"{field_name}.source_type is not supported by benchmark m1_context owner"
+        )
+    if ref.object_type != BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE:
+        raise ValueError(
+            f"{field_name}.object_type mismatch: "
+            f"expected {BENCHMARK_M1_CONTEXT_PROJECTION_OBJECT_TYPE}"
+        )
+    if ref.object_version is None:
+        raise ValueError(f"{field_name}.object_version must be provided")
+    projection = read_benchmark_m1_context_projection(
+        project_root=project_root,
+        record_id=ref.ref_id,
+    )
+    if projection is None:
+        raise ValueError(
+            f"{field_name}.ref_id is not resolvable in benchmark m1_context owner"
+        )
+    if ref.object_version != projection.object_version:
+        raise ValueError(
+            f"{field_name}.object_version mismatch: expected {projection.object_version}"
+        )
+    return projection.to_payload()
+
+
 def _resolve_replay_stub_payloads(
     *,
     project_root: str | Path,
@@ -726,9 +764,18 @@ def _resolve_replay_stub_payloads(
             resolver_refs.m2_shadow_bundle_ref,
             field_name="resolver_refs.m2_shadow_bundle_ref",
         ),
-        m1_context=_resolve_stub_ref_payload(
-            resolver_refs.m1_context_ref,
-            field_name="resolver_refs.m1_context_ref",
+        m1_context=(
+            _resolve_benchmark_m1_context_ref_payload(
+                resolver_refs.m1_context_ref,
+                project_root=project_root,
+                field_name="resolver_refs.m1_context_ref",
+            )
+            if resolver_refs.m1_context_ref.source_type
+            == BENCHMARK_M1_CONTEXT_SOURCE_TYPE
+            else _resolve_stub_ref_payload(
+                resolver_refs.m1_context_ref,
+                field_name="resolver_refs.m1_context_ref",
+            )
         ),
         m3_context=_resolve_stub_ref_payload(
             resolver_refs.m3_context_ref,
