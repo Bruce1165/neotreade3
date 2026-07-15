@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from neotrade3.cycle_intelligence import (
+    M2_SHADOW_BUNDLE_OBJECT_TYPE,
     SMALL_CYCLE_OBJECT_TYPE,
     SmallCycle,
+    read_shadow_cycle_intelligence_bundle,
     read_small_cycle,
 )
 from .m1_context_projection import (
@@ -30,10 +32,12 @@ from .sample_registry import (
 INLINE_REPLAY_REGISTRY_PATH = "inline_replay_manifest"
 RESOLVER_STUB_SOURCE_TYPE = "resolver_stub"
 M2_SMALL_CYCLE_SOURCE_TYPE = "m2_small_cycle_persisted"
+M2_SHADOW_BUNDLE_SOURCE_TYPE = "m2_shadow_bundle_persisted"
 BENCHMARK_M1_CONTEXT_SOURCE_TYPE = "benchmark_m1_context_projection"
 ALLOWED_PERSISTED_REF_SOURCE_TYPES = (
     RESOLVER_STUB_SOURCE_TYPE,
     M2_SMALL_CYCLE_SOURCE_TYPE,
+    M2_SHADOW_BUNDLE_SOURCE_TYPE,
     BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
 )
 ALLOWED_PERSISTED_REF_KINDS = ("artifact", "ledger_projection", "inline_fallback")
@@ -710,6 +714,35 @@ def _resolve_m2_small_cycle_ref_payload(
     return small_cycle.to_payload()
 
 
+def _resolve_m2_shadow_bundle_ref_payload(
+    ref: BenchmarkPersistedRef,
+    *,
+    project_root: str | Path,
+    field_name: str,
+) -> dict[str, Any]:
+    if ref.source_type != M2_SHADOW_BUNDLE_SOURCE_TYPE:
+        raise ValueError(f"{field_name}.source_type is not supported by shadow-bundle owner")
+    if ref.object_type != M2_SHADOW_BUNDLE_OBJECT_TYPE:
+        raise ValueError(
+            f"{field_name}.object_type mismatch: expected {M2_SHADOW_BUNDLE_OBJECT_TYPE}"
+        )
+    if ref.object_version is None:
+        raise ValueError(f"{field_name}.object_version must be provided")
+    shadow_bundle = read_shadow_cycle_intelligence_bundle(
+        project_root=project_root,
+        record_id=ref.ref_id,
+    )
+    if shadow_bundle is None:
+        raise ValueError(
+            f"{field_name}.ref_id is not resolvable in shadow-bundle owner"
+        )
+    if ref.object_version != shadow_bundle.object_version:
+        raise ValueError(
+            f"{field_name}.object_version mismatch: expected {shadow_bundle.object_version}"
+        )
+    return shadow_bundle.to_replay_payload()
+
+
 def _resolve_benchmark_m1_context_ref_payload(
     ref: BenchmarkPersistedRef,
     *,
@@ -760,9 +793,18 @@ def _resolve_replay_stub_payloads(
                 field_name="resolver_refs.m2_cycle_ref",
             )
         ),
-        m2_shadow_bundle=_resolve_stub_ref_payload(
-            resolver_refs.m2_shadow_bundle_ref,
-            field_name="resolver_refs.m2_shadow_bundle_ref",
+        m2_shadow_bundle=(
+            _resolve_m2_shadow_bundle_ref_payload(
+                resolver_refs.m2_shadow_bundle_ref,
+                project_root=project_root,
+                field_name="resolver_refs.m2_shadow_bundle_ref",
+            )
+            if resolver_refs.m2_shadow_bundle_ref.source_type
+            == M2_SHADOW_BUNDLE_SOURCE_TYPE
+            else _resolve_stub_ref_payload(
+                resolver_refs.m2_shadow_bundle_ref,
+                field_name="resolver_refs.m2_shadow_bundle_ref",
+            )
         ),
         m1_context=(
             _resolve_benchmark_m1_context_ref_payload(

@@ -15,6 +15,7 @@ from neotrade3.benchmark.batch_runner import (
     BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
     INLINE_REPLAY_REGISTRY_PATH,
     M2_SMALL_CYCLE_SOURCE_TYPE,
+    M2_SHADOW_BUNDLE_SOURCE_TYPE,
     RESOLVER_STUB_SOURCE_TYPE,
     BenchmarkRunManifest,
 )
@@ -24,10 +25,15 @@ from neotrade3.benchmark import (
     materialize_benchmark_m1_context_projection,
 )
 from neotrade3.cycle_intelligence import (
+    ShadowCycleIntelligenceBundle,
+    build_shadow_cycle_intelligence_bundle_record_id,
+    build_shadow_cycle_intelligence_from_m1,
     SmallCycle,
+    materialize_shadow_cycle_intelligence_bundle,
     build_small_cycle_record_id,
     materialize_small_cycle,
 )
+from neotrade3.data_control import D7SecurityMasterMinimal, PF1TradingProfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +41,43 @@ REPLAY_MANIFEST = PROJECT_ROOT / "config" / "benchmark" / "formal_replay_manifes
 REPLAY_REFS_MANIFEST = (
     PROJECT_ROOT / "config" / "benchmark" / "formal_replay_refs_manifest.json"
 )
+
+
+def _build_shadow_bundle_from_cycle(
+    *,
+    cycle: SmallCycle,
+) -> ShadowCycleIntelligenceBundle:
+    security = D7SecurityMasterMinimal(
+        stock_code=cycle.stock_code,
+        stock_name="浦发银行",
+        asset_type="stock",
+        is_delisted=False,
+        sector_lv1="金融",
+        sector_lv2="银行",
+        last_trade_date=cycle.trade_date,
+    )
+    profile = PF1TradingProfile(
+        stock_code=cycle.stock_code,
+        as_of_trade_date=cycle.trade_date,
+        latest_amount=220_000_000.0,
+        avg_amount_5d=210_000_000.0,
+        avg_amount_20d=180_000_000.0,
+        latest_turnover=3.1,
+        avg_turnover_5d=3.0,
+        median_turnover_20d=2.2,
+        return_20d=0.12,
+        avg_pct_change_5d=0.8,
+        positive_days_5d=4,
+        window_5d_ready=True,
+        window_20d_ready=True,
+    )
+    return ShadowCycleIntelligenceBundle.from_bundle(
+        build_shadow_cycle_intelligence_from_m1(
+            cycle=cycle,
+            security_master=security,
+            trading_profile=profile,
+        )
+    )
 
 
 def test_replay_manifest_parses_without_registry_path() -> None:
@@ -223,7 +266,7 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref(tmp_path: Path) -> None
     assert batch_result.grade_summary == {"pass": 1}
 
 
-def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m1_context_ref(
+def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m2_shadow_bundle_ref_and_real_m1_context_ref(
     tmp_path: Path,
 ) -> None:
     small_cycle = SmallCycle(
@@ -240,6 +283,15 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m1_context_ref
     )
     small_cycle_record_id = build_small_cycle_record_id(small_cycle=small_cycle)
     materialize_small_cycle(project_root=tmp_path, small_cycle=small_cycle)
+    shadow_bundle = _build_shadow_bundle_from_cycle(cycle=small_cycle)
+    shadow_bundle_record_id = build_shadow_cycle_intelligence_bundle_record_id(
+        stock_code="600000",
+        trade_date="2026-07-07",
+    )
+    materialize_shadow_cycle_intelligence_bundle(
+        project_root=tmp_path,
+        bundle=shadow_bundle,
+    )
 
     m1_context_record_id = build_benchmark_m1_context_projection_record_id(
         stock_code="600000",
@@ -272,9 +324,9 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m1_context_ref
                         "object_version": 1
                     },
                     "m2_shadow_bundle_ref": {
-                        "source_type": "resolver_stub",
+                        "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
                         "ref_kind": "artifact",
-                        "ref_id": "m2-shadow-ref-600000-2026-07-07",
+                        "ref_id": shadow_bundle_record_id,
                         "object_type": "m2_shadow_bundle",
                         "object_version": 1
                     },
@@ -525,6 +577,180 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_missing(
     with pytest.raises(
         ValueError,
         match="resolver_refs.m1_context_ref.ref_id is not resolvable in benchmark m1_context owner",
+    ):
+        run_benchmark_manifest(
+            project_root=tmp_path,
+            manifest=manifest,
+        )
+
+
+def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_missing(
+    tmp_path: Path,
+) -> None:
+    small_cycle = SmallCycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S2 Advancing",
+        state_stability_level="stable",
+        evidence_bundle={"e1_price_structure": {"status": "supported"}},
+        confidence={"level": "high"},
+        invalidation={"status": "not_triggered"},
+        state_transition_log=[],
+        input_data_version="m1_phase1.v1",
+        rule_version="m2_small_cycle.v1alpha1",
+    )
+    small_cycle_record_id = build_small_cycle_record_id(small_cycle=small_cycle)
+    materialize_small_cycle(project_root=tmp_path, small_cycle=small_cycle)
+
+    m1_context_record_id = build_benchmark_m1_context_projection_record_id(
+        stock_code="600000",
+        trade_date="2026-07-07",
+    )
+    materialize_benchmark_m1_context_projection(
+        project_root=tmp_path,
+        record_id=m1_context_record_id,
+        projection=BenchmarkM1ContextProjection(source="benchmark_local_projection"),
+    )
+
+    manifest = BenchmarkRunManifest.from_dict(
+        {
+            "run_id": "missing_real_m2_shadow_bundle_replay_batch",
+            "replay_sample": {
+                "sample_id": "formal_front_replay_refs_seed_v1",
+                "sample_bucket": "R2_formal_refs_replay",
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "target_state_type": "T3_strong_target",
+                "expected_target_state": {},
+                "resolver_refs": {
+                    "m2_cycle_ref": {
+                        "source_type": M2_SMALL_CYCLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": small_cycle_record_id,
+                        "object_type": "small_cycle",
+                        "object_version": 1
+                    },
+                    "m2_shadow_bundle_ref": {
+                        "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": "missing-shadow-bundle-record",
+                        "object_type": "m2_shadow_bundle",
+                        "object_version": 1
+                    },
+                    "m1_context_ref": {
+                        "source_type": BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": m1_context_record_id,
+                        "object_type": "m1_context_projection",
+                        "object_version": 1
+                    },
+                    "m3_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m3-context-ref-600000-2026-07-07",
+                        "object_type": "m3_context_bundle",
+                        "object_version": 1
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="resolver_refs.m2_shadow_bundle_ref.ref_id is not resolvable in shadow-bundle owner",
+    ):
+        run_benchmark_manifest(
+            project_root=tmp_path,
+            manifest=manifest,
+        )
+
+
+def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_version_mismatches(
+    tmp_path: Path,
+) -> None:
+    small_cycle = SmallCycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S2 Advancing",
+        state_stability_level="stable",
+        evidence_bundle={"e1_price_structure": {"status": "supported"}},
+        confidence={"level": "high"},
+        invalidation={"status": "not_triggered"},
+        state_transition_log=[],
+        input_data_version="m1_phase1.v1",
+        rule_version="m2_small_cycle.v1alpha1",
+    )
+    small_cycle_record_id = build_small_cycle_record_id(small_cycle=small_cycle)
+    materialize_small_cycle(project_root=tmp_path, small_cycle=small_cycle)
+
+    shadow_bundle = _build_shadow_bundle_from_cycle(cycle=small_cycle)
+    shadow_bundle_record_id = build_shadow_cycle_intelligence_bundle_record_id(
+        stock_code="600000",
+        trade_date="2026-07-07",
+    )
+    materialize_shadow_cycle_intelligence_bundle(
+        project_root=tmp_path,
+        bundle=shadow_bundle,
+    )
+
+    m1_context_record_id = build_benchmark_m1_context_projection_record_id(
+        stock_code="600000",
+        trade_date="2026-07-07",
+    )
+    materialize_benchmark_m1_context_projection(
+        project_root=tmp_path,
+        record_id=m1_context_record_id,
+        projection=BenchmarkM1ContextProjection(source="benchmark_local_projection"),
+    )
+
+    manifest = BenchmarkRunManifest.from_dict(
+        {
+            "run_id": "mismatch_real_m2_shadow_bundle_version_replay_batch",
+            "replay_sample": {
+                "sample_id": "formal_front_replay_refs_seed_v1",
+                "sample_bucket": "R2_formal_refs_replay",
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "target_state_type": "T3_strong_target",
+                "expected_target_state": {},
+                "resolver_refs": {
+                    "m2_cycle_ref": {
+                        "source_type": M2_SMALL_CYCLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": small_cycle_record_id,
+                        "object_type": "small_cycle",
+                        "object_version": 1
+                    },
+                    "m2_shadow_bundle_ref": {
+                        "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": shadow_bundle_record_id,
+                        "object_type": "m2_shadow_bundle",
+                        "object_version": 999
+                    },
+                    "m1_context_ref": {
+                        "source_type": BENCHMARK_M1_CONTEXT_SOURCE_TYPE,
+                        "ref_kind": "artifact",
+                        "ref_id": m1_context_record_id,
+                        "object_type": "m1_context_projection",
+                        "object_version": 1
+                    },
+                    "m3_context_ref": {
+                        "source_type": "resolver_stub",
+                        "ref_kind": "artifact",
+                        "ref_id": "m3-context-ref-600000-2026-07-07",
+                        "object_type": "m3_context_bundle",
+                        "object_version": 1
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="resolver_refs.m2_shadow_bundle_ref.object_version mismatch: expected 1",
     ):
         run_benchmark_manifest(
             project_root=tmp_path,
