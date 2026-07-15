@@ -59,6 +59,7 @@ from neotrade3.orchestration import (
 )
 from neotrade3.orchestration.config_loader import orchestrator_config_from_dict
 from tests._support.screeners_config import prepare_screeners_config_root
+from tests._support.var_cleanup import cleanup_var_paths
 from neotrade3.orchestration.preflight import PreflightRunner
 from neotrade3.screeners.cli import build_parser as build_screener_cli_parser
 from neotrade3.screeners.runtime import run_placeholder as run_screener_placeholder
@@ -3569,13 +3570,12 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/screener_runs" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/screener_runs" / "2026-05-19",
-            ignore_errors=True,
+        cleanup_var_paths(
+            project_root=PROJECT_ROOT,
+            relative_paths=[
+                "var/artifacts/screener_runs/2026-05-19",
+                "var/ledgers/screener_runs/2026-05-19",
+            ],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
