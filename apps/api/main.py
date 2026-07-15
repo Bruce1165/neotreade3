@@ -1713,6 +1713,41 @@ class BootstrapApiService:
             "final_validation_artifact": artifact,
         }
 
+    def governance_final_validations_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "var/ledgers/governance_final_validations"
+        if not base_dir.exists():
+            return {"_meta": {"returned_count": 0}, "final_validations": []}
+
+        records: list[dict[str, Any]] = []
+        for item in base_dir.iterdir():
+            if not item.is_dir():
+                continue
+            ledger_file = item / "governance_final_validation_run.json"
+            if not ledger_file.exists():
+                continue
+            payload: object
+            try:
+                payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                records.append(payload)
+
+        records.sort(
+            key=lambda p: (str(p.get("written_at") or ""), str(p.get("source_run_id") or "")),
+            reverse=True,
+        )
+        if len(records) > limit:
+            records = records[:limit]
+        return {"_meta": {"returned_count": len(records)}, "final_validations": records}
+
     def labs_view(self) -> dict[str, Any]:
         with self._cache_lock:
             registry_payload = self._cache_get(("registry", "labs"))

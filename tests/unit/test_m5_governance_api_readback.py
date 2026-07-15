@@ -11,7 +11,12 @@ from apps.api.router import BootstrapApiRouter
 from apps.api.shared import ApiError
 
 
-def _write_governance_final_validation_fixtures(*, project_root: Path, source_run_id: str) -> None:
+def _write_governance_final_validation_fixtures(
+    *,
+    project_root: Path,
+    source_run_id: str,
+    written_at: str = "2026-07-15T00:00:00Z",
+) -> None:
     artifact_rel = (
         f"var/artifacts/governance_final_validations/{source_run_id}/"
         "governance_final_validation.json"
@@ -37,7 +42,7 @@ def _write_governance_final_validation_fixtures(*, project_root: Path, source_ru
                 "candidate_validation_artifact_path": "var/artifacts/governance_candidate_validations/validation-1/governance_candidate_validation.json",
                 "candidate_validation_ledger_path": "var/ledgers/governance_candidate_validations/validation-1/governance_candidate_validation_run.json",
                 "handoff_artifact_path": f"var/artifacts/governance_handoffs/{source_run_id}/governance_handoff_bundle.json",
-                "written_at": "2026-07-15T00:00:00Z",
+                "written_at": written_at,
             },
             indent=2,
             ensure_ascii=False,
@@ -51,7 +56,7 @@ def _write_governance_final_validation_fixtures(*, project_root: Path, source_ru
             {
                 "source_run_id": source_run_id,
                 "status": "completed",
-                "written_at": "2026-07-15T00:00:00Z",
+                "written_at": written_at,
                 "artifact_path": artifact_rel,
                 "ledger_path": ledger_rel,
                 "selected_validation_id": "validation-1",
@@ -101,3 +106,31 @@ def test_governance_final_validation_readback_endpoint_returns_404_when_missing(
     assert exc.value.status_code == HTTPStatus.NOT_FOUND
     assert exc.value.code == "governance_final_validation_not_found"
 
+
+def test_governance_final_validations_list_endpoint_returns_latest_records(
+    tmp_path: Path,
+) -> None:
+    _write_governance_final_validation_fixtures(
+        project_root=tmp_path,
+        source_run_id="benchmark-run-1",
+        written_at="2026-07-15T00:00:00Z",
+    )
+    _write_governance_final_validation_fixtures(
+        project_root=tmp_path,
+        source_run_id="benchmark-run-2",
+        written_at="2026-07-16T00:00:00Z",
+    )
+    _write_governance_final_validation_fixtures(
+        project_root=tmp_path,
+        source_run_id="benchmark-run-3",
+        written_at="2026-07-14T00:00:00Z",
+    )
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/governance/final-validations?limit=2")
+
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["returned_count"] == 2
+    assert payload["final_validations"][0]["source_run_id"] == "benchmark-run-2"
+    assert payload["final_validations"][1]["source_run_id"] == "benchmark-run-1"

@@ -104,6 +104,7 @@ class BootstrapApiRouter:
                         "/api/labs/runs/<date>/<lab_id> — 实验室结果",
                         "/api/orchestration/runs — 编排运行记录",
                         "/api/governance/final-validations/<source_run_id> — 治理终审选择结果",
+                        "/api/governance/final-validations?limit=... — 治理终审选择列表",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1317,6 +1318,16 @@ class BootstrapApiRouter:
             return HTTPStatus.OK, self.service.orchestration_view(
                 target_date=target_date,
                 publish_succeeded=publish_succeeded,
+            )
+
+        if (
+            parsed.path == "/api/governance/final-validations"
+            or parsed.path == "/api/v1/governance/final-validations"
+        ):
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_final_validations_view(
+                limit=limit
             )
 
         if parsed.path.startswith("/api/governance/final-validations/") or parsed.path.startswith(
