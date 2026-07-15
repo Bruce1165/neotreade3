@@ -3902,11 +3902,12 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
             os.environ.pop("NEOTRADE3_STOCK_DB_PATH", None)
         else:
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/pools" / "2026-05-19", ignore_errors=True
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/pools" / "2026-05-19", ignore_errors=True
+        cleanup_var_paths(
+            project_root=PROJECT_ROOT,
+            relative_paths=[
+                "var/ledgers/pools/2026-05-19",
+                "var/artifacts/pools/2026-05-19",
+            ],
         )
         if test_db_path.exists():
             test_db_path.unlink()
@@ -5403,66 +5404,26 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
                 screener_artifact_path.write_text(
                     previous_screener_artifact_text, encoding="utf-8"
                 )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/factor_matrix" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/factor_matrix" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/sector_prosperity" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/sector_prosperity" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/lab_runs" / "2026-05-19", ignore_errors=True
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/lab_runs" / "2026-05-19", ignore_errors=True
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/labs/cup_handle_lab",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/labs/paper_simulation_lab",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/orchestration_runs" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/orchestration_runs" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/screener_runs" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/screener_runs" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/pools" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/pools" / "2026-05-19",
-            ignore_errors=True,
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/ledgers/data_control" / "2026-05-19", ignore_errors=True
-        )
-        shutil.rmtree(
-            PROJECT_ROOT / "var/artifacts/data_control" / "2026-05-19",
-            ignore_errors=True,
+        cleanup_var_paths(
+            project_root=PROJECT_ROOT,
+            relative_paths=[
+                "var/ledgers/factor_matrix/2026-05-19",
+                "var/artifacts/factor_matrix/2026-05-19",
+                "var/ledgers/sector_prosperity/2026-05-19",
+                "var/artifacts/sector_prosperity/2026-05-19",
+                "var/ledgers/lab_runs/2026-05-19",
+                "var/artifacts/lab_runs/2026-05-19",
+                "var/artifacts/labs/cup_handle_lab",
+                "var/artifacts/labs/paper_simulation_lab",
+                "var/ledgers/orchestration_runs/2026-05-19",
+                "var/artifacts/orchestration_runs/2026-05-19",
+                "var/ledgers/screener_runs/2026-05-19",
+                "var/artifacts/screener_runs/2026-05-19",
+                "var/ledgers/pools/2026-05-19",
+                "var/artifacts/pools/2026-05-19",
+                "var/ledgers/data_control/2026-05-19",
+                "var/artifacts/data_control/2026-05-19",
+            ],
         )
         if test_db_path.exists():
             test_db_path.unlink()
