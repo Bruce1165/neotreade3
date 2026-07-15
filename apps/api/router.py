@@ -103,6 +103,7 @@ class BootstrapApiRouter:
                         "/api/screeners/config/<id> — 筛选器配置",
                         "/api/labs/runs/<date>/<lab_id> — 实验室结果",
                         "/api/orchestration/runs — 编排运行记录",
+                        "/api/governance/final-validations/<source_run_id> — 治理终审选择结果",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1316,6 +1317,29 @@ class BootstrapApiRouter:
             return HTTPStatus.OK, self.service.orchestration_view(
                 target_date=target_date,
                 publish_succeeded=publish_succeeded,
+            )
+
+        if parsed.path.startswith("/api/governance/final-validations/") or parsed.path.startswith(
+            "/api/v1/governance/final-validations/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) != 4:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message="expected /api/governance/final-validations/<source_run_id>",
+                    details={"path": parsed.path},
+                )
+            _, _, _, source_run_id = parts
+            if not source_run_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_source_run_id",
+                    message="source_run_id must be a non-empty string",
+                    details={"source_run_id": source_run_id},
+                )
+            return HTTPStatus.OK, self.service.governance_final_validation_view(
+                source_run_id=source_run_id
             )
 
         if parsed.path == "/api/labs":

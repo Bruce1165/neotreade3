@@ -48,6 +48,10 @@ from apps.worker.main import BootstrapWorkerApp
 from neotrade3.data_control import SourceRegistry
 from neotrade3.data_control.pipeline import DataControlPipeline
 from neotrade3.governance.contracts import ValidationResult
+from neotrade3.governance.run_ledger import (
+    read_governance_final_validation_artifact,
+    read_governance_final_validation_record,
+)
 from neotrade3.labs import LabRegistry
 from neotrade3.labs.contracts import (
     build_lab_runtime_artifacts_payload,
@@ -1671,6 +1675,43 @@ class BootstrapApiService:
             content_type="application/json; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    def governance_final_validation_view(self, *, source_run_id: str) -> dict[str, Any]:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        record = read_governance_final_validation_record(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_final_validation_not_found",
+                message="governance final validation ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        artifact = read_governance_final_validation_artifact(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_final_validation_artifact_not_found",
+                message="governance final validation artifact not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "final_validation": record.__dict__,
+            "final_validation_artifact": artifact,
+        }
 
     def labs_view(self) -> dict[str, Any]:
         with self._cache_lock:
