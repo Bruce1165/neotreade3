@@ -1054,6 +1054,78 @@ class BootstrapWorkerApp:
             },
         }
 
+    def run_governance_final_validation_selection_on_demand(
+        self,
+        *,
+        target_date: date,
+        source_run_id: str,
+        requested_by: str = (
+            "BootstrapWorkerApp.run_governance_final_validation_selection_on_demand"
+        ),
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        orchestrator = DailyMasterOrchestrator.from_files(
+            orchestrator_config_path=self.paths["orchestrator_config"],
+            labs_registry_path=self.paths["labs_config"],
+        )
+        plan = orchestrator.build_on_demand_plan(
+            OnDemandTaskRequest(
+                target_date=target_date,
+                tasks=[
+                    OnDemandTaskItem(
+                        task_id="governance.final_validation_selection",
+                        phase=OrchestrationPhase.GOVERNANCE,
+                        entrypoint=(
+                            "neotrade3.governance.runtime:"
+                            "run_governance_final_validation_selection"
+                        ),
+                        args_template={
+                            "source_run_id": source_run_id,
+                        },
+                        outputs=[
+                            "governance_final_validation_artifact",
+                            "governance_final_validation_ledger",
+                        ],
+                    )
+                ],
+            )
+        )
+        task_results = orchestrator.execute_run_plan(
+            plan,
+            {
+                OrchestrationPhase.GOVERNANCE: self._create_governance_executor(),
+            },
+            {
+                "target_date": target_date,
+                "project_root": str(self.project_root),
+                "db_path": str(self.project_root / "var/data/neotrade3.db"),
+                "requested_by": requested_by,
+                "dry_run": dry_run,
+            },
+        )
+        run_entry, task_entries = self._build_execution_run_ledger(
+            target_date=target_date,
+            execution_run_plan=plan,
+            task_results=task_results,
+        )
+        return {
+            "status": run_entry.status.value,
+            "target_date": target_date.isoformat(),
+            "orchestration": {
+                "plan": self._to_jsonable(plan),
+                "task_results": self._to_jsonable(task_results),
+                "run_ledger": self._to_jsonable(run_entry),
+                "task_ledger": self._to_jsonable(task_entries),
+            },
+            "summary": {
+                "planned_task_count": len(plan.planned_tasks),
+                "executed_task_count": len(task_results),
+                "ok_task_count": sum(
+                    1 for result in task_results if result.status == RunStatus.OK
+                ),
+            },
+        }
+
     def run_governance_status_transition_on_demand(
         self,
         *,
@@ -1313,6 +1385,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(
             "daily",
             "governance_reject",
+            "governance_final_validation_selection",
             "governance_status_transition",
             "governance_candidate_validation_outcome",
         ),
@@ -1379,6 +1452,17 @@ def main() -> int:
             target_date=target_date,
             source_run_id=source_run_id,
             validation_id=validation_id,
+            dry_run=bool(args.dry_run),
+        )
+    elif mode == "governance_final_validation_selection":
+        if not source_run_id:
+            parser.error(
+                "--source-run-id is required when "
+                "--mode governance_final_validation_selection"
+            )
+        snapshot = app.run_governance_final_validation_selection_on_demand(
+            target_date=target_date,
+            source_run_id=source_run_id,
             dry_run=bool(args.dry_run),
         )
     elif mode == "governance_status_transition":

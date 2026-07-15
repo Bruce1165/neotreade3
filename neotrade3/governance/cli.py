@@ -10,6 +10,7 @@ from typing import Sequence
 from .contracts import ValidationResult
 from .runtime import (
     run_governance_candidate_validation_outcome,
+    run_governance_final_validation_selection,
     run_governance_for_benchmark_run,
     run_governance_reject_execution,
     run_governance_status_transition,
@@ -134,6 +135,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Execute without writing candidate validation artifact/ledger outputs under var/.",
     )
+    final_selection_parser = subparsers.add_parser(
+        "final-validation-selection",
+        help="Materialize an independent governance final validation selection from persisted candidate validation truth.",
+    )
+    final_selection_parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project root path (defaults to repository root).",
+    )
+    final_selection_parser.add_argument(
+        "--source-run-id",
+        required=True,
+        help="Persisted governance handoff source run id.",
+    )
+    final_selection_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Execute without writing final validation artifact/ledger outputs under var/.",
+    )
     return parser
 
 
@@ -198,6 +218,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             "validation_id": record.validation_id,
             "source_run_id": record.source_run_id,
             "status": record.status,
+            "baseline_run_id": record.baseline_run_id,
+            "candidate_run_id": record.candidate_run_id,
+            "outcome": record.outcome,
+            "artifact_path": record.artifact_path,
+            "ledger_path": record.ledger_path,
+            "dry_run": bool(args.dry_run),
+        }
+    elif args.command == "final-validation-selection":
+        record = run_governance_final_validation_selection(
+            project_root=project_root,
+            source_run_id=str(args.source_run_id),
+            dry_run=bool(args.dry_run),
+        )
+        payload = {
+            "source_run_id": record.source_run_id,
+            "status": record.status,
+            "selected_validation_id": record.selected_validation_id,
             "baseline_run_id": record.baseline_run_id,
             "candidate_run_id": record.candidate_run_id,
             "outcome": record.outcome,

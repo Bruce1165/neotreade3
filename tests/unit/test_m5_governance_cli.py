@@ -15,6 +15,8 @@ from neotrade3.governance.cli import build_parser, main
 from neotrade3.governance.run_ledger import (
     read_governance_candidate_validation_artifact,
     read_governance_candidate_validation_record,
+    read_governance_final_validation_artifact,
+    read_governance_final_validation_record,
     read_governance_handoff_artifact,
     read_governance_reject_execution_artifact,
     read_governance_reject_execution_ledger,
@@ -235,6 +237,25 @@ def test_governance_cli_parser_accepts_candidate_validation_outcome_arguments() 
     assert args.dry_run is True
 
 
+def test_governance_cli_parser_accepts_final_validation_selection_arguments() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "final-validation-selection",
+            "--project-root",
+            "/tmp/neotrade3",
+            "--source-run-id",
+            "benchmark-run-1",
+            "--dry-run",
+        ]
+    )
+
+    assert args.command == "final-validation-selection"
+    assert args.project_root == "/tmp/neotrade3"
+    assert args.source_run_id == "benchmark-run-1"
+    assert args.dry_run is True
+
+
 def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     project_root = _prepare_project_root(tmp_path)
     run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
@@ -275,6 +296,70 @@ def test_governance_cli_main_dry_run_does_not_write_outputs(tmp_path: Path) -> N
             source_run_id=payload["source_run_id"],
         )
         is None
+    )
+
+
+def test_governance_cli_final_validation_selection_materializes_outputs(
+    tmp_path: Path,
+) -> None:
+    project_root = _prepare_project_root(tmp_path)
+    run_id = _materialize_benchmark_run(project_root, "validation_seed_manifest.json")
+    main(["handoff", "--project-root", str(project_root), "--benchmark-run-id", run_id])
+    validation_result_payload = _build_candidate_validation_result_payload(
+        project_root=project_root,
+        source_run_id=run_id,
+        outcome="passed",
+        candidate_run_id="candidate-run-1",
+    )
+    validation_result = json.dumps(validation_result_payload, ensure_ascii=False)
+    main(
+        [
+            "candidate-validation-outcome",
+            "--project-root",
+            str(project_root),
+            "--source-run-id",
+            run_id,
+            "--validation-result",
+            validation_result,
+        ]
+    )
+    buffer = StringIO()
+
+    with redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "final-validation-selection",
+                "--project-root",
+                str(project_root),
+                "--source-run-id",
+                run_id,
+            ]
+        )
+
+    payload = json.loads(buffer.getvalue())
+    artifact = read_governance_final_validation_artifact(
+        project_root=project_root,
+        source_run_id=run_id,
+    )
+    ledger = read_governance_final_validation_record(
+        project_root=project_root,
+        source_run_id=run_id,
+    )
+
+    assert exit_code == 0
+    assert payload["source_run_id"] == run_id
+    assert payload["selected_validation_id"] == validation_result_payload["validation_id"]
+    assert payload["outcome"] == "passed"
+    assert payload["dry_run"] is False
+    assert artifact is not None
+    assert artifact["source_run_id"] == run_id
+    assert (
+        artifact["selected_validation_id"] == validation_result_payload["validation_id"]
+    )
+    assert ledger is not None
+    assert ledger.source_run_id == run_id
+    assert (
+        ledger.selected_validation_id == validation_result_payload["validation_id"]
     )
 
 

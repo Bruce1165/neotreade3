@@ -2588,6 +2588,7 @@ class BootstrapApiRouter:
                 "governance_reject_transition_chain",
                 "governance_status_transition",
                 "governance_candidate_validation_outcome",
+                "governance_final_validation_selection",
             }:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
@@ -2596,7 +2597,8 @@ class BootstrapApiRouter:
                         "mode must be one of: daily, governance_reject, "
                         "governance_reject_transition_chain, "
                         "governance_status_transition, "
-                        "governance_candidate_validation_outcome"
+                        "governance_candidate_validation_outcome, "
+                        "governance_final_validation_selection"
                     ),
                     details={"mode": mode},
                 )
@@ -2637,6 +2639,7 @@ class BootstrapApiRouter:
                 "governance_reject_transition_chain",
                 "governance_status_transition",
                 "governance_candidate_validation_outcome",
+                "governance_final_validation_selection",
             }:
                 if (
                     not isinstance(source_run_id, str)
@@ -2676,6 +2679,19 @@ class BootstrapApiRouter:
                         ),
                         details={"reason": str(exc)},
                     ) from exc
+            elif (
+                normalized_mode == "governance_final_validation_selection"
+                and validation_result is not None
+            ):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_validation_result",
+                    message=(
+                        "validation_result is not supported for "
+                        "governance_final_validation_selection"
+                    ),
+                    details={"validation_result": validation_result},
+                )
 
             return HTTPStatus.OK, self.service.orchestration_run_view(
                 target_date=raw_date,
