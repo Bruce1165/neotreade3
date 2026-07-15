@@ -496,6 +496,20 @@
     - `m1_context_ref` 与 `m3_context_ref` 当前仍是 `benchmark local projection`，不是 `M2/M3` 全域 canonical truth-source
     - 本轮真实化仍只改 `benchmark` 输入解析层与局部 owner，不改 `BenchmarkBatchRunResult` 输出契约，不改 `G/M5` 消费面
     - `lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source
+- 2026-07-15（M3 canonical owner / M1 semantic closure 更新）：
+  - `m3_context` 已从 `benchmark local projection` 上提为 `decision_engine` canonical owner：
+    - `DecisionM3FrontContext`
+    - `24c38c8 feat(m3): add front context canonical owner`
+  - `benchmark` replay 当前已兼容两类 `m3_context_ref` 来源：
+    - `benchmark_m3_context_projection`
+    - `decision_engine_m3_front_context`
+  - `m1_context` 已明确不再推进 canonical owner：
+    - `43df792 docs(spec): add m1 semantic closure design`
+    - `9a228f9 refactor(m1): harden benchmark compatibility fail-closed`
+  - 当前必须明确的边界补充：
+    - `BenchmarkM1ContextProjection` 仅作为 `benchmark replay compatibility projection` 保留
+    - `m1_context` 不再表述为正式 `M1` 对象或未来 canonical owner 候选
+    - `m3_context` 当前仅前半段 `front-only` 形状具备 canonical owner，未扩展到 backhalf
 
 ## 文档一致性说明
 
@@ -522,6 +536,8 @@
     - `m2_shadow_bundle_ref(real)`（commit `d90a3c6`）
     - `m1_context_ref(real-local)`（commit `ec8b1ce`）
     - `m3_context_ref(real-local)`（commit `50c5c4b`）
+  - 已完成 `m3_context` 从 `benchmark local projection` 上提到 `decision_engine` canonical owner（commit `24c38c8`）。
+  - 已完成 `m1_context` 语义收口：不再推进 canonical owner，仅保留 `benchmark` 兼容层并补齐 fail-closed 边界（commit `43df792`、`9a228f9`）。
 - `M5 governance 基线`
   - 已完成 governance contracts / handoff / artifact / ledger / runtime / CLI / worker / orchestrator-fit 基线。
   - 已完成 `candidate validation outcome` persisted truth 与 `runtime -> CLI -> worker -> API` adoption。
@@ -537,7 +553,9 @@
   - formal front 与 backhalf 主干已落地，但这不等于 `M2/M3` 全域完成；后续仍需继续按消费面与真相源收口。
 - `M4`
   - 当前仍不是完整 benchmark 层。
-  - 当前 `resolver_refs` 已具备真实路径，但其中 `m1_context_ref` / `m3_context_ref` 仍是 `benchmark local projection`，不是 `M2/M3` 全域 canonical truth-source。
+  - 当前 `resolver_refs` 已具备真实路径，但其中：
+    - `m1_context_ref` 仅为 `benchmark compatibility projection`，不是 `M1` canonical truth-source。
+    - `m3_context_ref` 已具备 `decision_engine front-only canonical owner`，但这不等于 `M3` 全域 canonical truth-source。
   - 当前已新增 `M2` persisted truth-source（`small_cycle` / `shadow_bundle`），但 `lowfreq sim state.formal_front` 仍只视为压缩投影，不视为 canonical truth-source。
 - `M5`
   - 当前已具备治理真相物化链与显式治理动作链，但仍不等于完整 `validation / promotion / reject` 全闭环。
@@ -549,8 +567,10 @@
 
 ### 当前建议下一步
 
-- 在 `resolver_refs` 四块已具备真实路径的前提下，优先决定是否需要把 `m1_context_ref` / `m3_context_ref` 从 `benchmark local projection` 上提为 `M2/M3` 全域 canonical owner。
-- 在未确认 owner 前，不把 `m1_context_ref(real-local)` / `m3_context_ref(real-local)` 表述成 `M2/M3` 全域 truth-source。
+- 优先更新后续设计与状态文档口径，显式区分：
+  - `m1_context` 仅是 `benchmark` 兼容层
+  - `m3_context` 已有 `decision_engine front-only canonical owner`
+- 在此基础上，再决定下一刀是继续推进 `M4` benchmark 完整层，还是转向 `M5` / 统一版本体系等仍未收口主线。
 
 ## 2026-07-07 M2/M3 前半段最小消费切换实现态更新
 
