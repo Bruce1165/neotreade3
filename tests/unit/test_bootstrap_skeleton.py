@@ -74,6 +74,9 @@ SOURCE_REGISTRY_CONFIG = PROJECT_ROOT / "config/data_control/source_registry.jso
 FEATURE_INVENTORY_FILE = (
     PROJECT_ROOT / "config/migration/neotrade2_feature_inventory.v3.json"
 )
+TRADING_CALENDAR_PATH = (
+    PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+)
 
 _TEST_DB_RELATIVE_PATHS: dict[str, str] = {
     "daily_hot_cold": "var/db/test_daily_hot_cold_stock_data.db",
@@ -3265,7 +3268,7 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -3664,7 +3667,7 @@ def test_bootstrap_api_handler_allows_post_without_legacy_api_key_header() -> No
     thread.start()
 
     try:
-        calendar_path = PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+        calendar_path = TRADING_CALENDAR_PATH
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
             calendar_path.read_text(encoding="utf-8") if calendar_path.exists() else None
@@ -3793,7 +3796,7 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4032,7 +4035,7 @@ def test_er_ban_hui_tiao_screener_run_produces_picks_and_decision_trace() -> Non
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4200,7 +4203,7 @@ def test_zhang_ting_bei_liang_yin_screener_run_produces_picks_and_decision_trace
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4369,7 +4372,7 @@ def test_jin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4531,7 +4534,7 @@ def test_yin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4726,7 +4729,7 @@ def test_shi_pan_xian_screener_run_produces_picks_and_decision_trace() -> None:
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -4935,7 +4938,7 @@ def test_cup_handle_v4_screener_run_produces_picks_and_decision_trace() -> None:
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
@@ -5102,7 +5105,7 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
 
     try:
         calendar_path = (
-            PROJECT_ROOT / "var/ledgers/trading_calendar/trading_calendar.json"
+            TRADING_CALENDAR_PATH
         )
         calendar_path.parent.mkdir(parents=True, exist_ok=True)
         previous_calendar_text = (
