@@ -75,6 +75,17 @@ FEATURE_INVENTORY_FILE = (
     PROJECT_ROOT / "config/migration/neotrade2_feature_inventory.v3.json"
 )
 
+_TEST_DB_RELATIVE_PATHS: dict[str, str] = {
+    "daily_hot_cold": "var/db/test_daily_hot_cold_stock_data.db",
+    "er_ban_hui_tiao": "var/db/test_er_ban_hui_tiao_stock_data.db",
+    "zhang_ting_bei_liang_yin": "var/db/test_zhang_ting_bei_liang_yin_stock_data.db",
+    "jin_feng_huang": "var/db/test_jin_feng_huang_stock_data.db",
+    "yin_feng_huang": "var/db/test_yin_feng_huang_stock_data.db",
+    "shi_pan_xian": "var/db/test_shi_pan_xian_stock_data.db",
+    "cup_handle_v4": "var/db/test_cup_handle_v4_stock_data.db",
+    "factor_matrix": "var/db/test_factor_matrix_stock_data.db",
+}
+
 
 @pytest.fixture(autouse=True)
 def _release_bootstrap_lock_between_tests():
@@ -3735,11 +3746,11 @@ def test_v1_stock_check_endpoint_returns_not_implemented() -> None:
 
 
 def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_daily_hot_cold_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["daily_hot_cold"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_daily_hot_cold_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["daily_hot_cold"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -3913,7 +3924,7 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
         )
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_daily_hot_cold_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["daily_hot_cold"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -3924,11 +3935,11 @@ def test_daily_hot_cold_screener_run_produces_picks_and_decision_trace() -> None
 
 
 def test_er_ban_hui_tiao_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_er_ban_hui_tiao_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["er_ban_hui_tiao"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_er_ban_hui_tiao_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["er_ban_hui_tiao"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -4103,7 +4114,7 @@ def test_er_ban_hui_tiao_screener_run_produces_picks_and_decision_trace() -> Non
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_er_ban_hui_tiao_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["er_ban_hui_tiao"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -4116,11 +4127,11 @@ def test_er_ban_hui_tiao_screener_run_produces_picks_and_decision_trace() -> Non
 def test_zhang_ting_bei_liang_yin_screener_run_produces_picks_and_decision_trace() -> (
     None
 ):
-    test_db_path = PROJECT_ROOT / "var/db/test_zhang_ting_bei_liang_yin_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["zhang_ting_bei_liang_yin"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_zhang_ting_bei_liang_yin_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["zhang_ting_bei_liang_yin"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -4266,7 +4277,7 @@ def test_zhang_ting_bei_liang_yin_screener_run_produces_picks_and_decision_trace
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_zhang_ting_bei_liang_yin_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["zhang_ting_bei_liang_yin"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -4277,11 +4288,11 @@ def test_zhang_ting_bei_liang_yin_screener_run_produces_picks_and_decision_trace
 
 
 def test_jin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_jin_feng_huang_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["jin_feng_huang"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_jin_feng_huang_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["jin_feng_huang"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -4436,7 +4447,7 @@ def test_jin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_jin_feng_huang_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["jin_feng_huang"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -4447,11 +4458,11 @@ def test_jin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
 
 
 def test_yin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_yin_feng_huang_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["yin_feng_huang"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_yin_feng_huang_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["yin_feng_huang"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -4597,7 +4608,7 @@ def test_yin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_yin_feng_huang_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["yin_feng_huang"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -4608,11 +4619,11 @@ def test_yin_feng_huang_screener_run_produces_picks_and_decision_trace() -> None
 
 
 def test_shi_pan_xian_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_shi_pan_xian_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["shi_pan_xian"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_shi_pan_xian_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["shi_pan_xian"]],
     )
 
     target = date(2026, 5, 19)
@@ -4787,7 +4798,7 @@ def test_shi_pan_xian_screener_run_produces_picks_and_decision_trace() -> None:
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_shi_pan_xian_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["shi_pan_xian"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -4798,11 +4809,11 @@ def test_shi_pan_xian_screener_run_produces_picks_and_decision_trace() -> None:
 
 
 def test_cup_handle_v4_screener_run_produces_picks_and_decision_trace() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_cup_handle_v4_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["cup_handle_v4"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_cup_handle_v4_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["cup_handle_v4"]],
     )
 
     target = date(2026, 5, 19)
@@ -5000,7 +5011,7 @@ def test_cup_handle_v4_screener_run_produces_picks_and_decision_trace() -> None:
             os.environ["NEOTRADE3_STOCK_DB_PATH"] = original_db_path
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_cup_handle_v4_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["cup_handle_v4"]],
         )
         if "previous_calendar_text" in locals():
             if previous_calendar_text is None:
@@ -5036,11 +5047,11 @@ def test_bootstrap_api_handler_allows_dashboard_cross_origin_reads() -> None:
 
 
 def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
-    test_db_path = PROJECT_ROOT / "var/db/test_factor_matrix_stock_data.db"
+    test_db_path = PROJECT_ROOT / _TEST_DB_RELATIVE_PATHS["factor_matrix"]
     test_db_path.parent.mkdir(parents=True, exist_ok=True)
     cleanup_var_paths(
         project_root=PROJECT_ROOT,
-        relative_paths=["var/db/test_factor_matrix_stock_data.db"],
+        relative_paths=[_TEST_DB_RELATIVE_PATHS["factor_matrix"]],
     )
 
     conn = sqlite3.connect(str(test_db_path))
@@ -5457,7 +5468,7 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
-            relative_paths=["var/db/test_factor_matrix_stock_data.db"],
+            relative_paths=[_TEST_DB_RELATIVE_PATHS["factor_matrix"]],
         )
 
 
