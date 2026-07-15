@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -19,6 +20,9 @@ from .sample_registry import (
 )
 
 INLINE_REPLAY_REGISTRY_PATH = "inline_replay_manifest"
+RESOLVER_STUB_SOURCE_TYPE = "resolver_stub"
+ALLOWED_PERSISTED_REF_SOURCE_TYPES = (RESOLVER_STUB_SOURCE_TYPE,)
+ALLOWED_PERSISTED_REF_KINDS = ("artifact", "ledger_projection", "inline_fallback")
 
 
 def _copy_str_list(value: Any, *, field_name: str) -> tuple[str, ...]:
@@ -61,6 +65,16 @@ def _require_text(value: Any, *, field_name: str) -> str:
     if not raw:
         raise ValueError(f"{field_name} must be non-empty")
     return raw
+
+
+def _parse_optional_int(value: Any, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _copy_nested_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    return deepcopy(dict(value))
 
 
 @dataclass(frozen=True)
@@ -115,16 +129,32 @@ class BenchmarkReplaySample:
     m2_shadow_bundle: dict[str, Any] = field(default_factory=dict)
     m3_context: dict[str, Any] = field(default_factory=dict)
     m1_context: dict[str, Any] = field(default_factory=dict)
+    resolver_refs: "BenchmarkReplayResolverRefs | None" = None
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
     scenario_tags: tuple[str, ...] = ()
     note: str = ""
     input_data_version: str = "m1_phase1.v1"
     rule_version: str = "m4_benchmark_replay.v1alpha1"
+    inline_payload_complete: bool = True
 
     @classmethod
     def from_dict(cls, payload: Any) -> "BenchmarkReplaySample":
         if not isinstance(payload, Mapping):
             raise TypeError("replay_sample must be a JSON object")
+        resolver_refs_payload = payload.get("resolver_refs")
+        resolver_refs = (
+            None
+            if resolver_refs_payload is None
+            else BenchmarkReplayResolverRefs.from_dict(resolver_refs_payload)
+        )
+        inline_payload_complete = all(
+            payload.get(field_name) is not None
+            for field_name in ("m2_cycle", "m2_shadow_bundle", "m3_context")
+        )
+        if not inline_payload_complete and resolver_refs is None:
+            raise ValueError(
+                "replay_sample must include complete inline payloads or resolver_refs"
+            )
         return cls(
             sample_id=_require_text(payload.get("sample_id"), field_name="sample_id"),
             sample_bucket=_require_text(
@@ -141,17 +171,30 @@ class BenchmarkReplaySample:
                 payload.get("expected_target_state"),
                 field_name="expected_target_state",
             ),
-            m2_cycle=_copy_mapping(payload.get("m2_cycle"), field_name="m2_cycle"),
-            m2_shadow_bundle=_copy_mapping(
-                payload.get("m2_shadow_bundle"),
-                field_name="m2_shadow_bundle",
+            m2_cycle=(
+                {}
+                if payload.get("m2_cycle") is None
+                else _copy_mapping(payload.get("m2_cycle"), field_name="m2_cycle")
             ),
-            m3_context=_copy_mapping(payload.get("m3_context"), field_name="m3_context"),
+            m2_shadow_bundle=(
+                {}
+                if payload.get("m2_shadow_bundle") is None
+                else _copy_mapping(
+                    payload.get("m2_shadow_bundle"),
+                    field_name="m2_shadow_bundle",
+                )
+            ),
+            m3_context=(
+                {}
+                if payload.get("m3_context") is None
+                else _copy_mapping(payload.get("m3_context"), field_name="m3_context")
+            ),
             m1_context=(
                 {}
                 if payload.get("m1_context") is None
                 else _copy_mapping(payload.get("m1_context"), field_name="m1_context")
             ),
+            resolver_refs=resolver_refs,
             evidence_refs=_copy_mapping_list(
                 payload.get("evidence_refs"),
                 field_name="evidence_refs",
@@ -167,6 +210,7 @@ class BenchmarkReplaySample:
             rule_version=str(
                 payload.get("rule_version") or "m4_benchmark_replay.v1alpha1"
             ).strip(),
+            inline_payload_complete=inline_payload_complete,
         )
 
     def to_benchmark_sample(self):
@@ -181,6 +225,82 @@ class BenchmarkReplaySample:
             note=self.note,
             input_data_version=self.input_data_version,
             rule_version=self.rule_version,
+        )
+
+
+@dataclass(frozen=True)
+class BenchmarkPersistedRef:
+    source_type: str
+    ref_kind: str
+    ref_id: str
+    object_type: str = ""
+    object_version: int | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Any, *, field_name: str) -> "BenchmarkPersistedRef":
+        if not isinstance(payload, Mapping):
+            raise TypeError(f"{field_name} must be a JSON object")
+        source_type = _require_text(
+            payload.get("source_type"),
+            field_name=f"{field_name}.source_type",
+        )
+        if source_type not in ALLOWED_PERSISTED_REF_SOURCE_TYPES:
+            raise ValueError(
+                f"{field_name}.source_type must be one of "
+                f"{', '.join(ALLOWED_PERSISTED_REF_SOURCE_TYPES)}"
+            )
+        ref_kind = _require_text(
+            payload.get("ref_kind"),
+            field_name=f"{field_name}.ref_kind",
+        )
+        if ref_kind not in ALLOWED_PERSISTED_REF_KINDS:
+            raise ValueError(
+                f"{field_name}.ref_kind must be one of "
+                f"{', '.join(ALLOWED_PERSISTED_REF_KINDS)}"
+            )
+        return cls(
+            source_type=source_type,
+            ref_kind=ref_kind,
+            ref_id=_require_text(payload.get("ref_id"), field_name=f"{field_name}.ref_id"),
+            object_type=_require_text(
+                payload.get("object_type"),
+                field_name=f"{field_name}.object_type",
+            ),
+            object_version=_parse_optional_int(
+                payload.get("object_version"),
+                field_name=f"{field_name}.object_version",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class BenchmarkReplayResolverRefs:
+    m2_cycle_ref: BenchmarkPersistedRef
+    m2_shadow_bundle_ref: BenchmarkPersistedRef
+    m1_context_ref: BenchmarkPersistedRef
+    m3_context_ref: BenchmarkPersistedRef
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "BenchmarkReplayResolverRefs":
+        if not isinstance(payload, Mapping):
+            raise TypeError("resolver_refs must be a JSON object")
+        return cls(
+            m2_cycle_ref=BenchmarkPersistedRef.from_dict(
+                payload.get("m2_cycle_ref"),
+                field_name="resolver_refs.m2_cycle_ref",
+            ),
+            m2_shadow_bundle_ref=BenchmarkPersistedRef.from_dict(
+                payload.get("m2_shadow_bundle_ref"),
+                field_name="resolver_refs.m2_shadow_bundle_ref",
+            ),
+            m1_context_ref=BenchmarkPersistedRef.from_dict(
+                payload.get("m1_context_ref"),
+                field_name="resolver_refs.m1_context_ref",
+            ),
+            m3_context_ref=BenchmarkPersistedRef.from_dict(
+                payload.get("m3_context_ref"),
+                field_name="resolver_refs.m3_context_ref",
+            ),
         )
 
 
@@ -303,6 +423,14 @@ def load_benchmark_run_manifest(file_path: str | Path) -> BenchmarkRunManifest:
     return BenchmarkRunManifest.from_file(file_path)
 
 
+@dataclass(frozen=True)
+class _ResolvedReplayPayloads:
+    m2_cycle: dict[str, Any]
+    m2_shadow_bundle: dict[str, Any]
+    m1_context: dict[str, Any]
+    m3_context: dict[str, Any]
+
+
 def _resolve_registry_path(project_root: str | Path, registry_path: str) -> Path:
     base = Path(project_root)
     candidate = Path(registry_path)
@@ -358,6 +486,215 @@ def _build_small_cycle_from_payload(payload: Mapping[str, Any]) -> SmallCycle:
     )
 
 
+_RESOLVER_STUB_PAYLOADS: dict[str, dict[str, Any]] = {
+    "m2-cycle-ref-600000-2026-07-07": {
+        "object_type": "small_cycle",
+        "object_version": 1,
+        "payload": {
+            "object_type": "small_cycle",
+            "object_version": 1,
+            "stock_code": "600000",
+            "trade_date": "2026-07-07",
+            "cycle_state": "S2 Advancing",
+            "state_stability_level": "stable",
+            "evidence_bundle": {
+                "e1_price_structure": {
+                    "status": "supported",
+                }
+            },
+            "confidence": {
+                "level": "high",
+            },
+            "invalidation": {
+                "status": "not_triggered",
+            },
+            "state_transition_log": [],
+            "input_data_version": "m1_phase1.v1",
+            "rule_version": "m2_small_cycle.v1alpha1",
+        },
+    },
+    "m2-shadow-ref-600000-2026-07-07": {
+        "object_type": "m2_shadow_bundle",
+        "object_version": 1,
+        "payload": {
+            "wave_hypothesis": {
+                "object_type": "small_cycle_wave_hypothesis",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "replay_consistency_status": "pending_benchmark",
+                "wave_label_candidate": "advancing",
+                "evidence_bundle": {},
+                "rule_version": "m2_wave_hypothesis_shadow.v1alpha1",
+            },
+            "mid_cycle_states": {
+                "fund_cycle": {
+                    "object_type": "mid_cycle_state",
+                    "object_version": 1,
+                    "stock_code": "600000",
+                    "trade_date": "2026-07-07",
+                    "scope": "fund_cycle",
+                    "state": "advancing",
+                    "confidence": {"level": "high"},
+                    "evidence_bundle": {},
+                    "rule_version": "m2_mid_cycle_shadow.v1alpha1",
+                },
+                "industry_cycle": {
+                    "object_type": "mid_cycle_state",
+                    "object_version": 1,
+                    "stock_code": "600000",
+                    "trade_date": "2026-07-07",
+                    "scope": "industry_cycle",
+                    "state": "advancing",
+                    "confidence": {"level": "high"},
+                    "evidence_bundle": {},
+                    "rule_version": "m2_mid_cycle_shadow.v1alpha1",
+                },
+            },
+            "cycle_linkage_state": {
+                "object_type": "cycle_linkage_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "small_cycle_ref": {
+                    "object_type": "small_cycle",
+                    "stock_code": "600000",
+                    "cycle_state": "S2 Advancing",
+                },
+                "mid_cycle_ref": {
+                    "fund_cycle_state": "advancing",
+                    "industry_cycle_state": "advancing",
+                },
+                "linkage_phase": "continuation",
+                "supports_continuation": True,
+                "local_end_vs_global_end": "local_end_only",
+                "confidence": {"level": "high"},
+                "evidence_bundle": {},
+                "rule_version": "m2_cycle_linkage.v1alpha1",
+            },
+            "growth_potential_profile": {
+                "object_type": "growth_potential_profile",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "status": "promising",
+                "confidence": {"level": "medium"},
+                "evidence_bundle": {},
+                "rule_version": "m2_growth_potential_shadow.v1alpha1",
+            },
+            "top_risk_profile": {
+                "object_type": "top_risk_profile",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "risk_level": "watch",
+                "risk_flags": [],
+                "evidence_bundle": {},
+                "rule_version": "m2_top_risk_shadow.v1alpha1",
+            },
+        },
+    },
+    "m1-context-ref-600000-2026-07-07": {
+        "object_type": "m1_context_projection",
+        "object_version": 1,
+        "payload": {
+            "source": "resolver_stub",
+        },
+    },
+    "m3-context-ref-600000-2026-07-07": {
+        "object_type": "m3_context_bundle",
+        "object_version": 1,
+        "payload": {
+            "m1_constraints_ref": {
+                "tradeable": True,
+            },
+            "identify_state": {
+                "object_type": "identify_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "status": "identified",
+                "reason": "benchmark_replay_ready",
+                "evidence_ref": {},
+                "m2_cycle_ref": {"cycle_state": "S2 Advancing"},
+                "m1_constraints_ref": {"tradeable": True},
+            },
+            "tracking_state": {
+                "object_type": "tracking_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "status": "tracking",
+                "maturity": "ready_for_entry",
+                "transition_reason": "benchmark_replay_ready",
+                "evidence_ref": {},
+                "m2_cycle_ref": {"cycle_state": "S2 Advancing"},
+                "m1_constraints_ref": {"tradeable": True},
+            },
+            "entry_state": {
+                "object_type": "entry_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "status": "ready",
+                "decision": "enter",
+                "actionable": True,
+                "blocking_reasons": [],
+                "evidence_ref": {},
+                "m2_cycle_ref": {"cycle_state": "S2 Advancing"},
+                "m1_constraints_ref": {"tradeable": True},
+            },
+        },
+    },
+}
+
+
+def _resolve_stub_ref_payload(
+    ref: BenchmarkPersistedRef,
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    if ref.source_type != RESOLVER_STUB_SOURCE_TYPE:
+        raise ValueError(f"{field_name}.source_type is not supported by resolver stub")
+    stub_record = _RESOLVER_STUB_PAYLOADS.get(ref.ref_id)
+    if stub_record is None:
+        raise ValueError(f"{field_name}.ref_id is not resolvable in resolver stub")
+    expected_object_type = str(stub_record["object_type"])
+    expected_object_version = int(stub_record["object_version"])
+    if ref.object_type != expected_object_type:
+        raise ValueError(
+            f"{field_name}.object_type mismatch: expected {expected_object_type}"
+        )
+    if ref.object_version != expected_object_version:
+        raise ValueError(
+            f"{field_name}.object_version mismatch: expected {expected_object_version}"
+        )
+    return _copy_nested_mapping(stub_record["payload"])
+
+
+def _resolve_replay_stub_payloads(
+    resolver_refs: BenchmarkReplayResolverRefs,
+) -> _ResolvedReplayPayloads:
+    return _ResolvedReplayPayloads(
+        m2_cycle=_resolve_stub_ref_payload(
+            resolver_refs.m2_cycle_ref,
+            field_name="resolver_refs.m2_cycle_ref",
+        ),
+        m2_shadow_bundle=_resolve_stub_ref_payload(
+            resolver_refs.m2_shadow_bundle_ref,
+            field_name="resolver_refs.m2_shadow_bundle_ref",
+        ),
+        m1_context=_resolve_stub_ref_payload(
+            resolver_refs.m1_context_ref,
+            field_name="resolver_refs.m1_context_ref",
+        ),
+        m3_context=_resolve_stub_ref_payload(
+            resolver_refs.m3_context_ref,
+            field_name="resolver_refs.m3_context_ref",
+        ),
+    )
+
+
 def _run_benchmark_replay_manifest(
     *,
     manifest: BenchmarkRunManifest,
@@ -365,14 +702,29 @@ def _run_benchmark_replay_manifest(
     replay_sample = manifest.replay_sample
     if replay_sample is None:
         raise ValueError("replay_sample is required for replay benchmark manifests")
+    if replay_sample.inline_payload_complete:
+        m2_cycle_payload = replay_sample.m2_cycle
+        m2_shadow_bundle = replay_sample.m2_shadow_bundle
+        m1_context = replay_sample.m1_context
+        m3_context = replay_sample.m3_context
+    else:
+        if replay_sample.resolver_refs is None:
+            raise ValueError(
+                "replay_sample must include complete inline payloads or resolver_refs"
+            )
+        resolved_payloads = _resolve_replay_stub_payloads(replay_sample.resolver_refs)
+        m2_cycle_payload = resolved_payloads.m2_cycle
+        m2_shadow_bundle = resolved_payloads.m2_shadow_bundle
+        m1_context = resolved_payloads.m1_context
+        m3_context = resolved_payloads.m3_context
     sample = replay_sample.to_benchmark_sample()
-    cycle = _build_small_cycle_from_payload(replay_sample.m2_cycle)
+    cycle = _build_small_cycle_from_payload(m2_cycle_payload)
     result = build_benchmark_assessment_from_m2_shadow(
         sample=sample,
         cycle=cycle,
-        shadow_bundle=replay_sample.m2_shadow_bundle,
-        m1_context=replay_sample.m1_context,
-        m3_context=replay_sample.m3_context,
+        shadow_bundle=m2_shadow_bundle,
+        m1_context=m1_context,
+        m3_context=m3_context,
     )
     grade = result.summary.assessment_grade
     return BenchmarkBatchRunResult(

@@ -1,0 +1,46 @@
+{
+  "run_id": "formal_replay_refs_v1_batch",
+  "description": "NeoTrade3 M4 replay manifest resolver_refs contract stub.",
+  "replay_sample": {
+    "sample_id": "formal_front_replay_refs_seed_v1",
+    "sample_bucket": "R2_formal_refs_replay",
+    "stock_code": "600000",
+    "trade_date": "2026-07-07",
+    "target_state_type": "T3_strong_target",
+    "expected_target_state": {
+      "small_cycle_state": {
+        "allowed": ["S2 Advancing"]
+      }
+    },
+    "resolver_refs": {
+      "m2_cycle_ref": {
+        "source_type": "resolver_stub",
+        "ref_kind": "artifact",
+        "ref_id": "m2-cycle-ref-600000-2026-07-07",
+        "object_type": "small_cycle",
+        "object_version": 1
+      },
+      "m2_shadow_bundle_ref": {
+        "source_type": "resolver_stub",
+        "ref_kind": "artifact",
+        "ref_id": "m2-shadow-ref-600000-2026-07-07",
+        "object_type": "m2_shadow_bundle",
+        "object_version": 1
+      },
+      "m1_context_ref": {
+        "source_type": "resolver_stub",
+        "ref_kind": "ledger_projection",
+        "ref_id": "m1-context-ref-600000-2026-07-07",
+        "object_type": "m1_context_projection",
+        "object_version": 1
+      },
+      "m3_context_ref": {
+        "source_type": "resolver_stub",
+        "ref_kind": "artifact",
+        "ref_id": "m3-context-ref-600000-2026-07-07",
+        "object_type": "m3_context_bundle",
+        "object_version": 1
+      }
+    }
+  }
+}
