@@ -157,3 +157,25 @@ def test_governance_final_validation_download_endpoint_returns_artifact(
     assert "attachment" in response.headers.get("Content-Disposition", "")
     payload = json.loads(response.body.decode("utf-8"))
     assert payload["source_run_id"] == source_run_id
+
+
+def test_governance_final_validation_download_ledger_endpoint_returns_ledger(
+    tmp_path: Path,
+) -> None:
+    source_run_id = "benchmark-run-1"
+    _write_governance_final_validation_fixtures(
+        project_root=tmp_path,
+        source_run_id=source_run_id,
+    )
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, response = router.dispatch(
+        f"/api/governance/final-validations/{source_run_id}/download-ledger"
+    )
+
+    assert status == HTTPStatus.OK
+    assert isinstance(response, ApiBinaryResponse)
+    assert "attachment" in response.headers.get("Content-Disposition", "")
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload["source_run_id"] == source_run_id

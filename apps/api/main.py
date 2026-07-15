@@ -1757,6 +1757,52 @@ class BootstrapApiService:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    def governance_final_validation_ledger_download_view(
+        self, *, source_run_id: str
+    ) -> ApiBinaryResponse:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        record = read_governance_final_validation_record(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_final_validation_not_found",
+                message="governance final validation ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+
+        expected_root = (
+            self.project_root
+            / "var/ledgers/governance_final_validations"
+            / normalized_source_run_id
+        )
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "governance_final_validation_run.json"
+        ledger_path = expected_root / ledger_filename
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_final_validation_ledger_not_found",
+                message="governance final validation ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     def governance_final_validations_view(self, *, limit: int = 20) -> dict[str, Any]:
         if limit <= 0:
             raise ApiError(

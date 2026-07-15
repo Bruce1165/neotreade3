@@ -106,6 +106,7 @@ class BootstrapApiRouter:
                         "/api/governance/final-validations/<source_run_id> — 治理终审选择结果",
                         "/api/governance/final-validations?limit=... — 治理终审选择列表",
                         "/api/governance/final-validations/<source_run_id>/download — 下载终审选择 artifact",
+                        "/api/governance/final-validations/<source_run_id>/download-ledger — 下载终审选择 ledger",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1351,6 +1352,10 @@ class BootstrapApiRouter:
                     details={"source_run_id": source_run_id},
                 )
             if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.governance_final_validation_ledger_download_view(
+                        source_run_id=source_run_id
+                    )
                 if rest[0] != "download":
                     raise ApiError(
                         status_code=HTTPStatus.BAD_REQUEST,
