@@ -21,4 +21,13 @@ def cleanup_var_paths(*, project_root: Path, relative_paths: list[str]) -> None:
         except ValueError as exc:
             raise ValueError(f"path escapes var root: {relative_path}") from exc
 
-        shutil.rmtree(target, ignore_errors=True)
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            continue
+
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+        except IsADirectoryError:
+            shutil.rmtree(target, ignore_errors=True)
