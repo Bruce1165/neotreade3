@@ -3237,8 +3237,24 @@ def test_bootstrap_api_handler_serves_screeners_endpoint() -> None:
         thread.join(timeout=2)
 
 
-def test_bootstrap_api_handler_accepts_screener_run_post() -> None:
+def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT, api_key="test-key")
+    isolated_screeners_dir = tmp_path / "config" / "screeners"
+    isolated_screeners_dir.mkdir(parents=True, exist_ok=True)
+    registry_source = PROJECT_ROOT / "config/screeners/screeners_registry.json"
+    config_source = PROJECT_ROOT / "config/screeners/cup_handle_v4.json"
+    (isolated_screeners_dir / "screeners_registry.json").write_text(
+        registry_source.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (isolated_screeners_dir / "cup_handle_v4.json").write_text(
+        config_source.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    service._screeners_config_dir = isolated_screeners_dir
+    service._screeners_registry_config = (
+        isolated_screeners_dir / "screeners_registry.json"
+    )
     handler = build_handler(service)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, daemon=True)
