@@ -44,3 +44,10 @@ def test_small_cycle_from_dict_rejects_non_ok_without_reasons() -> None:
     with pytest.raises(ValueError, match="quality_reasons"):
         SmallCycle.from_dict(payload)
 
+
+def test_small_cycle_from_dict_rejects_unknown_quality_reason() -> None:
+    payload = _payload()
+    payload["quality_status"] = "blocked"
+    payload["quality_reasons"] = ["unknown_reason"]
+    with pytest.raises(ValueError, match="quality_reasons"):
+        SmallCycle.from_dict(payload)
