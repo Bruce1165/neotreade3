@@ -44,10 +44,15 @@ Last_reviewed: 2026-07-16
   - 证据：存在可复现“持久化写盘入口”（materialize）与产物路径约束，但其输入为已构造的周期对象，并非识别算法入口：
     - SmallCycle materialize（写入 artifact+ledger）：[run_ledger.py:L92-L109](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L92-L109)
     - Shadow bundle materialize（写入 artifact+ledger）：[shadow_bundle.py:L262-L286](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L262-L286)
-- [ ] 周期结果可读回（只读 API 或内部入口），支持按 key 查询与列表检索
-  - 证据：存在按 record_id 的内部读回函数（read artifact / read ledger），但未定位到列表检索（list）能力：
+- [x] 周期结果可读回（只读 API 或内部入口），支持按 key 查询与列表检索
+  - 证据：按 record_id 的内部读回函数（read artifact / read ledger）：
     - read_small_cycle / read_small_cycle_ledger：[run_ledger.py:L111-L145](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L111-L145)
-    - 持久化复现单测（写入后可读回）：[test_m2_small_cycle_persistence.py:L30-L49](file:///Users/mac/NeoTrade3/tests/unit/test_m2_small_cycle_persistence.py#L30-L49)
+    - read_shadow_cycle_intelligence_bundle_ledger：[shadow_bundle.py:L314-L325](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L314-L325)
+  - 证据：列表检索（按 written_at 倒序 + limit）：
+    - list_small_cycle_ledgers：[run_ledger.py:L148-L177](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L177)
+    - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L328-L357](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L328-L357)
+  - 证据：列表检索单测（排序 + limit）：
+    - [test_m2_cycle_intelligence_list_ledgers.py:L67-L105](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L67-L105)
 - [ ] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
   - 证据：未在当前切片内定位到“质量状态枚举/输出契约”的统一证据。
 - [ ] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
