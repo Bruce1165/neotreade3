@@ -17,6 +17,8 @@ from apps.api.shared import ApiBinaryResponse, ApiError
 class BootstrapApiRouter:
     """Pure router used by the HTTP handler and tests."""
 
+    _EXPECTED_STRATEGIES_BASE = "expected /api/strategies/<strategy_id>[/download]"
+    _EXPECTED_STRATEGIES_DOWNLOAD = "expected /api/strategies/<strategy_id>/download"
     _EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_BASE = (
         "expected /api/governance/final-validations/<source_run_id>[/download|/download-ledger]"
     )
@@ -164,6 +166,9 @@ class BootstrapApiRouter:
                         "/api/governance/candidate-validations/<validation_id>/download — 下载候选验证 artifact",
                         "/api/governance/candidate-validations/<validation_id>/download-ledger — 下载候选验证 ledger",
                         "/api/governance/index?limit=... — 治理聚合索引（按 source_run_id）",
+                        "/api/strategies?limit=... — 策略配置列表",
+                        "/api/strategies/<strategy_id> — 策略配置详情",
+                        "/api/strategies/<strategy_id>/download — 下载策略配置原始 JSON",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1671,6 +1676,39 @@ class BootstrapApiRouter:
             raw_limit = query.get("limit", [None])[0]
             limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
             return HTTPStatus.OK, self.service.governance_index_view(limit=limit)
+
+        if parsed.path == "/api/strategies" or parsed.path == "/api/v1/strategies":
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.strategies_view(limit=limit)
+
+        if parsed.path.startswith("/api/strategies/") or parsed.path.startswith("/api/v1/strategies/"):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {3, 4}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_STRATEGIES_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, strategy_id, *rest = parts
+            if not strategy_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_strategy_id",
+                    message="strategy_id must be a non-empty string",
+                    details={"strategy_id": strategy_id},
+                )
+            if rest:
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_STRATEGIES_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.strategy_download_view(strategy_id=strategy_id)
+            return HTTPStatus.OK, self.service.strategy_view(strategy_id=strategy_id)
 
         if parsed.path == "/api/labs":
             return HTTPStatus.OK, self.service.labs_view()

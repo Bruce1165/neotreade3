@@ -2919,6 +2919,147 @@ class BootstrapApiService:
             "config_contracts": report.to_payload(),
         }
 
+    def strategies_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "config/strategies"
+        if not base_dir.exists():
+            return {"_meta": {"returned_count": 0}, "strategies": []}
+
+        from neotrade3.strategy_config import load_strategy_config
+
+        items: list[dict[str, Any]] = []
+        for file_path in sorted(base_dir.glob("*.json")):
+            try:
+                config = load_strategy_config(
+                    project_root=self.project_root,
+                    strategy_id=file_path.stem,
+                )
+            except Exception as exc:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="strategy_config_invalid",
+                    message="invalid strategy config",
+                    details={"path": str(file_path), "reason": str(exc)},
+                ) from exc
+
+            items.append(
+                {
+                    "strategy_id": config.strategy_id,
+                    "version": config.version,
+                    "description": config.description,
+                    "url": f"/api/strategies/{config.strategy_id}",
+                    "download_url": f"/api/strategies/{config.strategy_id}/download",
+                }
+            )
+        items.sort(key=lambda it: str(it.get("strategy_id") or ""))
+        if len(items) > limit:
+            items = items[:limit]
+        return {"_meta": {"returned_count": len(items)}, "strategies": items}
+
+    def strategy_view(self, *, strategy_id: str) -> dict[str, Any]:
+        normalized = str(strategy_id or "").strip()
+        if not normalized:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_strategy_id",
+                message="strategy_id must be a non-empty string",
+                details={"strategy_id": strategy_id},
+            )
+
+        from neotrade3.strategy_config import load_strategy_config, strategy_config_path
+
+        try:
+            file_path = strategy_config_path(
+                project_root=self.project_root,
+                strategy_id=normalized,
+            )
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_strategy_id",
+                message="invalid strategy_id",
+                details={"strategy_id": strategy_id},
+            ) from exc
+
+        if not file_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="strategy_config_not_found",
+                message="strategy config not found",
+                details={"strategy_id": normalized},
+            )
+
+        try:
+            config = load_strategy_config(
+                project_root=self.project_root,
+                strategy_id=normalized,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="strategy_config_invalid",
+                message="invalid strategy config",
+                details={"strategy_id": normalized, "path": str(file_path), "reason": str(exc)},
+            ) from exc
+
+        return {"_meta": {"status": "ok"}, "strategy_config": config.to_payload()}
+
+    def strategy_download_view(self, *, strategy_id: str) -> ApiBinaryResponse:
+        normalized = str(strategy_id or "").strip()
+        if not normalized:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_strategy_id",
+                message="strategy_id must be a non-empty string",
+                details={"strategy_id": strategy_id},
+            )
+
+        from neotrade3.strategy_config import load_strategy_config, strategy_config_path
+
+        try:
+            file_path = strategy_config_path(
+                project_root=self.project_root,
+                strategy_id=normalized,
+            )
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_strategy_id",
+                message="invalid strategy_id",
+                details={"strategy_id": strategy_id},
+            ) from exc
+
+        if not file_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="strategy_config_not_found",
+                message="strategy config not found",
+                details={"strategy_id": normalized},
+            )
+
+        try:
+            load_strategy_config(project_root=self.project_root, strategy_id=normalized)
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="strategy_config_invalid",
+                message="invalid strategy config",
+                details={"strategy_id": normalized, "path": str(file_path), "reason": str(exc)},
+            ) from exc
+
+        filename = file_path.name
+        return ApiBinaryResponse(
+            body=file_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     def screeners_view(self, *, target_date: Optional[str] = None) -> dict[str, Any]:
         registry = load_screener_registry(self._screeners_registry_config)
         runs = list_screener_runs(
