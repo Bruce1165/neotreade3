@@ -45,25 +45,32 @@ Last_reviewed: 2026-07-16
     - SmallCycle materialize（写入 artifact+ledger）：[run_ledger.py:L92-L109](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L92-L109)
     - Shadow bundle materialize（写入 artifact+ledger）：[shadow_bundle.py:L262-L286](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L262-L286)
 - [x] 周期结果可读回（只读 API 或内部入口），支持按 key 查询与列表检索
-  - 证据：按 record_id 的内部读回函数（read artifact / read ledger）：
-    - read_small_cycle / read_small_cycle_ledger：[run_ledger.py:L111-L145](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L111-L145)
-    - read_shadow_cycle_intelligence_bundle_ledger：[shadow_bundle.py:L314-L325](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L314-L325)
+  - 证据：按 record_id 的内部读回函数（read artifact / read domain / read ledger）：
+    - read_small_cycle_artifact / read_small_cycle / read_small_cycle_ledger：[run_ledger.py:L111-L162](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L111-L162)
+    - read_shadow_cycle_intelligence_bundle_artifact / read_shadow_cycle_intelligence_bundle / read_shadow_cycle_intelligence_bundle_ledger：[shadow_bundle.py:L288-L342](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L288-L342)
   - 证据：列表检索（按 written_at 倒序 + limit）：
-    - list_small_cycle_ledgers：[run_ledger.py:L148-L177](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L177)
-    - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L328-L357](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L328-L357)
+    - list_small_cycle_ledgers：[run_ledger.py:L164-L203](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L164-L203)
+    - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L344-L383](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L344-L383)
   - 证据：列表检索单测（排序 + limit）：
-    - [test_m2_cycle_intelligence_list_ledgers.py:L67-L105](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L67-L105)
+    - [test_m2_cycle_intelligence_list_ledgers.py:L71-L109](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L71-L109)
 - [x] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
   - 证据：SmallCycle v2 冻结 quality_status/quality_reasons 枚举（allowlist + fail-closed 校验），并拒绝 v1 payload：[contracts.py:L9-L163](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/contracts.py#L9-L163)
   - 证据：build_small_cycle / build_small_cycle_from_m1(...) 按 invalidation/state_stability_level 生成质量状态与原因（blocked/invalidated/insufficient_evidence/ok）：[assembler.py:L150-L380](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L150-L380)
   - 证据：解析 fail-closed 单测（拒绝 v1、拒绝非法 quality_status、非 ok 必须有 reasons）：[test_m2_small_cycle_quality_enum.py:L8-L45](file:///Users/mac/NeoTrade3/tests/unit/test_m2_small_cycle_quality_enum.py#L8-L45)
   - 边界：原因枚举仅覆盖当前已实现的门禁/失效原因集合；不包含“模型未收敛”等未来原因判定。
 - [x] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
-  - 证据：M2 列表检索对坏 ledger 采用 fail-closed（读失败/JSON 非法/契约不满足即抛错）：
-    - list_small_cycle_ledgers：[run_ledger.py:L148-L187](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L187)
-    - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L328-L367](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L328-L367)
-  - 证据：fail-closed 单测（坏 JSON 直接抛 ValueError）：[test_m2_cycle_intelligence_list_ledgers.py:L110-L118](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L110-L118)
-  - 边界：尚未定位到“对外 API 层”的 degraded 展示契约；当前证据覆盖内部读回入口的 fail-closed 语义。
+  - 证据：M2 read/list 入口对坏文件采用 fail-closed（读失败/JSON 非法/JSON 顶层非 object/契约不满足即抛错；文件不存在返回 None）：
+    - read_small_cycle_artifact / read_small_cycle_ledger / list_small_cycle_ledgers：[run_ledger.py:L111-L203](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L111-L203)
+    - read_shadow_cycle_intelligence_bundle_artifact / read_shadow_cycle_intelligence_bundle_ledger / list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L288-L383](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L288-L383)
+  - 证据：fail-closed 单测（坏 JSON / JSON 顶层非 object / read ledger 顶层非 object）：
+    - [test_m2_cycle_intelligence_list_ledgers.py:L112-L169](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L112-L169)
+  - 证据：fail-closed 单测（read artifact JSON 顶层非 object）：
+    - [test_m2_small_cycle_persistence.py:L55-L63](file:///Users/mac/NeoTrade3/tests/unit/test_m2_small_cycle_persistence.py#L55-L63)
+    - [test_m2_shadow_bundle_persistence.py:L96-L107](file:///Users/mac/NeoTrade3/tests/unit/test_m2_shadow_bundle_persistence.py#L96-L107)
+  - 证据：异常透传单测（read domain 透传 artifact 解析失败）：
+    - [test_m2_small_cycle_persistence.py:L66-L74](file:///Users/mac/NeoTrade3/tests/unit/test_m2_small_cycle_persistence.py#L66-L74)
+    - [test_m2_shadow_bundle_persistence.py:L110-L121](file:///Users/mac/NeoTrade3/tests/unit/test_m2_shadow_bundle_persistence.py#L110-L121)
+  - 边界：尚未定位到“对外 API 层”的 degraded 展示契约；当前证据覆盖内部读回入口的 fail-closed 语义与异常透传。
 
 ## 4. M3 决策引擎层（Decision Layer）
 
