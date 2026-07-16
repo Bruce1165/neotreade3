@@ -93,8 +93,10 @@ Last_reviewed: 2026-07-16
   - 证据：`GET /api/governance/index` 路由分发：[router.py:L1675-L1678](file:///Users/mac/NeoTrade3/apps/api/router.py#L1675-L1678)
 - [x] fail-closed 语义一致（空参 400、缺文件 404、非法/内部错误不泄露细节；按系统约定返回 500/4xx）
   - 证据：路由层对非法 path 与空 id 做 400 fail-closed（示例：final-validations）：[router.py:L1400-L1427](file:///Users/mac/NeoTrade3/apps/api/router.py#L1400-L1427)
-- [ ] 下载路径具备 root 限制，防 path traversal
-  - 证据：本切片未定位到治理 download 的“路径逃逸防护”实现位置（需要单独补齐 root 限制证据或测试）。
+- [x] 下载路径具备 root 限制，防 path traversal
+  - 证据：治理 token 归一化（拒绝绝对路径、多段路径、`.`/`..`）：[main.py:L1689-L1712](file:///Users/mac/NeoTrade3/apps/api/main.py#L1689-L1712)
+  - 证据：治理下载文件 root 限制（resolve + relative_to(root)）：[main.py:L1714-L1731](file:///Users/mac/NeoTrade3/apps/api/main.py#L1714-L1731)
+  - 证据：路径穿越单测（`../` 直接 400）：[test_m5_governance_api_readback.py:L439-L462](file:///Users/mac/NeoTrade3/tests/unit/test_m5_governance_api_readback.py#L439-L462)
 
 ## 7. M6 交付与可观测层（Delivery & Observability Layer）
 
@@ -114,4 +116,3 @@ Last_reviewed: 2026-07-16
 - [x] 对外输出包含必要的证据引用（可跳转的 URL、可下载的配置或产物）
   - 证据：workbench meta 暴露策略配置 read/download URL：[main.py:L23935-L23936](file:///Users/mac/NeoTrade3/apps/api/main.py#L23935-L23936)
   - 证据：策略配置只读 API（list/read/download）实现并强制校验策略文件路径生成（防非法 strategy_id）：[main.py:L2922-L3061](file:///Users/mac/NeoTrade3/apps/api/main.py#L2922-L3061)
-
