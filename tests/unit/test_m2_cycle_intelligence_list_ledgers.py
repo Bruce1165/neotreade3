@@ -8,6 +8,8 @@ import pytest
 from neotrade3.cycle_intelligence import (
     list_shadow_cycle_intelligence_bundle_ledgers,
     list_small_cycle_ledgers,
+    read_shadow_cycle_intelligence_bundle_ledger,
+    read_small_cycle_ledger,
 )
 
 
@@ -139,3 +141,29 @@ def test_list_shadow_bundle_ledgers_fails_closed_on_non_object_json(tmp_path: Pa
 
     with pytest.raises(TypeError, match="JSON object"):
         list_shadow_cycle_intelligence_bundle_ledgers(project_root=tmp_path, limit=10)
+
+
+def test_read_small_cycle_ledger_fails_closed_on_non_object_json(tmp_path: Path) -> None:
+    ledger_file = (
+        tmp_path / "var/ledgers/m2_small_cycles/600000-2026-07-07/small_cycle.json"
+    )
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="JSON object"):
+        read_small_cycle_ledger(project_root=tmp_path, record_id="600000-2026-07-07")
+
+
+def test_read_shadow_bundle_ledger_fails_closed_on_non_object_json(tmp_path: Path) -> None:
+    ledger_file = (
+        tmp_path
+        / "var/ledgers/m2_shadow_bundles/600000-2026-07-07/shadow_bundle.json"
+    )
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="JSON object"):
+        read_shadow_cycle_intelligence_bundle_ledger(
+            project_root=tmp_path,
+            record_id="600000-2026-07-07",
+        )

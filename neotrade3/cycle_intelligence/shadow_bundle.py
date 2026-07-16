@@ -319,9 +319,16 @@ def read_shadow_cycle_intelligence_bundle_ledger(
     ledger_file = _ledger_file(project_root=Path(project_root), record_id=record_id)
     if not ledger_file.exists():
         return None
-    payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+    try:
+        raw = ledger_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"failed to read m2_shadow_bundle ledger: {ledger_file}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in m2_shadow_bundle ledger: {ledger_file}") from exc
     if not isinstance(payload, dict):
-        return None
+        raise TypeError(f"m2_shadow_bundle ledger root must be a JSON object: {ledger_file}")
     return ShadowCycleIntelligenceBundleLedgerRecord.from_dict(payload)
 
 
