@@ -127,3 +127,15 @@ def test_list_small_cycle_ledgers_fails_closed_on_non_object_json(tmp_path: Path
 
     with pytest.raises(TypeError, match="JSON object"):
         list_small_cycle_ledgers(project_root=tmp_path, limit=10)
+
+
+def test_list_shadow_bundle_ledgers_fails_closed_on_non_object_json(tmp_path: Path) -> None:
+    ledger_file = (
+        tmp_path
+        / "var/ledgers/m2_shadow_bundles/600000-2026-07-07/shadow_bundle.json"
+    )
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="JSON object"):
+        list_shadow_cycle_intelligence_bundle_ledgers(project_root=tmp_path, limit=10)
