@@ -101,3 +101,25 @@ def test_build_small_cycle_invalidation_takes_precedence_over_insufficient_evide
     payload = cycle.to_payload()
     assert payload["quality_status"] == "invalidated"
     assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN]
+
+
+def test_build_small_cycle_explicit_quality_overrides_invalidation_and_state_flags() -> None:
+    explicit_reasons = [
+        SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED,
+        SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY,
+    ]
+    cycle = build_small_cycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S0 Neutral",
+        state_stability_level="insufficient_evidence",
+        quality_status="blocked",
+        quality_reasons=explicit_reasons,
+        invalidation={
+            "status": "triggered",
+            "reasons": [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN],
+        },
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "blocked"
+    assert payload["quality_reasons"] == explicit_reasons
