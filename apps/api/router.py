@@ -1340,7 +1340,7 @@ class BootstrapApiRouter:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_path",
-                    message="expected /api/governance/final-validations/<source_run_id>",
+                    message="expected /api/governance/final-validations/<source_run_id>[/download|/download-ledger]",
                     details={"path": parsed.path},
                 )
             _, _, _, source_run_id, *rest = parts
