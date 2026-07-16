@@ -47,6 +47,7 @@ def test_ops_center_summary_includes_strategy_config_ok_status(tmp_path: Path, m
     assert payload["evidence"]["strategy_config_status"] == "ok"
     assert payload["evidence"]["strategy_version"] == 9
     assert "策略配置正常（lowfreq_v16 v9）" in payload["inspection"]["summary_text"]
+    assert "POST /api/model/run" in payload["inspection"]["next_action"]
     item = next(it for it in payload["checklist"] if it["item_id"] == "strategy_config")
     assert item["status"] == "ok"
 
@@ -65,5 +66,6 @@ def test_ops_center_summary_includes_strategy_config_degraded_status_when_missin
     assert payload["evidence"]["strategy_config_status"] == "degraded"
     assert payload["evidence"]["strategy_version"] is None
     assert "策略配置降级（lowfreq_v16）" in payload["inspection"]["summary_text"]
+    assert "先修复策略配置" in payload["inspection"]["next_action"]
     item = next(it for it in payload["checklist"] if it["item_id"] == "strategy_config")
     assert item["status"] == "degraded"

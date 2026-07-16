@@ -23795,6 +23795,14 @@ class BootstrapApiService:
             )
         else:
             summary_text = f"{summary_text} 策略配置降级（{strategy_id}）。"
+        if not latest_data_synced:
+            next_action = "先完成数据追平（data_freshness=ok），再运行模型。"
+        elif strategy_config_status != "ok":
+            next_action = "先修复策略配置（strategy_config=ok），再运行模型。"
+        else:
+            next_action = (
+                "可直接运行模型：POST /api/model/run；或打开 /api/lowfreq/workbench。"
+            )
 
         return {
             "_meta": {"status": "ok"},
@@ -23812,6 +23820,7 @@ class BootstrapApiService:
                 "risk_level_text": risk_meta["text"],
                 "risk_level_kind": risk_meta["kind"],
                 "summary_text": summary_text,
+                "next_action": next_action,
             },
             "checklist": checklist,
             "pipeline_steps": pipeline_steps,
