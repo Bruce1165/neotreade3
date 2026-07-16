@@ -55,8 +55,12 @@ Last_reviewed: 2026-07-16
     - [test_m2_cycle_intelligence_list_ledgers.py:L67-L105](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L67-L105)
 - [ ] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
   - 证据：未在当前切片内定位到“质量状态枚举/输出契约”的统一证据。
-- [ ] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
-  - 证据：未在当前切片内定位到“对外错误语义/门禁策略”的统一证据。
+- [x] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
+  - 证据：M2 列表检索对坏 ledger 采用 fail-closed（读失败/JSON 非法/契约不满足即抛错）：
+    - list_small_cycle_ledgers：[run_ledger.py:L148-L187](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L187)
+    - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L328-L367](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L328-L367)
+  - 证据：fail-closed 单测（坏 JSON 直接抛 ValueError）：[test_m2_cycle_intelligence_list_ledgers.py:L110-L118](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L110-L118)
+  - 边界：尚未定位到“对外 API 层”的 degraded 展示契约；当前证据覆盖内部读回入口的 fail-closed 语义。
 
 ## 4. M3 决策引擎层（Decision Layer）
 
