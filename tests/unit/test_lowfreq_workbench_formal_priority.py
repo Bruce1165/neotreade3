@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from apps.api.main import BootstrapApiService
+import neotrade3.strategy_config as strategy_config_module
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -150,10 +151,40 @@ def test_lowfreq_workbench_view_prefers_formal_blocked_over_legacy_buy_signal(
         payload["meta"]["strategy_config_download_url"]
         == "/api/strategies/lowfreq_v16/download"
     )
+    assert payload["meta"]["strategy_id"] == "lowfreq_v16"
+    assert payload["meta"]["strategy_version"] == 1
+    assert payload["meta"]["strategy_config_status"] == "ok"
     assert payload["hot_sectors"][0]["representatives"][0]["tracking_status_text"] == "暂不参与"
     assert payload["tracking_list"][0]["tracking_stage"] == "candidate"
     assert payload["tracking_list"][0]["tracking_status"] == "blocked"
     assert payload["tracking_list"][0]["tracking_status_text"] == "暂不参与"
+
+
+def test_lowfreq_workbench_view_marks_strategy_config_as_degraded_when_config_load_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def _raise(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(strategy_config_module, "load_strategy_config", _raise)
+    service = _prepare_lowfreq_workbench_service(
+        monkeypatch,
+        tmp_path,
+        stock=_make_workbench_stock(
+            buy_signal=True,
+            formal_front={
+                "status": "error",
+                "error_type": "formal_projection_failed",
+                "message": "projection failed",
+            },
+        ),
+    )
+
+    payload = service.lowfreq_workbench_view(target_date="2026-06-09")
+
+    assert payload["meta"]["strategy_id"] == "lowfreq_v16"
+    assert payload["meta"]["strategy_version"] is None
+    assert payload["meta"]["strategy_config_status"] == "degraded"
 
 
 def test_lowfreq_workbench_view_keeps_formal_not_ready_in_tracking_bucket(

@@ -23861,6 +23861,18 @@ class BootstrapApiService:
             hot_sectors=hot_sectors,
             autopilot_enabled=autopilot_enabled,
         )
+        strategy_id = "lowfreq_v16"
+        strategy_version: int | None = None
+        strategy_config_status = "degraded"
+        try:
+            from neotrade3.strategy_config import load_strategy_config
+
+            config = load_strategy_config(project_root=self.project_root, strategy_id=strategy_id)
+            strategy_version = int(config.version)
+            strategy_config_status = "ok"
+        except Exception:
+            strategy_version = None
+            strategy_config_status = "degraded"
         return {
             "_meta": {"status": "ok", "requested_by": requested_by},
             "meta": {
@@ -23874,6 +23886,9 @@ class BootstrapApiService:
                 "latest_data_synced": daily_ops.get("latest_data_synced"),
                 "strategy_config_url": "/api/strategies/lowfreq_v16",
                 "strategy_config_download_url": "/api/strategies/lowfreq_v16/download",
+                "strategy_id": strategy_id,
+                "strategy_version": strategy_version,
+                "strategy_config_status": strategy_config_status,
             },
             "market_summary": market_summary,
             "daily_ops": daily_ops,
