@@ -85,12 +85,15 @@ Last_reviewed: 2026-07-16
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
   - 证据：内部 front_context store 提供 artifact/ledger read + ledger list 入口：[front_context_store.py:L235-L364](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L235-L364)
-  - 证据：readback/list 单测（materialize + read + ledger read + list 排序/limit + fail-closed）：[test_m3_front_context_store.py:L120-L320](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L120-L320)
-  - 边界：尚未定位到对外 read/list/download API；当前证据仅覆盖内部入口（download 未覆盖）。
+  - 证据：对外 API 路由分发（read/list/download/download-ledger）：[router.py:L1690-L1729](file:///Users/mac/NeoTrade3/apps/api/router.py#L1690-L1729)
+  - 证据：Service 层 read/list/download 实现（含 record_id 校验与 root 限制）：[main.py:L3063-L3294](file:///Users/mac/NeoTrade3/apps/api/main.py#L3063-L3294)
+  - 证据：API 单测（read/list/download/download-ledger）：[test_m3_front_context_api_readback.py:L1-L193](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_api_readback.py#L1-L193)
+  - 边界：仅覆盖 `m3_front_context` 这一类 M3 产物；其它 M3 产物未纳入本切片。
 - [x] 决策失败语义明确（输入缺失/契约不满足 fail-closed；展示可降级 degraded）
-  - 证据：read/list 对坏 JSON / JSON 顶层非 object / ledger 缺字段 fail-closed；缺文件返回 None：[front_context_store.py:L235-L364](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L235-L364)
-  - 证据：fail-closed 单测覆盖（坏 JSON / 非 object / 契约不满足）：[test_m3_front_context_store.py:L170-L320](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L320)
-  - 边界：展示层 degraded 策略未形成对外统一契约；当前证据聚焦内部读回的 fail-closed 语义。
+  - 证据：读回缺文件返回 404；读回/列表遇到非法 ledger/artifact/契约不满足 fail-closed 并转为 500（Service 层捕获并封装）：[main.py:L3101-L3294](file:///Users/mac/NeoTrade3/apps/api/main.py#L3101-L3294)
+  - 证据：下载路径防护（record_id 归一化 + resolve + relative_to(root)）：[main.py:L3063-L3099](file:///Users/mac/NeoTrade3/apps/api/main.py#L3063-L3099)
+  - 证据：路径穿越与坏 JSON fail-closed 单测：[test_m3_front_context_api_readback.py:L147-L193](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_api_readback.py#L147-L193)
+  - 边界：展示层 degraded 策略未形成对外统一契约；当前证据覆盖 API 与内部读回的 fail-closed 语义。
 - [ ] 决策可审计（至少包含输入引用与关键派生/中间状态的定位线索）
   - 证据：contracts 中存在 evidence_ref/m2_cycle_ref/m1_constraints_ref 槽位，但缺少端到端落盘/读回证据：[contracts.py:L37-L62](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L62)
 
