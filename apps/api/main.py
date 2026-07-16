@@ -23802,6 +23802,11 @@ class BootstrapApiService:
         else:
             next_action = (
                 "可直接运行模型：POST /api/model/run；或打开 /api/lowfreq/workbench。"
+                " 示例：curl -sS -X POST http://localhost:8000/api/model/run"
+                " -H 'Content-Type: application/json'"
+                " -d '{\"requested_by\":\"ops_center\",\"date\":\""
+                + as_of_date
+                + "\"}'"
             )
 
         return {

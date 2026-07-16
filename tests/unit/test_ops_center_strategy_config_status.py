@@ -48,6 +48,8 @@ def test_ops_center_summary_includes_strategy_config_ok_status(tmp_path: Path, m
     assert payload["evidence"]["strategy_version"] == 9
     assert "策略配置正常（lowfreq_v16 v9）" in payload["inspection"]["summary_text"]
     assert "POST /api/model/run" in payload["inspection"]["next_action"]
+    assert "curl -sS -X POST http://localhost:8000/api/model/run" in payload["inspection"]["next_action"]
+    assert f"\"date\":\"{target_date}\"" in payload["inspection"]["next_action"]
     item = next(it for it in payload["checklist"] if it["item_id"] == "strategy_config")
     assert item["status"] == "ok"
 
