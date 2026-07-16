@@ -155,8 +155,8 @@ Last_reviewed: 2026-07-16
 ### 7.3 证据字段
 
 - 文件：治理对象定义、错误语义与安全约束说明
-- 代码：read/list/download handler、root 限制实现
-- 测试：API 200/400/404/500 覆盖、path traversal 覆盖
+- 代码：read/list/download handler、root 限制实现（示例：token 归一化 + resolve+relative_to(root)）
+- 测试：API 200/400/404/500 覆盖、path traversal 覆盖（示例：`../` 触发 400）
 - 运行产物：ledger/artifact 目录结构样本
 
 ### 7.4 退出条件
