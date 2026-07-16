@@ -1686,15 +1686,56 @@ class BootstrapApiService:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    def governance_final_validation_view(self, *, source_run_id: str) -> dict[str, Any]:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
+    def _normalize_governance_token(
+        self,
+        value: str,
+        *,
+        field_name: str,
+        error_code: str,
+    ) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
             raise ApiError(
                 status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
+                code=error_code,
+                message=f"{field_name} must be a non-empty string",
+                details={field_name: value},
             )
+        parsed = Path(normalized)
+        if parsed.is_absolute() or len(parsed.parts) != 1 or parsed.name != normalized or normalized in {".", ".."}:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code=error_code,
+                message=f"invalid {field_name}",
+                details={field_name: value},
+            )
+        return normalized
+
+    def _resolve_governance_file_under_root(
+        self,
+        *,
+        root_dir: Path,
+        relative_path: Path,
+    ) -> Path:
+        root_resolved = root_dir.resolve()
+        resolved = (root_dir / relative_path).resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="governance_download_path_escape",
+                message="invalid governance download path",
+                details={"root": str(root_dir), "path": str(resolved)},
+            ) from exc
+        return resolved
+
+    def governance_final_validation_view(self, *, source_run_id: str) -> dict[str, Any]:
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_final_validation_record(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -1724,14 +1765,11 @@ class BootstrapApiService:
         }
 
     def governance_final_validation_download_view(self, *, source_run_id: str) -> ApiBinaryResponse:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_final_validation_record(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -1744,15 +1782,14 @@ class BootstrapApiService:
                 details={"source_run_id": normalized_source_run_id},
             )
 
-        expected_root = (
-            self.project_root
-            / "var/artifacts/governance_final_validations"
-            / normalized_source_run_id
-        )
+        domain_root = self.project_root / "var/artifacts/governance_final_validations"
         artifact_filename = Path(str(record.artifact_path or "")).name.strip()
         if not artifact_filename:
             artifact_filename = "governance_final_validation.json"
-        artifact_path = expected_root / artifact_filename
+        artifact_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_source_run_id) / artifact_filename,
+        )
         if not artifact_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -1770,14 +1807,11 @@ class BootstrapApiService:
     def governance_final_validation_ledger_download_view(
         self, *, source_run_id: str
     ) -> ApiBinaryResponse:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_final_validation_record(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -1790,15 +1824,14 @@ class BootstrapApiService:
                 details={"source_run_id": normalized_source_run_id},
             )
 
-        expected_root = (
-            self.project_root
-            / "var/ledgers/governance_final_validations"
-            / normalized_source_run_id
-        )
+        domain_root = self.project_root / "var/ledgers/governance_final_validations"
         ledger_filename = Path(str(record.ledger_path or "")).name.strip()
         if not ledger_filename:
             ledger_filename = "governance_final_validation_run.json"
-        ledger_path = expected_root / ledger_filename
+        ledger_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_source_run_id) / ledger_filename,
+        )
         if not ledger_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2028,14 +2061,11 @@ class BootstrapApiService:
         )
 
     def governance_reject_execution_view(self, *, validation_id: str) -> dict[str, Any]:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_reject_execution_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2067,14 +2097,11 @@ class BootstrapApiService:
     def governance_reject_execution_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_reject_execution_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2086,13 +2113,14 @@ class BootstrapApiService:
                 message="governance reject execution ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root / "var/artifacts/governance_rejections" / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/artifacts/governance_rejections"
         artifact_filename = Path(str(record.artifact_path or "")).name.strip()
         if not artifact_filename:
             artifact_filename = "governance_reject_execution.json"
-        artifact_path = expected_root / artifact_filename
+        artifact_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / artifact_filename,
+        )
         if not artifact_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2110,14 +2138,11 @@ class BootstrapApiService:
     def governance_reject_execution_ledger_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_reject_execution_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2129,13 +2154,14 @@ class BootstrapApiService:
                 message="governance reject execution ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root / "var/ledgers/governance_rejections" / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/ledgers/governance_rejections"
         ledger_filename = Path(str(record.ledger_path or "")).name.strip()
         if not ledger_filename:
             ledger_filename = "governance_reject_execution_run.json"
-        ledger_path = expected_root / ledger_filename
+        ledger_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / ledger_filename,
+        )
         if not ledger_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2184,14 +2210,11 @@ class BootstrapApiService:
         return {"_meta": {"returned_count": len(records)}, "reject_executions": records}
 
     def governance_status_transition_view(self, *, validation_id: str) -> dict[str, Any]:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_status_transition_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2223,14 +2246,11 @@ class BootstrapApiService:
     def governance_status_transition_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_status_transition_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2242,15 +2262,14 @@ class BootstrapApiService:
                 message="governance status transition ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root
-            / "var/artifacts/governance_status_transitions"
-            / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/artifacts/governance_status_transitions"
         artifact_filename = Path(str(record.artifact_path or "")).name.strip()
         if not artifact_filename:
             artifact_filename = "governance_status_transition.json"
-        artifact_path = expected_root / artifact_filename
+        artifact_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / artifact_filename,
+        )
         if not artifact_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2268,14 +2287,11 @@ class BootstrapApiService:
     def governance_status_transition_ledger_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_status_transition_ledger(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2287,15 +2303,14 @@ class BootstrapApiService:
                 message="governance status transition ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root
-            / "var/ledgers/governance_status_transitions"
-            / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/ledgers/governance_status_transitions"
         ledger_filename = Path(str(record.ledger_path or "")).name.strip()
         if not ledger_filename:
             ledger_filename = "governance_status_transition_run.json"
-        ledger_path = expected_root / ledger_filename
+        ledger_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / ledger_filename,
+        )
         if not ledger_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2347,14 +2362,11 @@ class BootstrapApiService:
         }
 
     def governance_candidate_validation_view(self, *, validation_id: str) -> dict[str, Any]:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_candidate_validation_record(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2386,14 +2398,11 @@ class BootstrapApiService:
     def governance_candidate_validations_view(
         self, *, source_run_id: str, limit: int = 20
     ) -> dict[str, Any]:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         if limit <= 0:
             raise ApiError(
                 status_code=HTTPStatus.BAD_REQUEST,
@@ -2416,14 +2425,11 @@ class BootstrapApiService:
     def governance_candidate_validation_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_candidate_validation_record(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2435,15 +2441,14 @@ class BootstrapApiService:
                 message="governance candidate validation ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root
-            / "var/artifacts/governance_candidate_validations"
-            / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/artifacts/governance_candidate_validations"
         artifact_filename = Path(str(record.artifact_path or "")).name.strip()
         if not artifact_filename:
             artifact_filename = "governance_candidate_validation.json"
-        artifact_path = expected_root / artifact_filename
+        artifact_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / artifact_filename,
+        )
         if not artifact_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2461,14 +2466,11 @@ class BootstrapApiService:
     def governance_candidate_validation_ledger_download_view(
         self, *, validation_id: str
     ) -> ApiBinaryResponse:
-        normalized_validation_id = str(validation_id or "").strip()
-        if not normalized_validation_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_validation_id",
-                message="validation_id must be a non-empty string",
-                details={"validation_id": validation_id},
-            )
+        normalized_validation_id = self._normalize_governance_token(
+            validation_id,
+            field_name="validation_id",
+            error_code="invalid_validation_id",
+        )
         record = read_governance_candidate_validation_record(
             project_root=self.project_root,
             validation_id=normalized_validation_id,
@@ -2480,15 +2482,14 @@ class BootstrapApiService:
                 message="governance candidate validation ledger not found",
                 details={"validation_id": normalized_validation_id},
             )
-        expected_root = (
-            self.project_root
-            / "var/ledgers/governance_candidate_validations"
-            / normalized_validation_id
-        )
+        domain_root = self.project_root / "var/ledgers/governance_candidate_validations"
         ledger_filename = Path(str(record.ledger_path or "")).name.strip()
         if not ledger_filename:
             ledger_filename = "governance_candidate_validation_run.json"
-        ledger_path = expected_root / ledger_filename
+        ledger_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_validation_id) / ledger_filename,
+        )
         if not ledger_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2504,14 +2505,11 @@ class BootstrapApiService:
         )
 
     def governance_handoff_view(self, *, source_run_id: str) -> dict[str, Any]:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_run_ledger(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -2541,14 +2539,11 @@ class BootstrapApiService:
         }
 
     def governance_handoff_download_view(self, *, source_run_id: str) -> ApiBinaryResponse:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_run_ledger(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -2560,13 +2555,14 @@ class BootstrapApiService:
                 message="governance handoff ledger not found",
                 details={"source_run_id": normalized_source_run_id},
             )
-        expected_root = (
-            self.project_root / "var/artifacts/governance_handoffs" / normalized_source_run_id
-        )
+        domain_root = self.project_root / "var/artifacts/governance_handoffs"
         artifact_filename = Path(str(record.artifact_path or "")).name.strip()
         if not artifact_filename:
             artifact_filename = "governance_handoff_bundle.json"
-        artifact_path = expected_root / artifact_filename
+        artifact_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_source_run_id) / artifact_filename,
+        )
         if not artifact_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,
@@ -2584,14 +2580,11 @@ class BootstrapApiService:
     def governance_handoff_ledger_download_view(
         self, *, source_run_id: str
     ) -> ApiBinaryResponse:
-        normalized_source_run_id = str(source_run_id or "").strip()
-        if not normalized_source_run_id:
-            raise ApiError(
-                status_code=HTTPStatus.BAD_REQUEST,
-                code="invalid_source_run_id",
-                message="source_run_id must be a non-empty string",
-                details={"source_run_id": source_run_id},
-            )
+        normalized_source_run_id = self._normalize_governance_token(
+            source_run_id,
+            field_name="source_run_id",
+            error_code="invalid_source_run_id",
+        )
         record = read_governance_run_ledger(
             project_root=self.project_root,
             source_run_id=normalized_source_run_id,
@@ -2603,13 +2596,14 @@ class BootstrapApiService:
                 message="governance handoff ledger not found",
                 details={"source_run_id": normalized_source_run_id},
             )
-        expected_root = (
-            self.project_root / "var/ledgers/governance_handoffs" / normalized_source_run_id
-        )
+        domain_root = self.project_root / "var/ledgers/governance_handoffs"
         ledger_filename = Path(str(record.ledger_path or "")).name.strip()
         if not ledger_filename:
             ledger_filename = "governance_handoff_run.json"
-        ledger_path = expected_root / ledger_filename
+        ledger_path = self._resolve_governance_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_source_run_id) / ledger_filename,
+        )
         if not ledger_path.exists():
             raise ApiError(
                 status_code=HTTPStatus.NOT_FOUND,

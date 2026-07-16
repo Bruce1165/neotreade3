@@ -436,6 +436,32 @@ def test_governance_final_validation_download_ledger_endpoint_returns_ledger(
     assert payload["source_run_id"] == source_run_id
 
 
+def test_governance_final_validation_download_endpoint_rejects_path_traversal_source_run_id(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/governance/final-validations/../download")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_source_run_id"
+
+
+def test_governance_reject_execution_download_endpoint_rejects_path_traversal_validation_id(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/governance/rejections/../download")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_validation_id"
+
+
 def test_governance_reject_transition_chain_readback_endpoint_returns_aggregated_payload_when_rejected(
     tmp_path: Path,
 ) -> None:
