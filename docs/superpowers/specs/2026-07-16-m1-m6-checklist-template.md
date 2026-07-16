@@ -104,8 +104,8 @@ Last_reviewed: 2026-07-16
 
 - 文件：M3 设计文档、对象契约定义、错误码/错误语义
 - 代码：决策引擎入口、序列化、落盘与读回
-- 接口：read/list/download 端点（如对外提供）
-- 测试：正常路径 + fail-closed 边界（400/404/500）+ degraded 展示路径
+- 接口：read/list/download 端点（如对外提供），并明确 fail-closed 语义（对象存在但损坏/契约不匹配必须 fail-closed 抛错；对象不存在才视为 not found）
+- 测试：正常路径 + fail-closed 边界（400/404/500）+ degraded 展示路径 + 异常透传（readback 对损坏/契约不匹配不允许吞掉或静默降级）
 - 运行产物：决策 ledger、决策 artifact（如有）
 
 ### 5.4 退出条件
