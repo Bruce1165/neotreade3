@@ -83,6 +83,8 @@ Last_reviewed: 2026-07-16
   - 证据：存在形式化对象 skeleton（IdentifyState/EntryState 等）：[contracts.py:L1-L120](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L1-L120)
   - 证据：front_context 顶层契约已收敛为“显式版本 + 未知字段拒绝”（fail-closed）：[front_context_store.py:L57-L111](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L57-L111)
   - 证据：单测覆盖（缺 object_type/object_version、未知字段均拒绝）：[test_m3_front_context_store.py:L170-L309](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L309)
+  - 证据：Identify/Tracking/Entry/Hold/Exit 顶层契约冻结（显式 object_type/object_version + 未知字段拒绝 + 字段类型/必填校验）：[contracts.py:L37-L470](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L470)
+  - 证据：state 合同 fail-closed 单测（header 缺失/未知字段/list 非法等）：[test_m3_decision_state_contracts.py:L1-L167](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_state_contracts.py#L1-L167)
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
