@@ -339,15 +339,27 @@ def list_shadow_cycle_intelligence_bundle_ledgers(
     records: list[ShadowCycleIntelligenceBundleLedgerRecord] = []
     for ledger_file in root.glob("*/shadow_bundle.json"):
         try:
-            payload = json.loads(ledger_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+            raw = ledger_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"failed to read m2_shadow_bundle ledger: {ledger_file}"
+            ) from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid JSON in m2_shadow_bundle ledger: {ledger_file}"
+            ) from exc
         if not isinstance(payload, dict):
-            continue
+            raise TypeError(
+                f"m2_shadow_bundle ledger root must be a JSON object: {ledger_file}"
+            )
         try:
             records.append(ShadowCycleIntelligenceBundleLedgerRecord.from_dict(payload))
-        except Exception:
-            continue
+        except Exception as exc:
+            raise ValueError(
+                f"invalid m2_shadow_bundle ledger payload: {ledger_file}"
+            ) from exc
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
     if len(records) > limit:

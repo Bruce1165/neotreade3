@@ -159,15 +159,27 @@ def list_small_cycle_ledgers(
     records: list[SmallCycleLedgerRecord] = []
     for ledger_file in root.glob("*/small_cycle.json"):
         try:
-            payload = json.loads(ledger_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+            raw = ledger_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"failed to read m2_small_cycle ledger: {ledger_file}"
+            ) from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid JSON in m2_small_cycle ledger: {ledger_file}"
+            ) from exc
         if not isinstance(payload, dict):
-            continue
+            raise TypeError(
+                f"m2_small_cycle ledger root must be a JSON object: {ledger_file}"
+            )
         try:
             records.append(SmallCycleLedgerRecord.from_dict(payload))
-        except Exception:
-            continue
+        except Exception as exc:
+            raise ValueError(
+                f"invalid m2_small_cycle ledger payload: {ledger_file}"
+            ) from exc
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
     if len(records) > limit:
