@@ -323,3 +323,33 @@ def read_shadow_cycle_intelligence_bundle_ledger(
     if not isinstance(payload, dict):
         return None
     return ShadowCycleIntelligenceBundleLedgerRecord.from_dict(payload)
+
+
+def list_shadow_cycle_intelligence_bundle_ledgers(
+    *,
+    project_root: str | Path,
+    limit: int = 200,
+) -> list[ShadowCycleIntelligenceBundleLedgerRecord]:
+    if limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    root = Path(project_root) / "var/ledgers/m2_shadow_bundles"
+    if not root.exists():
+        return []
+
+    records: list[ShadowCycleIntelligenceBundleLedgerRecord] = []
+    for ledger_file in root.glob("*/shadow_bundle.json"):
+        try:
+            payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            records.append(ShadowCycleIntelligenceBundleLedgerRecord.from_dict(payload))
+        except Exception:
+            continue
+
+    records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
+    if len(records) > limit:
+        records = records[:limit]
+    return records

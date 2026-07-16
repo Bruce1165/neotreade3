@@ -143,3 +143,33 @@ def read_small_cycle_ledger(
     if not isinstance(payload, dict):
         return None
     return SmallCycleLedgerRecord.from_dict(payload)
+
+
+def list_small_cycle_ledgers(
+    *,
+    project_root: str | Path,
+    limit: int = 200,
+) -> list[SmallCycleLedgerRecord]:
+    if limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    root = Path(project_root) / "var/ledgers/m2_small_cycles"
+    if not root.exists():
+        return []
+
+    records: list[SmallCycleLedgerRecord] = []
+    for ledger_file in root.glob("*/small_cycle.json"):
+        try:
+            payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        try:
+            records.append(SmallCycleLedgerRecord.from_dict(payload))
+        except Exception:
+            continue
+
+    records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
+    if len(records) > limit:
+        records = records[:limit]
+    return records
