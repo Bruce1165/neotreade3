@@ -23872,6 +23872,8 @@ class BootstrapApiService:
                 "daily_ops_status": daily_ops.get("status"),
                 "daily_ops_status_text": daily_ops.get("status_text"),
                 "latest_data_synced": daily_ops.get("latest_data_synced"),
+                "strategy_config_url": "/api/strategies/lowfreq_v16",
+                "strategy_config_download_url": "/api/strategies/lowfreq_v16/download",
             },
             "market_summary": market_summary,
             "daily_ops": daily_ops,

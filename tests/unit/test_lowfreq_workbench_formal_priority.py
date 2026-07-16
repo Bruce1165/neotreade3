@@ -145,6 +145,11 @@ def test_lowfreq_workbench_view_prefers_formal_blocked_over_legacy_buy_signal(
 
     payload = service.lowfreq_workbench_view(target_date="2026-06-09")
 
+    assert payload["meta"]["strategy_config_url"] == "/api/strategies/lowfreq_v16"
+    assert (
+        payload["meta"]["strategy_config_download_url"]
+        == "/api/strategies/lowfreq_v16/download"
+    )
     assert payload["hot_sectors"][0]["representatives"][0]["tracking_status_text"] == "暂不参与"
     assert payload["tracking_list"][0]["tracking_stage"] == "candidate"
     assert payload["tracking_list"][0]["tracking_status"] == "blocked"
