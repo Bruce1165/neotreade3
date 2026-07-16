@@ -16,6 +16,9 @@ from .contracts import (
     MidCycleState,
     SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE,
     SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN,
+    SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY,
+    SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED,
+    SMALL_CYCLE_QUALITY_REASON_TARGET_DATE_NOT_TRADING_DAY,
     SMALL_CYCLE_QUALITY_STATUS_BLOCKED,
     SMALL_CYCLE_QUALITY_STATUS_INSUFFICIENT_EVIDENCE,
     SMALL_CYCLE_QUALITY_STATUS_INVALIDATED,
@@ -283,16 +286,16 @@ def build_small_cycle_from_m1(
     invalidation_reasons: list[str] = []
     invalidation_type = "not_triggered"
     if not is_trading_day:
-        invalidation_reasons.append("target_date_not_trading_day")
+        invalidation_reasons.append(SMALL_CYCLE_QUALITY_REASON_TARGET_DATE_NOT_TRADING_DAY)
         invalidation_type = "I4 数据可用性破坏"
     if not security_ready:
-        invalidation_reasons.append("security_delisted")
+        invalidation_reasons.append(SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED)
         invalidation_type = "I4 数据可用性破坏"
     if not data_ready:
-        invalidation_reasons.append("pf1_window_not_ready")
+        invalidation_reasons.append(SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY)
         invalidation_type = "I4 数据可用性破坏"
     if invalidated:
-        invalidation_reasons.append("price_and_continuity_broken")
+        invalidation_reasons.append(SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN)
         invalidation_type = "I1 结构破坏"
     invalidation = {
         "status": "triggered" if invalidation_reasons else "not_triggered",

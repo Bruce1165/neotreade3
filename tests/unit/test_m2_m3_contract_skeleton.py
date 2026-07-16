@@ -9,6 +9,11 @@ from neotrade3.cycle_intelligence import (
     build_small_cycle,
     build_small_cycle_from_m1,
 )
+from neotrade3.cycle_intelligence.contracts import (
+    SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY,
+    SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED,
+    SMALL_CYCLE_QUALITY_REASON_TARGET_DATE_NOT_TRADING_DAY,
+)
 from neotrade3.data_control import (
     D1DailyPriceFact,
     D7SecurityMasterMinimal,
@@ -261,8 +266,52 @@ def test_build_small_cycle_from_m1_blocks_when_profile_window_missing() -> None:
     assert payload["cycle_state"] == "S0 Neutral"
     assert payload["quality_status"] == "blocked"
     assert payload["invalidation"]["status"] == "triggered"
-    assert "pf1_window_not_ready" in payload["invalidation"]["reasons"]
-    assert "pf1_window_not_ready" in payload["quality_reasons"]
+    assert payload["invalidation"]["reasons"] == [SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY]
+    assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY]
+
+
+def test_build_small_cycle_from_m1_blocks_when_target_date_not_trading_day() -> None:
+    d1, security, trading_day, profile = _sample_m1_objects()
+    trading_day = D7TradingDayStatus(
+        target_date=trading_day.target_date,
+        is_trading_day=False,
+        nearest_trading_day=trading_day.nearest_trading_day,
+        min_trading_day=trading_day.min_trading_day,
+        max_trading_day=trading_day.max_trading_day,
+        calendar_covered_until=trading_day.calendar_covered_until,
+        calendar_source=trading_day.calendar_source,
+    )
+    cycle = build_small_cycle_from_m1(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "blocked"
+    assert payload["invalidation"]["reasons"] == [SMALL_CYCLE_QUALITY_REASON_TARGET_DATE_NOT_TRADING_DAY]
+
+
+def test_build_small_cycle_from_m1_blocks_when_security_delisted() -> None:
+    d1, security, trading_day, profile = _sample_m1_objects()
+    security = D7SecurityMasterMinimal(
+        stock_code=security.stock_code,
+        stock_name=security.stock_name,
+        asset_type=security.asset_type,
+        is_delisted=True,
+        sector_lv1=security.sector_lv1,
+        sector_lv2=security.sector_lv2,
+        last_trade_date=security.last_trade_date,
+    )
+    cycle = build_small_cycle_from_m1(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "blocked"
+    assert payload["invalidation"]["reasons"] == [SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED]
 
 
 def test_build_front_states_from_formal_inputs_respects_constraints() -> None:
