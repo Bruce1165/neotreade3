@@ -10,6 +10,8 @@ from neotrade3.cycle_intelligence import (
     build_small_cycle_from_m1,
 )
 from neotrade3.cycle_intelligence.contracts import (
+    SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE,
+    SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN,
     SMALL_CYCLE_QUALITY_REASON_PF1_WINDOW_NOT_READY,
     SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED,
     SMALL_CYCLE_QUALITY_REASON_TARGET_DATE_NOT_TRADING_DAY,
@@ -312,6 +314,61 @@ def test_build_small_cycle_from_m1_blocks_when_security_delisted() -> None:
     payload = cycle.to_payload()
     assert payload["quality_status"] == "blocked"
     assert payload["invalidation"]["reasons"] == [SMALL_CYCLE_QUALITY_REASON_SECURITY_DELISTED]
+
+
+def test_build_small_cycle_from_m1_invalidates_when_price_and_continuity_broken() -> None:
+    d1, security, trading_day, profile = _sample_m1_objects(return_20d=-0.01, positive_days_5d=1)
+    cycle = build_small_cycle_from_m1(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "invalidated"
+    assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN]
+
+
+def test_build_small_cycle_from_m1_marks_insufficient_evidence_when_no_support_flags() -> None:
+    d1, security, trading_day, profile = _sample_m1_objects(return_20d=-0.01, positive_days_5d=2)
+    d1 = D1DailyPriceFact(
+        stock_code=d1.stock_code,
+        trade_date=d1.trade_date,
+        open_price=d1.open_price,
+        high_price=d1.high_price,
+        low_price=d1.low_price,
+        close_price=d1.close_price,
+        preclose_price=d1.preclose_price,
+        pct_change=-1.0,
+        volume_shares=d1.volume_shares,
+        amount_cny=d1.amount_cny,
+        turnover_rate=d1.turnover_rate,
+        updated_at=d1.updated_at,
+    )
+    profile = PF1TradingProfile(
+        stock_code=profile.stock_code,
+        as_of_trade_date=profile.as_of_trade_date,
+        latest_amount=100_000_000.0,
+        avg_amount_5d=profile.avg_amount_5d,
+        avg_amount_20d=180_000_000.0,
+        latest_turnover=1.5,
+        avg_turnover_5d=1.5,
+        median_turnover_20d=2.2,
+        return_20d=-0.01,
+        avg_pct_change_5d=-0.2,
+        positive_days_5d=2,
+        window_5d_ready=True,
+        window_20d_ready=True,
+    )
+    cycle = build_small_cycle_from_m1(
+        d1_fact=d1,
+        security_master=security,
+        trading_day_status=trading_day,
+        trading_profile=profile,
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "insufficient_evidence"
+    assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE]
 
 
 def test_build_front_states_from_formal_inputs_respects_constraints() -> None:
