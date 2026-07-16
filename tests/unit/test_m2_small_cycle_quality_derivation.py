@@ -65,3 +65,18 @@ def test_build_small_cycle_derives_insufficient_evidence_when_state_flagged() ->
     assert payload["quality_status"] == "insufficient_evidence"
     assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE]
 
+
+def test_build_small_cycle_invalidation_takes_precedence_over_insufficient_evidence() -> None:
+    cycle = build_small_cycle(
+        stock_code="600000",
+        trade_date="2026-07-07",
+        cycle_state="S4 Exhausting_or_Invalidated",
+        state_stability_level="insufficient_evidence",
+        invalidation={
+            "status": "triggered",
+            "reasons": [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN],
+        },
+    )
+    payload = cycle.to_payload()
+    assert payload["quality_status"] == "invalidated"
+    assert payload["quality_reasons"] == [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN]
