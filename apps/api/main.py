@@ -49,8 +49,18 @@ from neotrade3.data_control import SourceRegistry
 from neotrade3.data_control.pipeline import DataControlPipeline
 from neotrade3.governance.contracts import ValidationResult
 from neotrade3.governance.run_ledger import (
+    list_governance_run_ledgers,
+    list_governance_candidate_validation_records_for_source_run,
+    read_governance_candidate_validation_artifact,
+    read_governance_candidate_validation_record,
     read_governance_final_validation_artifact,
     read_governance_final_validation_record,
+    read_governance_handoff_artifact,
+    read_governance_reject_execution_artifact,
+    read_governance_reject_execution_ledger,
+    read_governance_run_ledger,
+    read_governance_status_transition_artifact,
+    read_governance_status_transition_ledger,
 )
 from neotrade3.labs import LabRegistry
 from neotrade3.labs.contracts import (
@@ -1837,6 +1847,1025 @@ class BootstrapApiService:
         if len(records) > limit:
             records = records[:limit]
         return {"_meta": {"returned_count": len(records)}, "final_validations": records}
+
+    def governance_reject_transition_chain_view(self, *, source_run_id: str) -> dict[str, Any]:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        final_record = read_governance_final_validation_record(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if final_record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_not_found",
+                message="governance reject transition chain final validation ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        final_artifact = read_governance_final_validation_artifact(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if final_artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_final_validation_artifact_not_found",
+                message="governance reject transition chain final validation artifact not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+
+        payload: dict[str, Any] = {
+            "_meta": {"status": "ok"},
+            "source_run_id": normalized_source_run_id,
+            "final_validation": final_record.__dict__,
+            "final_validation_artifact": final_artifact,
+        }
+        if str(final_record.outcome or "").strip() != "rejected":
+            return payload
+
+        validation_id = str(final_record.selected_validation_id or "").strip()
+        if not validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="governance_reject_transition_chain_invalid",
+                message="governance reject transition chain missing selected_validation_id",
+                details={"source_run_id": normalized_source_run_id},
+            )
+
+        reject_ledger = read_governance_reject_execution_ledger(
+            project_root=self.project_root,
+            validation_id=validation_id,
+        )
+        if reject_ledger is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_reject_execution_not_found",
+                message="governance reject execution ledger not found",
+                details={
+                    "source_run_id": normalized_source_run_id,
+                    "validation_id": validation_id,
+                },
+            )
+        reject_artifact = read_governance_reject_execution_artifact(
+            project_root=self.project_root,
+            validation_id=validation_id,
+        )
+        if reject_artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_reject_execution_artifact_not_found",
+                message="governance reject execution artifact not found",
+                details={
+                    "source_run_id": normalized_source_run_id,
+                    "validation_id": validation_id,
+                },
+            )
+
+        status_ledger = read_governance_status_transition_ledger(
+            project_root=self.project_root,
+            validation_id=validation_id,
+        )
+        if status_ledger is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_status_transition_not_found",
+                message="governance status transition ledger not found",
+                details={
+                    "source_run_id": normalized_source_run_id,
+                    "validation_id": validation_id,
+                },
+            )
+        status_artifact = read_governance_status_transition_artifact(
+            project_root=self.project_root,
+            validation_id=validation_id,
+        )
+        if status_artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_transition_chain_status_transition_artifact_not_found",
+                message="governance status transition artifact not found",
+                details={
+                    "source_run_id": normalized_source_run_id,
+                    "validation_id": validation_id,
+                },
+            )
+
+        payload["reject_execution"] = reject_ledger.__dict__
+        payload["reject_execution_artifact"] = reject_artifact
+        payload["status_transition"] = status_ledger.__dict__
+        payload["status_transition_artifact"] = status_artifact
+        return payload
+
+    def governance_reject_transition_chains_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "var/ledgers/governance_final_validations"
+        if not base_dir.exists():
+            return {"_meta": {"returned_count": 0}, "reject_transition_chains": []}
+
+        records: list[dict[str, Any]] = []
+        for item in base_dir.iterdir():
+            if not item.is_dir():
+                continue
+            ledger_file = item / "governance_final_validation_run.json"
+            if not ledger_file.exists():
+                continue
+            payload: object
+            try:
+                payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("outcome") or "").strip() != "rejected":
+                continue
+            records.append(payload)
+
+        records.sort(
+            key=lambda p: (str(p.get("written_at") or ""), str(p.get("source_run_id") or "")),
+            reverse=True,
+        )
+        if len(records) > limit:
+            records = records[:limit]
+        return {
+            "_meta": {"returned_count": len(records)},
+            "reject_transition_chains": records,
+        }
+
+    def governance_reject_transition_chain_download_view(
+        self, *, source_run_id: str
+    ) -> ApiBinaryResponse:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        payload = self.governance_reject_transition_chain_view(
+            source_run_id=normalized_source_run_id
+        )
+        body = (
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        filename = f"reject_transition_chain_{normalized_source_run_id}.json"
+        return ApiBinaryResponse(
+            body=body,
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_reject_execution_view(self, *, validation_id: str) -> dict[str, Any]:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_reject_execution_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_not_found",
+                message="governance reject execution ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        artifact = read_governance_reject_execution_artifact(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_artifact_not_found",
+                message="governance reject execution artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "reject_execution": record.__dict__,
+            "reject_execution_artifact": artifact,
+        }
+
+    def governance_reject_execution_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_reject_execution_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_not_found",
+                message="governance reject execution ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root / "var/artifacts/governance_rejections" / normalized_validation_id
+        )
+        artifact_filename = Path(str(record.artifact_path or "")).name.strip()
+        if not artifact_filename:
+            artifact_filename = "governance_reject_execution.json"
+        artifact_path = expected_root / artifact_filename
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_artifact_not_found",
+                message="governance reject execution artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_reject_execution_ledger_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_reject_execution_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_not_found",
+                message="governance reject execution ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root / "var/ledgers/governance_rejections" / normalized_validation_id
+        )
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "governance_reject_execution_run.json"
+        ledger_path = expected_root / ledger_filename
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_reject_execution_ledger_not_found",
+                message="governance reject execution ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_reject_executions_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "var/ledgers/governance_rejections"
+        if not base_dir.exists():
+            return {"_meta": {"returned_count": 0}, "reject_executions": []}
+
+        records: list[dict[str, Any]] = []
+        for ledger_file in base_dir.glob("*/governance_reject_execution_run.json"):
+            payload: object
+            try:
+                payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                records.append(payload)
+
+        records.sort(
+            key=lambda p: (
+                str(p.get("written_at") or ""),
+                str(p.get("validation_id") or ""),
+            ),
+            reverse=True,
+        )
+        if len(records) > limit:
+            records = records[:limit]
+        return {"_meta": {"returned_count": len(records)}, "reject_executions": records}
+
+    def governance_status_transition_view(self, *, validation_id: str) -> dict[str, Any]:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_status_transition_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_not_found",
+                message="governance status transition ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        artifact = read_governance_status_transition_artifact(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_artifact_not_found",
+                message="governance status transition artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "status_transition": record.__dict__,
+            "status_transition_artifact": artifact,
+        }
+
+    def governance_status_transition_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_status_transition_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_not_found",
+                message="governance status transition ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root
+            / "var/artifacts/governance_status_transitions"
+            / normalized_validation_id
+        )
+        artifact_filename = Path(str(record.artifact_path or "")).name.strip()
+        if not artifact_filename:
+            artifact_filename = "governance_status_transition.json"
+        artifact_path = expected_root / artifact_filename
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_artifact_not_found",
+                message="governance status transition artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_status_transition_ledger_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_status_transition_ledger(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_not_found",
+                message="governance status transition ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root
+            / "var/ledgers/governance_status_transitions"
+            / normalized_validation_id
+        )
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "governance_status_transition_run.json"
+        ledger_path = expected_root / ledger_filename
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_status_transition_ledger_not_found",
+                message="governance status transition ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_status_transitions_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "var/ledgers/governance_status_transitions"
+        if not base_dir.exists():
+            return {"_meta": {"returned_count": 0}, "status_transitions": []}
+
+        records: list[dict[str, Any]] = []
+        for ledger_file in base_dir.glob("*/governance_status_transition_run.json"):
+            payload: object
+            try:
+                payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                records.append(payload)
+
+        records.sort(
+            key=lambda p: (
+                str(p.get("written_at") or ""),
+                str(p.get("validation_id") or ""),
+            ),
+            reverse=True,
+        )
+        if len(records) > limit:
+            records = records[:limit]
+        return {
+            "_meta": {"returned_count": len(records)},
+            "status_transitions": records,
+        }
+
+    def governance_candidate_validation_view(self, *, validation_id: str) -> dict[str, Any]:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_candidate_validation_record(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_not_found",
+                message="governance candidate validation ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        artifact = read_governance_candidate_validation_artifact(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_artifact_not_found",
+                message="governance candidate validation artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "candidate_validation": record.__dict__,
+            "candidate_validation_artifact": artifact,
+        }
+
+    def governance_candidate_validations_view(
+        self, *, source_run_id: str, limit: int = 20
+    ) -> dict[str, Any]:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        records = list_governance_candidate_validation_records_for_source_run(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        records.sort(key=lambda item: (item.written_at, item.validation_id), reverse=True)
+        if len(records) > limit:
+            records = records[:limit]
+        return {
+            "_meta": {"returned_count": len(records)},
+            "candidate_validations": [record.__dict__ for record in records],
+        }
+
+    def governance_candidate_validation_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_candidate_validation_record(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_not_found",
+                message="governance candidate validation ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root
+            / "var/artifacts/governance_candidate_validations"
+            / normalized_validation_id
+        )
+        artifact_filename = Path(str(record.artifact_path or "")).name.strip()
+        if not artifact_filename:
+            artifact_filename = "governance_candidate_validation.json"
+        artifact_path = expected_root / artifact_filename
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_artifact_not_found",
+                message="governance candidate validation artifact not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_candidate_validation_ledger_download_view(
+        self, *, validation_id: str
+    ) -> ApiBinaryResponse:
+        normalized_validation_id = str(validation_id or "").strip()
+        if not normalized_validation_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_validation_id",
+                message="validation_id must be a non-empty string",
+                details={"validation_id": validation_id},
+            )
+        record = read_governance_candidate_validation_record(
+            project_root=self.project_root,
+            validation_id=normalized_validation_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_not_found",
+                message="governance candidate validation ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        expected_root = (
+            self.project_root
+            / "var/ledgers/governance_candidate_validations"
+            / normalized_validation_id
+        )
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "governance_candidate_validation_run.json"
+        ledger_path = expected_root / ledger_filename
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_candidate_validation_ledger_not_found",
+                message="governance candidate validation ledger not found",
+                details={"validation_id": normalized_validation_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_handoff_view(self, *, source_run_id: str) -> dict[str, Any]:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        record = read_governance_run_ledger(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_not_found",
+                message="governance handoff ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        artifact = read_governance_handoff_artifact(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if artifact is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_artifact_not_found",
+                message="governance handoff artifact not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "handoff": record.__dict__,
+            "handoff_artifact": artifact,
+        }
+
+    def governance_handoff_download_view(self, *, source_run_id: str) -> ApiBinaryResponse:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        record = read_governance_run_ledger(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_not_found",
+                message="governance handoff ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        expected_root = (
+            self.project_root / "var/artifacts/governance_handoffs" / normalized_source_run_id
+        )
+        artifact_filename = Path(str(record.artifact_path or "")).name.strip()
+        if not artifact_filename:
+            artifact_filename = "governance_handoff_bundle.json"
+        artifact_path = expected_root / artifact_filename
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_artifact_not_found",
+                message="governance handoff artifact not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_handoff_ledger_download_view(
+        self, *, source_run_id: str
+    ) -> ApiBinaryResponse:
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if not normalized_source_run_id:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_source_run_id",
+                message="source_run_id must be a non-empty string",
+                details={"source_run_id": source_run_id},
+            )
+        record = read_governance_run_ledger(
+            project_root=self.project_root,
+            source_run_id=normalized_source_run_id,
+        )
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_not_found",
+                message="governance handoff ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        expected_root = (
+            self.project_root / "var/ledgers/governance_handoffs" / normalized_source_run_id
+        )
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "governance_handoff_run.json"
+        ledger_path = expected_root / ledger_filename
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="governance_handoff_ledger_not_found",
+                message="governance handoff ledger not found",
+                details={"source_run_id": normalized_source_run_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def governance_handoffs_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        records = list_governance_run_ledgers(project_root=self.project_root)
+        if len(records) > limit:
+            records = records[:limit]
+        return {
+            "_meta": {"returned_count": len(records)},
+            "handoffs": [record.__dict__ for record in records],
+        }
+
+    def governance_index_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+
+        def _expected_filename(raw_path: object, *, default_filename: str) -> str:
+            name = Path(str(raw_path or "")).name.strip()
+            return name if name else default_filename
+
+        def _has_pair(
+            *,
+            ledger_root: Path,
+            artifact_root: Path,
+            ledger_path: object,
+            artifact_path: object,
+            default_ledger_filename: str,
+            default_artifact_filename: str,
+        ) -> bool:
+            ledger_filename = _expected_filename(
+                ledger_path, default_filename=default_ledger_filename
+            )
+            artifact_filename = _expected_filename(
+                artifact_path, default_filename=default_artifact_filename
+            )
+            return (ledger_root / ledger_filename).exists() and (
+                artifact_root / artifact_filename
+            ).exists()
+
+        handoff_records = list_governance_run_ledgers(project_root=self.project_root)
+        handoff_by_source_run_id: dict[str, Any] = {
+            record.source_run_id: record for record in handoff_records
+        }
+
+        final_validation_by_source_run_id: dict[str, Any] = {}
+        final_base_dir = self.project_root / "var/ledgers/governance_final_validations"
+        if final_base_dir.exists():
+            for item in final_base_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                ledger_file = item / "governance_final_validation_run.json"
+                if not ledger_file.exists():
+                    continue
+                payload: object
+                try:
+                    payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                source_run_id = str(payload.get("source_run_id") or "").strip()
+                if not source_run_id:
+                    continue
+                final_validation_by_source_run_id[source_run_id] = payload
+
+        source_run_ids = set(handoff_by_source_run_id.keys()) | set(
+            final_validation_by_source_run_id.keys()
+        )
+
+        index_items: list[dict[str, Any]] = []
+        for source_run_id in source_run_ids:
+            handoff_record = handoff_by_source_run_id.get(source_run_id)
+            final_validation_payload = final_validation_by_source_run_id.get(source_run_id)
+
+            handoff_available = False
+            if handoff_record is not None:
+                handoff_available = _has_pair(
+                    ledger_root=self.project_root / "var/ledgers/governance_handoffs" / source_run_id,
+                    artifact_root=self.project_root
+                    / "var/artifacts/governance_handoffs"
+                    / source_run_id,
+                    ledger_path=handoff_record.ledger_path,
+                    artifact_path=handoff_record.artifact_path,
+                    default_ledger_filename="governance_handoff_run.json",
+                    default_artifact_filename="governance_handoff_bundle.json",
+                )
+
+            final_validation_available = False
+            final_outcome = None
+            selected_validation_id = None
+            if isinstance(final_validation_payload, dict):
+                final_outcome = str(final_validation_payload.get("outcome") or "").strip()
+                selected_validation_id = str(
+                    final_validation_payload.get("selected_validation_id") or ""
+                ).strip()
+                final_validation_available = _has_pair(
+                    ledger_root=self.project_root
+                    / "var/ledgers/governance_final_validations"
+                    / source_run_id,
+                    artifact_root=self.project_root
+                    / "var/artifacts/governance_final_validations"
+                    / source_run_id,
+                    ledger_path=final_validation_payload.get("ledger_path"),
+                    artifact_path=final_validation_payload.get("artifact_path"),
+                    default_ledger_filename="governance_final_validation_run.json",
+                    default_artifact_filename="governance_final_validation.json",
+                )
+
+            reject_available = False
+            candidate_validation_available = False
+            status_transition_available = False
+            if selected_validation_id:
+                candidate_validation_available = _has_pair(
+                    ledger_root=self.project_root
+                    / "var/ledgers/governance_candidate_validations"
+                    / selected_validation_id,
+                    artifact_root=self.project_root
+                    / "var/artifacts/governance_candidate_validations"
+                    / selected_validation_id,
+                    ledger_path=f"var/ledgers/governance_candidate_validations/{selected_validation_id}/governance_candidate_validation_run.json",
+                    artifact_path=f"var/artifacts/governance_candidate_validations/{selected_validation_id}/governance_candidate_validation.json",
+                    default_ledger_filename="governance_candidate_validation_run.json",
+                    default_artifact_filename="governance_candidate_validation.json",
+                )
+                reject_available = _has_pair(
+                    ledger_root=self.project_root
+                    / "var/ledgers/governance_rejections"
+                    / selected_validation_id,
+                    artifact_root=self.project_root
+                    / "var/artifacts/governance_rejections"
+                    / selected_validation_id,
+                    ledger_path=f"var/ledgers/governance_rejections/{selected_validation_id}/governance_reject_execution_run.json",
+                    artifact_path=f"var/artifacts/governance_rejections/{selected_validation_id}/governance_reject_execution.json",
+                    default_ledger_filename="governance_reject_execution_run.json",
+                    default_artifact_filename="governance_reject_execution.json",
+                )
+                status_transition_available = _has_pair(
+                    ledger_root=self.project_root
+                    / "var/ledgers/governance_status_transitions"
+                    / selected_validation_id,
+                    artifact_root=self.project_root
+                    / "var/artifacts/governance_status_transitions"
+                    / selected_validation_id,
+                    ledger_path=f"var/ledgers/governance_status_transitions/{selected_validation_id}/governance_status_transition_run.json",
+                    artifact_path=f"var/artifacts/governance_status_transitions/{selected_validation_id}/governance_status_transition.json",
+                    default_ledger_filename="governance_status_transition_run.json",
+                    default_artifact_filename="governance_status_transition.json",
+                )
+
+            chain_available = False
+            if final_validation_available:
+                if final_outcome == "rejected":
+                    chain_available = reject_available and status_transition_available
+                else:
+                    chain_available = True
+
+            latest_written_at = ""
+            if handoff_record is not None:
+                latest_written_at = str(handoff_record.written_at or "").strip()
+            if isinstance(final_validation_payload, dict):
+                final_written_at = str(final_validation_payload.get("written_at") or "").strip()
+                if final_written_at > latest_written_at:
+                    latest_written_at = final_written_at
+
+            index_items.append(
+                {
+                    "source_run_id": source_run_id,
+                    "latest_written_at": latest_written_at,
+                    "handoff": {
+                        "available": handoff_available,
+                        "url": f"/api/governance/handoffs/{source_run_id}",
+                        "download_url": f"/api/governance/handoffs/{source_run_id}/download",
+                        "download_ledger_url": f"/api/governance/handoffs/{source_run_id}/download-ledger",
+                    },
+                    "final_validation": {
+                        "available": final_validation_available,
+                        "outcome": final_outcome,
+                        "selected_validation_id": selected_validation_id,
+                        "url": f"/api/governance/final-validations/{source_run_id}",
+                        "download_url": f"/api/governance/final-validations/{source_run_id}/download",
+                        "download_ledger_url": f"/api/governance/final-validations/{source_run_id}/download-ledger",
+                    },
+                    "selected_candidate_validation": {
+                        "available": candidate_validation_available,
+                        "validation_id": selected_validation_id,
+                        "url": f"/api/governance/candidate-validations/{selected_validation_id}"
+                        if selected_validation_id
+                        else None,
+                        "download_url": f"/api/governance/candidate-validations/{selected_validation_id}/download"
+                        if selected_validation_id
+                        else None,
+                        "download_ledger_url": f"/api/governance/candidate-validations/{selected_validation_id}/download-ledger"
+                        if selected_validation_id
+                        else None,
+                    },
+                    "reject_execution": {
+                        "available": reject_available,
+                        "validation_id": selected_validation_id,
+                        "url": f"/api/governance/rejections/{selected_validation_id}"
+                        if selected_validation_id
+                        else None,
+                        "download_url": f"/api/governance/rejections/{selected_validation_id}/download"
+                        if selected_validation_id
+                        else None,
+                        "download_ledger_url": f"/api/governance/rejections/{selected_validation_id}/download-ledger"
+                        if selected_validation_id
+                        else None,
+                    },
+                    "status_transition": {
+                        "available": status_transition_available,
+                        "validation_id": selected_validation_id,
+                        "url": f"/api/governance/status-transitions/{selected_validation_id}"
+                        if selected_validation_id
+                        else None,
+                        "download_url": f"/api/governance/status-transitions/{selected_validation_id}/download"
+                        if selected_validation_id
+                        else None,
+                        "download_ledger_url": f"/api/governance/status-transitions/{selected_validation_id}/download-ledger"
+                        if selected_validation_id
+                        else None,
+                    },
+                    "reject_transition_chain": {
+                        "available": chain_available,
+                        "url": f"/api/governance/reject-transition-chains/{source_run_id}",
+                        "download_url": f"/api/governance/reject-transition-chains/{source_run_id}/download",
+                    },
+                }
+            )
+
+        index_items.sort(key=lambda item: (item["latest_written_at"], item["source_run_id"]), reverse=True)
+        if len(index_items) > limit:
+            index_items = index_items[:limit]
+        return {"_meta": {"returned_count": len(index_items)}, "governance_index": index_items}
 
     def labs_view(self) -> dict[str, Any]:
         with self._cache_lock:
@@ -16336,6 +17365,29 @@ class BootstrapApiService:
                                 setattr(engine, str(k), v)
                             except Exception:
                                 continue
+
+        strategy_id = "lowfreq_v16"
+        strategy_file = self.project_root / "config/strategies/lowfreq_v16.json"
+        if strategy_file.exists():
+            from neotrade3.strategy_config import load_strategy_config
+            from neotrade3.strategies.lowfreq_v16 import apply_lowfreq_v16_strategy_config
+
+            try:
+                strategy = load_strategy_config(
+                    project_root=self.project_root, strategy_id=strategy_id
+                )
+                apply_lowfreq_v16_strategy_config(engine=engine, strategy=strategy)
+            except Exception as exc:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="invalid_strategy_config",
+                    message="invalid strategy config",
+                    details={
+                        "strategy_id": strategy_id,
+                        "path": str(strategy_file),
+                        "reason": str(exc),
+                    },
+                ) from exc
         return engine
 
     def _load_lowfreq_model_params(self, *, model_id: str) -> Optional[dict[str, Any]]:

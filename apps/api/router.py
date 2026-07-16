@@ -23,6 +23,36 @@ class BootstrapApiRouter:
     _EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_DOWNLOAD = (
         "expected /api/governance/final-validations/<source_run_id>/(download|download-ledger)"
     )
+    _EXPECTED_GOVERNANCE_REJECT_TRANSITION_CHAINS_BASE = (
+        "expected /api/governance/reject-transition-chains/<source_run_id>[/download]"
+    )
+    _EXPECTED_GOVERNANCE_REJECT_TRANSITION_CHAINS_DOWNLOAD = (
+        "expected /api/governance/reject-transition-chains/<source_run_id>/download"
+    )
+    _EXPECTED_GOVERNANCE_REJECTIONS_BASE = (
+        "expected /api/governance/rejections/<validation_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_GOVERNANCE_REJECTIONS_DOWNLOAD = (
+        "expected /api/governance/rejections/<validation_id>/(download|download-ledger)"
+    )
+    _EXPECTED_GOVERNANCE_STATUS_TRANSITIONS_BASE = (
+        "expected /api/governance/status-transitions/<validation_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_GOVERNANCE_STATUS_TRANSITIONS_DOWNLOAD = (
+        "expected /api/governance/status-transitions/<validation_id>/(download|download-ledger)"
+    )
+    _EXPECTED_GOVERNANCE_HANDOFFS_BASE = (
+        "expected /api/governance/handoffs/<source_run_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_GOVERNANCE_HANDOFFS_DOWNLOAD = (
+        "expected /api/governance/handoffs/<source_run_id>/(download|download-ledger)"
+    )
+    _EXPECTED_GOVERNANCE_CANDIDATE_VALIDATIONS_BASE = (
+        "expected /api/governance/candidate-validations/<validation_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_GOVERNANCE_CANDIDATE_VALIDATIONS_DOWNLOAD = (
+        "expected /api/governance/candidate-validations/<validation_id>/(download|download-ledger)"
+    )
 
     def __init__(self, service: Any) -> None:
         self.service = service
@@ -114,6 +144,26 @@ class BootstrapApiRouter:
                         "/api/governance/final-validations?limit=... — 治理终审选择列表",
                         "/api/governance/final-validations/<source_run_id>/download — 下载终审选择 artifact",
                         "/api/governance/final-validations/<source_run_id>/download-ledger — 下载终审选择 ledger",
+                        "/api/governance/reject-transition-chains/<source_run_id> — 治理驳回+状态迁移链路结果",
+                        "/api/governance/reject-transition-chains?limit=... — 治理驳回链路列表（仅 rejected）",
+                        "/api/governance/reject-transition-chains/<source_run_id>/download — 下载驳回链路聚合 JSON",
+                        "/api/governance/rejections/<validation_id> — 治理驳回执行结果",
+                        "/api/governance/rejections?limit=... — 治理驳回执行列表",
+                        "/api/governance/rejections/<validation_id>/download — 下载驳回执行 artifact",
+                        "/api/governance/rejections/<validation_id>/download-ledger — 下载驳回执行 ledger",
+                        "/api/governance/status-transitions/<validation_id> — 治理状态迁移结果",
+                        "/api/governance/status-transitions?limit=... — 治理状态迁移列表",
+                        "/api/governance/status-transitions/<validation_id>/download — 下载状态迁移 artifact",
+                        "/api/governance/status-transitions/<validation_id>/download-ledger — 下载状态迁移 ledger",
+                        "/api/governance/handoffs/<source_run_id> — 治理 handoff 产物",
+                        "/api/governance/handoffs?limit=... — 治理 handoff 列表",
+                        "/api/governance/handoffs/<source_run_id>/download — 下载 handoff artifact",
+                        "/api/governance/handoffs/<source_run_id>/download-ledger — 下载 handoff ledger",
+                        "/api/governance/candidate-validations/<validation_id> — 治理候选验证结果",
+                        "/api/governance/candidate-validations?source_run_id=...&limit=... — 治理候选验证列表",
+                        "/api/governance/candidate-validations/<validation_id>/download — 下载候选验证 artifact",
+                        "/api/governance/candidate-validations/<validation_id>/download-ledger — 下载候选验证 ledger",
+                        "/api/governance/index?limit=... — 治理聚合索引（按 source_run_id）",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1376,6 +1426,251 @@ class BootstrapApiRouter:
             return HTTPStatus.OK, self.service.governance_final_validation_view(
                 source_run_id=source_run_id
             )
+
+        if (
+            parsed.path == "/api/governance/reject-transition-chains"
+            or parsed.path == "/api/v1/governance/reject-transition-chains"
+        ):
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_reject_transition_chains_view(
+                limit=limit
+            )
+
+        if parsed.path.startswith("/api/governance/reject-transition-chains/") or parsed.path.startswith(
+            "/api/v1/governance/reject-transition-chains/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_GOVERNANCE_REJECT_TRANSITION_CHAINS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, source_run_id, *rest = parts
+            if not source_run_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_source_run_id",
+                    message="source_run_id must be a non-empty string",
+                    details={"source_run_id": source_run_id},
+                )
+            if rest:
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_GOVERNANCE_REJECT_TRANSITION_CHAINS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_reject_transition_chain_download_view(
+                    source_run_id=source_run_id
+                )
+            return HTTPStatus.OK, self.service.governance_reject_transition_chain_view(
+                source_run_id=source_run_id
+            )
+
+        if (
+            parsed.path == "/api/governance/rejections"
+            or parsed.path == "/api/v1/governance/rejections"
+        ):
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_reject_executions_view(
+                limit=limit
+            )
+
+        if parsed.path.startswith("/api/governance/rejections/") or parsed.path.startswith(
+            "/api/v1/governance/rejections/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_GOVERNANCE_REJECTIONS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, validation_id, *rest = parts
+            if not validation_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_validation_id",
+                    message="validation_id must be a non-empty string",
+                    details={"validation_id": validation_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.governance_reject_execution_ledger_download_view(
+                        validation_id=validation_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_GOVERNANCE_REJECTIONS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_reject_execution_download_view(
+                    validation_id=validation_id
+                )
+            return HTTPStatus.OK, self.service.governance_reject_execution_view(
+                validation_id=validation_id
+            )
+
+        if (
+            parsed.path == "/api/governance/status-transitions"
+            or parsed.path == "/api/v1/governance/status-transitions"
+        ):
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_status_transitions_view(
+                limit=limit
+            )
+
+        if parsed.path.startswith("/api/governance/status-transitions/") or parsed.path.startswith(
+            "/api/v1/governance/status-transitions/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_GOVERNANCE_STATUS_TRANSITIONS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, validation_id, *rest = parts
+            if not validation_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_validation_id",
+                    message="validation_id must be a non-empty string",
+                    details={"validation_id": validation_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.governance_status_transition_ledger_download_view(
+                        validation_id=validation_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_GOVERNANCE_STATUS_TRANSITIONS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_status_transition_download_view(
+                    validation_id=validation_id
+                )
+            return HTTPStatus.OK, self.service.governance_status_transition_view(
+                validation_id=validation_id
+            )
+
+        if parsed.path == "/api/governance/handoffs" or parsed.path == "/api/v1/governance/handoffs":
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_handoffs_view(limit=limit)
+
+        if parsed.path.startswith("/api/governance/handoffs/") or parsed.path.startswith(
+            "/api/v1/governance/handoffs/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_GOVERNANCE_HANDOFFS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, source_run_id, *rest = parts
+            if not source_run_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_source_run_id",
+                    message="source_run_id must be a non-empty string",
+                    details={"source_run_id": source_run_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.governance_handoff_ledger_download_view(
+                        source_run_id=source_run_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_GOVERNANCE_HANDOFFS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_handoff_download_view(
+                    source_run_id=source_run_id
+                )
+            return HTTPStatus.OK, self.service.governance_handoff_view(
+                source_run_id=source_run_id
+            )
+
+        if (
+            parsed.path == "/api/governance/candidate-validations"
+            or parsed.path == "/api/v1/governance/candidate-validations"
+        ):
+            raw_source_run_id = query.get("source_run_id", [None])[0]
+            if not (isinstance(raw_source_run_id, str) and raw_source_run_id.strip()):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_source_run_id",
+                    message="source_run_id must be a non-empty string",
+                    details={"source_run_id": raw_source_run_id},
+                )
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_candidate_validations_view(
+                source_run_id=raw_source_run_id.strip(),
+                limit=limit,
+            )
+
+        if parsed.path.startswith("/api/governance/candidate-validations/") or parsed.path.startswith(
+            "/api/v1/governance/candidate-validations/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_GOVERNANCE_CANDIDATE_VALIDATIONS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, validation_id, *rest = parts
+            if not validation_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_validation_id",
+                    message="validation_id must be a non-empty string",
+                    details={"validation_id": validation_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.governance_candidate_validation_ledger_download_view(
+                        validation_id=validation_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_GOVERNANCE_CANDIDATE_VALIDATIONS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.governance_candidate_validation_download_view(
+                    validation_id=validation_id
+                )
+            return HTTPStatus.OK, self.service.governance_candidate_validation_view(
+                validation_id=validation_id
+            )
+
+        if parsed.path == "/api/governance/index" or parsed.path == "/api/v1/governance/index":
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.governance_index_view(limit=limit)
 
         if parsed.path == "/api/labs":
             return HTTPStatus.OK, self.service.labs_view()
