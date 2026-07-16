@@ -40,10 +40,13 @@ Last_reviewed: 2026-07-16
 
 - [x] 周期对象契约已冻结（字段、语义、版本、可追溯来源）
   - 证据：SmallCycle 契约对象（含 object_type/object_version）与强校验 from_dict：[contracts.py:L37-L105](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/contracts.py#L37-L105)
-- [ ] 周期识别入口已存在（可调用/可复现），且依赖清单明确（M1 事实输入范围）
-  - 证据：存在可复现“持久化写盘入口”（materialize）与产物路径约束，但其输入为已构造的周期对象，并非识别算法入口：
-    - SmallCycle materialize（写入 artifact+ledger）：[run_ledger.py:L92-L109](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L92-L109)
-    - Shadow bundle materialize（写入 artifact+ledger）：[shadow_bundle.py:L262-L286](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L262-L286)
+- [x] 周期识别入口已存在（可调用/可复现），且依赖清单明确（M1 事实输入范围）
+  - 证据：识别入口（仅依赖 formal M1 inputs）：
+    - build_small_cycle_from_m1(d1_fact, security_master, trading_day_status, trading_profile)：[assembler.py:L134-L240](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L134-L240)
+    - build_shadow_cycle_intelligence_from_m1(cycle, security_master, trading_profile)：[assembler.py:L584-L650](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L584-L650)
+  - 证据：可复现单测（构造 M1 对象并断言输出质量状态/原因与门禁分支）：
+    - [test_m2_m3_contract_skeleton.py:L225-L330](file:///Users/mac/NeoTrade3/tests/unit/test_m2_m3_contract_skeleton.py#L225-L330)
+  - 边界：当前证据覆盖“识别算法入口（函数）+ 依赖清单（签名）+ 单测复现”；尚未形成独立 CLI/Worker 阶段入口。
 - [x] 周期结果可读回（只读 API 或内部入口），支持按 key 查询与列表检索
   - 证据：按 record_id 的内部读回函数（read artifact / read domain / read ledger）：
     - read_small_cycle_artifact / read_small_cycle / read_small_cycle_ledger：[run_ledger.py:L111-L162](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L111-L162)
