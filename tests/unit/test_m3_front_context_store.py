@@ -221,6 +221,95 @@ def test_read_decision_m3_front_context_fail_closed_on_contract_mismatch(
         read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
 
 
+def test_read_decision_m3_front_context_fail_closed_on_missing_object_type(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text(
+        json.dumps(
+            {
+                "object_version": 1,
+                "record_id": record_id,
+                "written_at": "2026-07-07T00:00:00Z",
+                "m1_constraints_ref": {},
+                "identify_state": {},
+                "tracking_state": {},
+                "entry_state": {},
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_fail_closed_on_missing_object_version(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text(
+        json.dumps(
+            {
+                "object_type": "m3_front_context",
+                "record_id": record_id,
+                "written_at": "2026-07-07T00:00:00Z",
+                "m1_constraints_ref": {},
+                "identify_state": {},
+                "tracking_state": {},
+                "entry_state": {},
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_fail_closed_on_unknown_fields(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text(
+        json.dumps(
+            {
+                "object_type": "m3_front_context",
+                "object_version": 1,
+                "record_id": record_id,
+                "written_at": "2026-07-07T00:00:00Z",
+                "m1_constraints_ref": {},
+                "identify_state": {},
+                "tracking_state": {},
+                "entry_state": {},
+                "extra": 1,
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
+
+
 def test_read_decision_m3_front_context_ledger_fail_closed_on_invalid_json(
     tmp_path: Path,
 ) -> None:

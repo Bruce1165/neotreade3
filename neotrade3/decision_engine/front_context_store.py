@@ -58,20 +58,37 @@ class DecisionM3FrontContext:
     def from_dict(cls, payload: Any) -> "DecisionM3FrontContext":
         if not isinstance(payload, Mapping):
             raise TypeError("m3_front_context must be a JSON object")
-        object_type = str(
-            payload.get("object_type") or DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE
+        allowed_keys = {
+            "object_type",
+            "object_version",
+            "record_id",
+            "written_at",
+            "m1_constraints_ref",
+            "identify_state",
+            "tracking_state",
+            "entry_state",
+        }
+        unknown_keys = sorted(
+            str(key)
+            for key in payload.keys()
+            if str(key) not in allowed_keys
         )
+        if unknown_keys:
+            raise ValueError(
+                "m3_front_context contains unknown fields: "
+                f"{unknown_keys}"
+            )
+
+        object_type = str(payload.get("object_type") or "").strip()
         if object_type != DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE:
             raise ValueError(
                 "m3_front_context.object_type must equal "
                 f"{DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE}"
             )
-        object_version = int(
-            payload.get(
-                "object_version",
-                DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION,
-            )
-        )
+        try:
+            object_version = int(payload.get("object_version", -1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("m3_front_context.object_version must be an integer") from exc
         if object_version != DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION:
             raise ValueError(
                 "m3_front_context.object_version must equal "
