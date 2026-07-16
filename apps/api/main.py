@@ -23546,6 +23546,19 @@ class BootstrapApiService:
         confidence_status = step_status("confidence_daily")
         auto_optimize_status = step_status("auto_optimize")
 
+        strategy_id = "lowfreq_v16"
+        strategy_version: int | None = None
+        strategy_config_status = "degraded"
+        try:
+            from neotrade3.strategy_config import load_strategy_config
+
+            config = load_strategy_config(project_root=self.project_root, strategy_id=strategy_id)
+            strategy_version = int(config.version)
+            strategy_config_status = "ok"
+        except Exception:
+            strategy_version = None
+            strategy_config_status = "degraded"
+
         pipeline_steps = []
         for step_id, fallback_status, finished_at in [
             ("authoritative_update", None, ""),
@@ -23602,6 +23615,18 @@ class BootstrapApiService:
                     f"待执行意图 {pending_intents_after} 条。"
                     if lowfreq_status == "ok"
                     else "未确认低频日运行成功。"
+                ),
+            },
+            {
+                "item_id": "strategy_config",
+                "item_label": "策略配置",
+                "status": strategy_config_status,
+                "status_text": "正常" if strategy_config_status == "ok" else "降级",
+                "status_kind": "active" if strategy_config_status == "ok" else "watch",
+                "summary": (
+                    f"strategy_id={strategy_id}，version={strategy_version}。"
+                    if strategy_config_status == "ok"
+                    else f"strategy_id={strategy_id}，未能读取策略版本（workbench 将以 degraded 模式运行）。"
                 ),
             },
             {
@@ -23792,6 +23817,9 @@ class BootstrapApiService:
                 "overdue_shifted_count": overdue_shifted_count,
                 "inconsistency_count": inconsistency_count,
                 "pending_intents_after": pending_intents_after,
+                "strategy_id": strategy_id,
+                "strategy_config_status": strategy_config_status,
+                "strategy_version": strategy_version,
             },
         }
 
