@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from neotrade3.cycle_intelligence import (
     SmallCycle,
     build_small_cycle,
@@ -48,3 +50,14 @@ def test_materialize_small_cycle_writes_artifact_and_ledger(tmp_path: Path) -> N
     assert artifact_payload["cycle_state"] == "S2 Advancing"
     assert reconstructed == small_cycle
     assert reconstructed_ledger == ledger_record
+
+
+def test_read_small_cycle_artifact_fails_closed_on_non_object_json(tmp_path: Path) -> None:
+    artifact_file = (
+        tmp_path / "var/artifacts/m2_small_cycles/600000-2026-07-07/small_cycle.json"
+    )
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="JSON object"):
+        read_small_cycle_artifact(project_root=tmp_path, record_id="600000-2026-07-07")
