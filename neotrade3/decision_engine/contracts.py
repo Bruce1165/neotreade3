@@ -490,13 +490,66 @@ class DecisionLifecycleEvent:
             "evidence_ref": _copy_mapping(self.evidence_ref),
         }
 
+    @classmethod
+    def from_dict(cls, payload: Any) -> "DecisionLifecycleEvent":
+        obj = _require_json_object(payload, object_name="decision_lifecycle_event")
+        allowed = {
+            "object_type",
+            "object_version",
+            "stock_code",
+            "trade_date",
+            "event",
+            "source_layer",
+            "stage",
+            "decision",
+            "exit_scope",
+            "details",
+            "position_contract_snapshot",
+            "evidence_ref",
+        }
+        _reject_unknown_fields(obj, allowed_keys=allowed, object_name="decision_lifecycle_event")
+        _require_object_header(
+            obj,
+            object_type=DECISION_LIFECYCLE_EVENT_OBJECT_TYPE,
+            object_version=M3_OBJECT_VERSION,
+            object_name="decision_lifecycle_event",
+        )
+        exit_scope = obj.get("exit_scope")
+        if exit_scope is not None and not isinstance(exit_scope, str):
+            raise ValueError("decision_lifecycle_event.exit_scope must be a string")
+        details = obj.get("details")
+        if details is not None and not isinstance(details, str):
+            raise ValueError("decision_lifecycle_event.details must be a string")
+        return cls(
+            stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="decision_lifecycle_event"),
+            trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="decision_lifecycle_event"),
+            event=_require_non_empty_str(obj, field_name="event", object_name="decision_lifecycle_event"),
+            source_layer=_require_non_empty_str(obj, field_name="source_layer", object_name="decision_lifecycle_event"),
+            stage=_require_non_empty_str(obj, field_name="stage", object_name="decision_lifecycle_event"),
+            decision=_require_non_empty_str(obj, field_name="decision", object_name="decision_lifecycle_event"),
+            exit_scope=str(exit_scope or "").strip(),
+            details=str(details or "").strip(),
+            position_contract_snapshot=_require_mapping(
+                obj,
+                field_name="position_contract_snapshot",
+                object_name="decision_lifecycle_event",
+            ),
+            evidence_ref=_require_mapping(
+                obj,
+                field_name="evidence_ref",
+                object_name="decision_lifecycle_event",
+            ),
+            object_type=DECISION_LIFECYCLE_EVENT_OBJECT_TYPE,
+            object_version=M3_OBJECT_VERSION,
+        )
+
 
 @dataclass(frozen=True)
 class DecisionLifecycleLog:
     """Formal M3 per-stock decision-lifecycle log object skeleton."""
 
     stock_code: str
-    events: list[dict[str, Any]]
+    events: list[DecisionLifecycleEvent]
     object_type: str = DECISION_LIFECYCLE_LOG_OBJECT_TYPE
     object_version: int = M3_OBJECT_VERSION
 
@@ -505,5 +558,34 @@ class DecisionLifecycleLog:
             "object_type": self.object_type,
             "object_version": self.object_version,
             "stock_code": self.stock_code,
-            "events": _copy_payload_list(self.events),
+            "events": [event.to_payload() for event in self.events],
         }
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "DecisionLifecycleLog":
+        obj = _require_json_object(payload, object_name="decision_lifecycle_log")
+        allowed = {
+            "object_type",
+            "object_version",
+            "stock_code",
+            "events",
+        }
+        _reject_unknown_fields(obj, allowed_keys=allowed, object_name="decision_lifecycle_log")
+        _require_object_header(
+            obj,
+            object_type=DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
+            object_version=M3_OBJECT_VERSION,
+            object_name="decision_lifecycle_log",
+        )
+        raw_events = obj.get("events")
+        if not isinstance(raw_events, list):
+            raise ValueError("decision_lifecycle_log.events must be a list")
+        events: list[DecisionLifecycleEvent] = []
+        for item in raw_events:
+            events.append(DecisionLifecycleEvent.from_dict(item))
+        return cls(
+            stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="decision_lifecycle_log"),
+            events=events,
+            object_type=DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
+            object_version=M3_OBJECT_VERSION,
+        )

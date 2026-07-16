@@ -85,6 +85,8 @@ Last_reviewed: 2026-07-16
   - 证据：单测覆盖（缺 object_type/object_version、未知字段均拒绝）：[test_m3_front_context_store.py:L170-L309](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L309)
   - 证据：Identify/Tracking/Entry/Hold/Exit 顶层契约冻结（显式 object_type/object_version + 未知字段拒绝 + 字段类型/必填校验）：[contracts.py:L37-L470](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L470)
   - 证据：state 合同 fail-closed 单测（header 缺失/未知字段/list 非法等）：[test_m3_decision_state_contracts.py:L1-L167](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_state_contracts.py#L1-L167)
+  - 证据：DecisionLifecycleEvent/Log 顶层契约冻结（from_dict + unknown-fields + events 策略）：[contracts.py:L37-L600](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L600)
+  - 证据：DecisionLifecycleEvent/Log 合同单测：[test_m3_decision_lifecycle_contracts.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_lifecycle_contracts.py#L1-L81)
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）

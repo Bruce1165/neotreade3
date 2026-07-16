@@ -436,7 +436,12 @@ def build_decision_lifecycle_log(
 ) -> DecisionLifecycleLog:
     """Build a formal per-stock M3 decision-lifecycle log from already-decided inputs."""
 
+    parsed_events: list[DecisionLifecycleEvent] = []
+    for item in events or []:
+        if not isinstance(item, Mapping):
+            raise TypeError("decision_lifecycle_log.events must be a list of JSON objects")
+        parsed_events.append(DecisionLifecycleEvent.from_dict(dict(item)))
     return DecisionLifecycleLog(
         stock_code=_require_text(stock_code, field_name="stock_code"),
-        events=_copy_payload_list(events),
+        events=parsed_events,
     )
