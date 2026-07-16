@@ -78,8 +78,8 @@ Last_reviewed: 2026-07-16
 
 - 文件：M2 设计文档、对象契约定义、版本策略
 - 代码：M2 可复现入口（示例：`materialize_*` 写入 artifact+ledger）、对象序列化/反序列化
-- 接口：read/list/download（如对外提供；若暂未对外，则以内部读回函数作为证据）
-- 测试：持久化复现单测（写入后可读回）+ 空 id/非法 payload fail-closed 覆盖
+- 接口：read/list/download（如对外提供；若暂未对外，则以内部读回函数作为证据），并明确 fail-closed 语义（文件存在但损坏/契约不匹配必须抛错；文件不存在才视为 not found）
+- 测试：持久化复现单测（写入后可读回）+ fail-closed 覆盖（坏 JSON、JSON 顶层非 object、契约不匹配、异常透传）
 - 运行产物：`var/artifacts/m2_*` + `var/ledgers/m2_*` 目录结构样本（record_id 规则可定位）
 
 ### 4.4 退出条件
