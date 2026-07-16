@@ -1,0 +1,17 @@
+{
+  "description": "baseline config (parameters applied via StrategyConfig adapter)",
+  "parameters": {
+    "BUY_THRESHOLD": 85.0,
+    "MAX_POSITIONS": 3,
+    "REBALANCE_DAYS": 15,
+    "RELATIVE_STRENGTH_BONUS_CAP": 4.0,
+    "ROTATION_MIN_RETURN_PCT": 5.0,
+    "ROTATION_SCORE_DELTA": 16.0,
+    "SECTOR_ACCEL_BONUS_ENABLED": false,
+    "SECTOR_COOLDOWN_CONFIRM_HITS": 2,
+    "SECTOR_COOLDOWN_CONFIRM_WINDOW": 4,
+    "STOP_LOSS_CONFIRM_DAYS": 1
+  },
+  "strategy_id": "lowfreq_v16",
+  "version": 1
+}
