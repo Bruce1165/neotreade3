@@ -83,10 +83,14 @@ Last_reviewed: 2026-07-16
   - 证据：存在形式化对象 skeleton（IdentifyState/EntryState 等）：[contracts.py:L1-L120](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L1-L120)
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
-- [ ] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
-  - 证据：未定位到对外 read/list/download API；仓库内存在 decision_engine contracts，但缺少对外读回证据。
-- [ ] 决策失败语义明确（输入缺失/契约不满足 fail-closed；展示可降级 degraded）
-  - 证据：未在当前切片内定位到“对外错误语义/门禁策略”的统一证据。
+- [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
+  - 证据：内部 front_context store 提供 artifact/ledger read + ledger list 入口：[front_context_store.py:L235-L364](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L235-L364)
+  - 证据：readback/list 单测（materialize + read + ledger read + list 排序/limit + fail-closed）：[test_m3_front_context_store.py:L120-L320](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L120-L320)
+  - 边界：尚未定位到对外 read/list/download API；当前证据仅覆盖内部入口（download 未覆盖）。
+- [x] 决策失败语义明确（输入缺失/契约不满足 fail-closed；展示可降级 degraded）
+  - 证据：read/list 对坏 JSON / JSON 顶层非 object / ledger 缺字段 fail-closed；缺文件返回 None：[front_context_store.py:L235-L364](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L235-L364)
+  - 证据：fail-closed 单测覆盖（坏 JSON / 非 object / 契约不满足）：[test_m3_front_context_store.py:L170-L320](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L320)
+  - 边界：展示层 degraded 策略未形成对外统一契约；当前证据聚焦内部读回的 fail-closed 语义。
 - [ ] 决策可审计（至少包含输入引用与关键派生/中间状态的定位线索）
   - 证据：contracts 中存在 evidence_ref/m2_cycle_ref/m1_constraints_ref 槽位，但缺少端到端落盘/读回证据：[contracts.py:L37-L62](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L62)
 

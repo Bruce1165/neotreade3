@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
 from neotrade3.cycle_intelligence import (
     ShadowCycleIntelligenceBundle,
     build_shadow_cycle_intelligence_from_m1,
@@ -16,6 +18,7 @@ from neotrade3.decision_engine import (
     build_m1_constraints_ref,
     build_tracking_state_from_formal_inputs,
     materialize_decision_m3_front_context,
+    list_decision_m3_front_context_ledgers,
     read_decision_m3_front_context,
     read_decision_m3_front_context_artifact,
     read_decision_m3_front_context_ledger,
@@ -144,3 +147,174 @@ def test_materialize_decision_m3_front_context(tmp_path: Path) -> None:
     assert artifact_payload["identify_state"]["object_type"] == "identify_state"
     assert reconstructed == front_context
     assert reconstructed_ledger == ledger_record
+
+
+def _artifact_file(*, project_root: Path, record_id: str) -> Path:
+    return (
+        project_root
+        / "var/artifacts/m3_front_contexts"
+        / record_id
+        / "front_context.json"
+    )
+
+
+def _ledger_file(*, project_root: Path, record_id: str) -> Path:
+    return (
+        project_root
+        / "var/ledgers/m3_front_contexts"
+        / record_id
+        / "front_context.json"
+    )
+
+
+def test_read_decision_m3_front_context_artifact_fail_closed_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context_artifact(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_artifact_fail_closed_on_non_object_json(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        read_decision_m3_front_context_artifact(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_fail_closed_on_contract_mismatch(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text(
+        json.dumps(
+            {
+                "object_type": "wrong_type",
+                "object_version": 1,
+                "record_id": record_id,
+                "written_at": "2026-07-07T00:00:00Z",
+                "m1_constraints_ref": {},
+                "identify_state": {},
+                "tracking_state": {},
+                "entry_state": {},
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_ledger_fail_closed_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    ledger_file = _ledger_file(project_root=tmp_path, record_id=record_id)
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context_ledger(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_ledger_fail_closed_on_non_object_json(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    ledger_file = _ledger_file(project_root=tmp_path, record_id=record_id)
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        read_decision_m3_front_context_ledger(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_ledger_fail_closed_on_missing_fields(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    ledger_file = _ledger_file(project_root=tmp_path, record_id=record_id)
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text(
+        json.dumps(
+            {
+                "written_at": "2026-07-07T00:00:00Z",
+                "artifact_path": "var/artifacts/m3_front_contexts/x/front_context.json",
+                "ledger_path": "var/ledgers/m3_front_contexts/x/front_context.json",
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context_ledger(project_root=tmp_path, record_id=record_id)
+
+
+def test_list_decision_m3_front_context_ledgers_orders_and_limits(
+    tmp_path: Path,
+) -> None:
+    payload_a = {
+        "record_id": "600000-2026-07-06",
+        "written_at": "2026-07-06T00:00:00Z",
+        "artifact_path": "var/artifacts/m3_front_contexts/600000-2026-07-06/front_context.json",
+        "ledger_path": "var/ledgers/m3_front_contexts/600000-2026-07-06/front_context.json",
+    }
+    payload_b = {
+        "record_id": "600000-2026-07-07",
+        "written_at": "2026-07-07T00:00:00Z",
+        "artifact_path": "var/artifacts/m3_front_contexts/600000-2026-07-07/front_context.json",
+        "ledger_path": "var/ledgers/m3_front_contexts/600000-2026-07-07/front_context.json",
+    }
+
+    file_a = _ledger_file(project_root=tmp_path, record_id=payload_a["record_id"])
+    file_a.parent.mkdir(parents=True, exist_ok=True)
+    file_a.write_text(
+        json.dumps(payload_a, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    file_b = _ledger_file(project_root=tmp_path, record_id=payload_b["record_id"])
+    file_b.parent.mkdir(parents=True, exist_ok=True)
+    file_b.write_text(
+        json.dumps(payload_b, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    records = list_decision_m3_front_context_ledgers(project_root=tmp_path, limit=10)
+    assert [item.record_id for item in records] == [
+        "600000-2026-07-07",
+        "600000-2026-07-06",
+    ]
+
+    limited = list_decision_m3_front_context_ledgers(project_root=tmp_path, limit=1)
+    assert [item.record_id for item in limited] == ["600000-2026-07-07"]
+
+
+def test_list_decision_m3_front_context_ledgers_fail_closed_on_invalid_json(
+    tmp_path: Path,
+) -> None:
+    ledger_file = _ledger_file(project_root=tmp_path, record_id="600000-2026-07-07")
+    ledger_file.parent.mkdir(parents=True, exist_ok=True)
+    ledger_file.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        list_decision_m3_front_context_ledgers(project_root=tmp_path, limit=10)

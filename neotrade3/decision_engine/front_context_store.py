@@ -240,8 +240,23 @@ def read_decision_m3_front_context_artifact(
     artifact_file = _artifact_file(project_root=Path(project_root), record_id=record_id)
     if not artifact_file.exists():
         return None
-    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
-    return payload if isinstance(payload, dict) else None
+    try:
+        raw = artifact_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"failed to read m3_front_context artifact: {artifact_file}"
+        ) from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"invalid JSON in m3_front_context artifact: {artifact_file}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise TypeError(
+            f"m3_front_context artifact root must be a JSON object: {artifact_file}"
+        )
+    return payload
 
 
 def read_decision_m3_front_context(
@@ -266,7 +281,84 @@ def read_decision_m3_front_context_ledger(
     ledger_file = _ledger_file(project_root=Path(project_root), record_id=record_id)
     if not ledger_file.exists():
         return None
-    payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+    try:
+        raw = ledger_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"failed to read m3_front_context ledger: {ledger_file}"
+        ) from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"invalid JSON in m3_front_context ledger: {ledger_file}"
+        ) from exc
     if not isinstance(payload, dict):
-        return None
-    return DecisionM3FrontContextLedgerRecord.from_dict(payload)
+        raise TypeError(
+            f"m3_front_context ledger root must be a JSON object: {ledger_file}"
+        )
+    record = DecisionM3FrontContextLedgerRecord.from_dict(payload)
+    if not record.record_id:
+        raise ValueError(f"m3_front_context ledger missing record_id: {ledger_file}")
+    if not record.written_at:
+        raise ValueError(f"m3_front_context ledger missing written_at: {ledger_file}")
+    if not record.artifact_path:
+        raise ValueError(f"m3_front_context ledger missing artifact_path: {ledger_file}")
+    if not record.ledger_path:
+        raise ValueError(f"m3_front_context ledger missing ledger_path: {ledger_file}")
+    return record
+
+
+def list_decision_m3_front_context_ledgers(
+    *,
+    project_root: str | Path,
+    limit: int = 200,
+) -> list[DecisionM3FrontContextLedgerRecord]:
+    if limit <= 0:
+        raise ValueError("limit must be a positive integer")
+    root = Path(project_root) / "var/ledgers/m3_front_contexts"
+    if not root.exists():
+        return []
+
+    records: list[DecisionM3FrontContextLedgerRecord] = []
+    for ledger_file in root.glob("*/front_context.json"):
+        try:
+            raw = ledger_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"failed to read m3_front_context ledger: {ledger_file}"
+            ) from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid JSON in m3_front_context ledger: {ledger_file}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise TypeError(
+                f"m3_front_context ledger root must be a JSON object: {ledger_file}"
+            )
+        try:
+            record = DecisionM3FrontContextLedgerRecord.from_dict(payload)
+        except Exception as exc:
+            raise ValueError(
+                f"invalid m3_front_context ledger payload: {ledger_file}"
+            ) from exc
+        if not record.record_id:
+            raise ValueError(f"m3_front_context ledger missing record_id: {ledger_file}")
+        if not record.written_at:
+            raise ValueError(f"m3_front_context ledger missing written_at: {ledger_file}")
+        if not record.artifact_path:
+            raise ValueError(
+                f"m3_front_context ledger missing artifact_path: {ledger_file}"
+            )
+        if not record.ledger_path:
+            raise ValueError(
+                f"m3_front_context ledger missing ledger_path: {ledger_file}"
+            )
+        records.append(record)
+
+    records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
+    if len(records) > limit:
+        records = records[:limit]
+    return records
