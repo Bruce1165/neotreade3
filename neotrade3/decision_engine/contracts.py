@@ -16,22 +16,35 @@ DECISION_LIFECYCLE_LOG_OBJECT_TYPE = "decision_lifecycle_log"
 M3_OBJECT_VERSION = 1
 
 
-def _copy_mapping(value: dict[str, Any] | None) -> dict[str, Any]:
+def _copy_mapping(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
-        return {}
+        raise TypeError("expected JSON object")
     return dict(value)
 
 
-def _copy_text_list(value: list[str] | None) -> list[str]:
+def _copy_text_list(value: object) -> list[str]:
     if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError("expected list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError("expected list of strings")
+        normalized = item.strip()
+        if not normalized:
+            raise ValueError("empty strings are not allowed")
+        out.append(normalized)
+    return out
 
 
-def _copy_payload_list(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _copy_payload_list(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
-        return []
-    return [_copy_mapping(item) for item in value if isinstance(item, dict)]
+        raise TypeError("expected list of JSON objects")
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise TypeError("expected list of JSON objects")
+        out.append(_copy_mapping(item))
+    return out
 
 
 def _require_json_object(payload: Any, *, object_name: str) -> dict[str, Any]:
