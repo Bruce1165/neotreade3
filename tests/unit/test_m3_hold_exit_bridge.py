@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from neotrade3.decision_engine import (
     EXIT_STATE_OBJECT_TYPE,
     HOLD_STATE_OBJECT_TYPE,
@@ -75,3 +77,38 @@ def test_build_m3_hold_exit_bridge_maps_exit_ready_snapshot() -> None:
         bridge["exit_state"]["global_thesis_end_semantics"]
         == "needs_global_confirmation"
     )
+
+
+def test_build_m3_hold_exit_bridge_rejects_invalid_warning_flags_type() -> None:
+    with pytest.raises(TypeError):
+        build_m3_hold_exit_bridge(
+            stock_code="600000",
+            trade_date="2026-07-07",
+            position_snapshot={
+                "exit_ready": False,
+                "hold_state": "holding",
+                "warning_flags": "not-a-list",
+            },
+        )
+
+
+def test_build_m3_hold_exit_bridge_rejects_warning_flags_empty_string() -> None:
+    with pytest.raises(ValueError):
+        build_m3_hold_exit_bridge(
+            stock_code="600000",
+            trade_date="2026-07-07",
+            position_snapshot={
+                "exit_ready": False,
+                "hold_state": "holding",
+                "warning_flags": [""],
+            },
+        )
+
+
+def test_build_m3_hold_exit_bridge_rejects_non_mapping_snapshot() -> None:
+    with pytest.raises(TypeError):
+        build_m3_hold_exit_bridge(
+            stock_code="600000",
+            trade_date="2026-07-07",
+            position_snapshot=None,
+        )

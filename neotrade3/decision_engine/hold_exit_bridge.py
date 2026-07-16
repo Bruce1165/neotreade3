@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .assembler import build_exit_state, build_hold_state
 
@@ -14,15 +15,23 @@ _WATCH_HOLD_STATES = {"review_watch", "observe_watch", "noise_watch", "grace_hol
 
 
 def _copy_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
-    if value is None:
-        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("expected JSON object")
     return {str(key): item for key, item in value.items()}
 
 
 def _copy_text_list(value: object) -> list[str]:
     if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError("expected list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError("expected list of strings")
+        raw = item.strip()
+        if not raw:
+            raise ValueError("empty strings are not allowed")
+        out.append(raw)
+    return out
 
 
 def _position_status_from_snapshot(snapshot: Mapping[str, Any]) -> str:
@@ -56,8 +65,8 @@ def build_m3_hold_exit_bridge(
     snapshot = _copy_mapping(position_snapshot)
     position_status = _position_status_from_snapshot(snapshot)
     hold_quality_signal = _hold_quality_signal_from_snapshot(snapshot)
-    warning_flags = _copy_text_list(snapshot.get("warning_flags"))
-    exit_evidence_bundle = _copy_text_list(snapshot.get("exit_evidence_bundle"))
+    warning_flags = _copy_text_list(snapshot.get("warning_flags") or [])
+    exit_evidence_bundle = _copy_text_list(snapshot.get("exit_evidence_bundle") or [])
 
     hold_state_payload: dict[str, Any] = {}
     exit_state_payload: dict[str, Any] = {}
@@ -101,9 +110,9 @@ def build_m3_hold_exit_bridge(
             status="watch" if hold_state_value in _WATCH_HOLD_STATES else "holding",
             hold_state=hold_state_value,
             warning_flags=warning_flags,
-            not_exit_reasons=_copy_text_list(snapshot.get("not_exit_reasons")),
+            not_exit_reasons=_copy_text_list(snapshot.get("not_exit_reasons") or []),
             evidence_ref={
-                "noise_evidence": _copy_text_list(snapshot.get("noise_evidence")),
+                "noise_evidence": _copy_text_list(snapshot.get("noise_evidence") or []),
                 "exit_evidence_bundle": exit_evidence_bundle,
                 "hold_attribution_bucket": str(
                     snapshot.get("hold_attribution_bucket") or ""

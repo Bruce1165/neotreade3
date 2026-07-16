@@ -31,23 +31,36 @@ def _require_text(value: object, *, field_name: str) -> str:
 
 
 def _copy_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
-    if value is None:
-        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError("expected JSON object")
     return {str(key): item for key, item in value.items()}
 
 
 def _copy_text_list(value: list[str] | None) -> list[str]:
     if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError("expected list of strings")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError("expected list of strings")
+        raw = item.strip()
+        if not raw:
+            raise ValueError("empty strings are not allowed")
+        out.append(raw)
+    return out
 
 
 def _copy_payload_list(
     value: list[Mapping[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
-        return []
-    return [_copy_mapping(item) for item in value if isinstance(item, Mapping)]
+        raise TypeError("expected list of JSON objects")
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise TypeError("expected list of JSON objects")
+        out.append(_copy_mapping(item))
+    return out
 
 
 def _cycle_ref(cycle: SmallCycle) -> dict[str, Any]:
@@ -214,7 +227,7 @@ def build_entry_state_from_formal_inputs(
     """Translate a formal small-cycle into a formal entry-state."""
 
     blocked = bool(m1_constraints_ref.get("blocked"))
-    blocking_reasons = _copy_text_list(list(m1_constraints_ref.get("blocking_reasons") or []))
+    blocking_reasons = _copy_text_list(m1_constraints_ref.get("blocking_reasons") or [])
     linkage_blocks_continuation = _linkage_blocks_continuation(cycle_linkage_state_ref)
     actionable = False
     status = "not_ready"
@@ -267,9 +280,9 @@ def build_identify_state(
         trade_date=_require_text(trade_date, field_name="trade_date"),
         status=_require_text(status, field_name="status"),
         reason=_require_text(reason, field_name="reason"),
-        evidence_ref=_copy_mapping(evidence_ref),
-        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
-        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref or {}),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref or {}),
     )
 
 
@@ -295,9 +308,9 @@ def build_tracking_state(
             transition_reason,
             field_name="transition_reason",
         ),
-        evidence_ref=_copy_mapping(evidence_ref),
-        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
-        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref or {}),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref or {}),
     )
 
 
@@ -321,10 +334,10 @@ def build_entry_state(
         status=_require_text(status, field_name="status"),
         decision=_require_text(decision, field_name="decision"),
         actionable=bool(actionable),
-        blocking_reasons=_copy_text_list(blocking_reasons),
-        evidence_ref=_copy_mapping(evidence_ref),
-        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
-        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+        blocking_reasons=_copy_text_list(blocking_reasons or []),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref or {}),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref or {}),
     )
 
 
@@ -347,11 +360,11 @@ def build_hold_state(
         trade_date=_require_text(trade_date, field_name="trade_date"),
         status=_require_text(status, field_name="status"),
         hold_state=_require_text(hold_state, field_name="hold_state"),
-        warning_flags=_copy_text_list(warning_flags),
-        not_exit_reasons=_copy_text_list(not_exit_reasons),
-        evidence_ref=_copy_mapping(evidence_ref),
-        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
-        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+        warning_flags=_copy_text_list(warning_flags or []),
+        not_exit_reasons=_copy_text_list(not_exit_reasons or []),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref or {}),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref or {}),
     )
 
 
@@ -394,9 +407,9 @@ def build_exit_state(
             global_thesis_end_semantics,
             field_name="global_thesis_end_semantics",
         ),
-        evidence_ref=_copy_mapping(evidence_ref),
-        m2_cycle_ref=_copy_mapping(m2_cycle_ref),
-        m1_constraints_ref=_copy_mapping(m1_constraints_ref),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
+        m2_cycle_ref=_copy_mapping(m2_cycle_ref or {}),
+        m1_constraints_ref=_copy_mapping(m1_constraints_ref or {}),
     )
 
 
@@ -424,8 +437,8 @@ def build_decision_lifecycle_event(
         decision=_require_text(decision, field_name="decision"),
         exit_scope=str(exit_scope or "").strip(),
         details=str(details or "").strip(),
-        position_contract_snapshot=_copy_mapping(position_contract_snapshot),
-        evidence_ref=_copy_mapping(evidence_ref),
+        position_contract_snapshot=_copy_mapping(position_contract_snapshot or {}),
+        evidence_ref=_copy_mapping(evidence_ref or {}),
     )
 
 
