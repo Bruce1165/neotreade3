@@ -23789,6 +23789,12 @@ class BootstrapApiService:
             summary_text = (
                 f"{as_of_date} 巡检发现 {len(exceptions)} 条异常摘要，当前风险等级为 {risk_meta['text']}。"
             )
+        if strategy_config_status == "ok":
+            summary_text = (
+                f"{summary_text} 策略配置正常（{strategy_id} v{strategy_version}）。"
+            )
+        else:
+            summary_text = f"{summary_text} 策略配置降级（{strategy_id}）。"
 
         return {
             "_meta": {"status": "ok"},
