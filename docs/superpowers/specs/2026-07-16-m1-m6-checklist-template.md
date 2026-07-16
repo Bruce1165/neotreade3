@@ -77,10 +77,10 @@ Last_reviewed: 2026-07-16
 ### 4.3 证据字段
 
 - 文件：M2 设计文档、对象契约定义、版本策略
-- 代码：M2 入口函数/服务、对象序列化/反序列化
-- 接口：read/list/download（如对外提供）
-- 测试：正常路径 + 输入缺失/非法输入/边界数据集
-- 运行产物：周期对象样本、运行 ledger（如有）
+- 代码：M2 可复现入口（示例：`materialize_*` 写入 artifact+ledger）、对象序列化/反序列化
+- 接口：read/list/download（如对外提供；若暂未对外，则以内部读回函数作为证据）
+- 测试：持久化复现单测（写入后可读回）+ 空 id/非法 payload fail-closed 覆盖
+- 运行产物：`var/artifacts/m2_*` + `var/ledgers/m2_*` 目录结构样本（record_id 规则可定位）
 
 ### 4.4 退出条件
 
