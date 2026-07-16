@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from neotrade3.cycle_intelligence import (
     ShadowCycleIntelligenceBundle,
     build_shadow_cycle_intelligence_bundle_record_id,
@@ -89,3 +91,17 @@ def test_materialize_shadow_bundle_writes_artifact_and_ledger(tmp_path: Path) ->
     assert artifact_payload["payload"]["wave_hypothesis"]["stock_code"] == "600000"
     assert reconstructed == shadow_bundle
     assert reconstructed_ledger == ledger_record
+
+
+def test_read_shadow_bundle_artifact_fails_closed_on_non_object_json(tmp_path: Path) -> None:
+    artifact_file = (
+        tmp_path / "var/artifacts/m2_shadow_bundles/600000-2026-07-07/shadow_bundle.json"
+    )
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match="JSON object"):
+        read_shadow_cycle_intelligence_bundle_artifact(
+            project_root=tmp_path,
+            record_id="600000-2026-07-07",
+        )

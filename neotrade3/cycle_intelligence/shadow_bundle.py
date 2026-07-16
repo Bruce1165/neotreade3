@@ -293,8 +293,17 @@ def read_shadow_cycle_intelligence_bundle_artifact(
     artifact_file = _artifact_file(project_root=Path(project_root), record_id=record_id)
     if not artifact_file.exists():
         return None
-    payload = json.loads(artifact_file.read_text(encoding="utf-8"))
-    return payload if isinstance(payload, dict) else None
+    try:
+        raw = artifact_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"failed to read m2_shadow_bundle artifact: {artifact_file}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in m2_shadow_bundle artifact: {artifact_file}") from exc
+    if not isinstance(payload, dict):
+        raise TypeError(f"m2_shadow_bundle artifact root must be a JSON object: {artifact_file}")
+    return payload
 
 
 def read_shadow_cycle_intelligence_bundle(
