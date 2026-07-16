@@ -14,6 +14,12 @@ from .contracts import (
     CycleLinkageState,
     GrowthPotentialProfile,
     MidCycleState,
+    SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE,
+    SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN,
+    SMALL_CYCLE_QUALITY_STATUS_BLOCKED,
+    SMALL_CYCLE_QUALITY_STATUS_INSUFFICIENT_EVIDENCE,
+    SMALL_CYCLE_QUALITY_STATUS_INVALIDATED,
+    SMALL_CYCLE_QUALITY_STATUS_OK,
     SmallCycle,
     SmallCycleWaveHypothesis,
     TopRiskProfile,
@@ -320,6 +326,8 @@ def build_small_cycle(
     trade_date: str,
     cycle_state: str,
     state_stability_level: str,
+    quality_status: str | None = None,
+    quality_reasons: Iterable[str] | None = None,
     evidence_bundle: Mapping[str, Any] | None = None,
     confidence: Mapping[str, Any] | None = None,
     invalidation: Mapping[str, Any] | None = None,
@@ -333,6 +341,29 @@ def build_small_cycle(
     Real production derivation from formal `M1` inputs lands in later phases.
     """
 
+    invalidation_payload = _copy_mapping(invalidation)
+    invalidation_status = str(invalidation_payload.get("status") or "").strip()
+    invalidation_reasons = _copy_text_list(invalidation_payload.get("reasons"))
+
+    derived_quality_status: str
+    derived_quality_reasons: list[str]
+    if quality_status is not None:
+        derived_quality_status = _require_text(quality_status, field_name="quality_status")
+        derived_quality_reasons = _copy_text_list(quality_reasons)
+    elif invalidation_status == "triggered":
+        if SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN in invalidation_reasons:
+            derived_quality_status = SMALL_CYCLE_QUALITY_STATUS_INVALIDATED
+            derived_quality_reasons = [SMALL_CYCLE_QUALITY_REASON_PRICE_AND_CONTINUITY_BROKEN]
+        else:
+            derived_quality_status = SMALL_CYCLE_QUALITY_STATUS_BLOCKED
+            derived_quality_reasons = invalidation_reasons
+    elif state_stability_level == "insufficient_evidence":
+        derived_quality_status = SMALL_CYCLE_QUALITY_STATUS_INSUFFICIENT_EVIDENCE
+        derived_quality_reasons = [SMALL_CYCLE_QUALITY_REASON_INSUFFICIENT_EVIDENCE]
+    else:
+        derived_quality_status = SMALL_CYCLE_QUALITY_STATUS_OK
+        derived_quality_reasons = []
+
     return SmallCycle(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
@@ -341,9 +372,11 @@ def build_small_cycle(
             state_stability_level,
             field_name="state_stability_level",
         ),
+        quality_status=derived_quality_status,
+        quality_reasons=derived_quality_reasons,
         evidence_bundle=_copy_mapping(evidence_bundle),
         confidence=_copy_mapping(confidence),
-        invalidation=_copy_mapping(invalidation),
+        invalidation=invalidation_payload,
         state_transition_log=_copy_transition_log(state_transition_log),
         input_data_version=_require_text(
             input_data_version,

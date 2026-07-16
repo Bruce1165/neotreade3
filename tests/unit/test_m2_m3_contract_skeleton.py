@@ -227,6 +227,8 @@ def test_build_small_cycle_from_m1_uses_formal_inputs_only() -> None:
 
     payload = cycle.to_payload()
     assert payload["cycle_state"] == "S2 Advancing"
+    assert payload["quality_status"] == "ok"
+    assert payload["quality_reasons"] == []
     assert payload["evidence_bundle"]["e2_activity"]["status"] == "supported"
     assert payload["evidence_bundle"]["e4_relative_strength"]["status"] == "not_available"
     assert payload["confidence"]["level"] == "high"
@@ -257,8 +259,10 @@ def test_build_small_cycle_from_m1_blocks_when_profile_window_missing() -> None:
 
     payload = cycle.to_payload()
     assert payload["cycle_state"] == "S0 Neutral"
+    assert payload["quality_status"] == "blocked"
     assert payload["invalidation"]["status"] == "triggered"
     assert "pf1_window_not_ready" in payload["invalidation"]["reasons"]
+    assert "pf1_window_not_ready" in payload["quality_reasons"]
 
 
 def test_build_front_states_from_formal_inputs_respects_constraints() -> None:

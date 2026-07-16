@@ -4,6 +4,7 @@ from pathlib import Path
 
 from neotrade3.cycle_intelligence import (
     SmallCycle,
+    build_small_cycle,
     build_small_cycle_record_id,
     materialize_small_cycle,
     read_small_cycle,
@@ -13,7 +14,7 @@ from neotrade3.cycle_intelligence import (
 
 
 def _build_small_cycle() -> SmallCycle:
-    return SmallCycle(
+    return build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",

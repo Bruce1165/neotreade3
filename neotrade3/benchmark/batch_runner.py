@@ -479,54 +479,22 @@ def _select_samples(
 
 
 def _build_small_cycle_from_payload(payload: Mapping[str, Any]) -> SmallCycle:
-    return SmallCycle(
-        stock_code=_require_text(payload.get("stock_code"), field_name="m2_cycle.stock_code"),
-        trade_date=_require_text(payload.get("trade_date"), field_name="m2_cycle.trade_date"),
-        cycle_state=_require_text(payload.get("cycle_state"), field_name="m2_cycle.cycle_state"),
-        state_stability_level=_require_text(
-            payload.get("state_stability_level"),
-            field_name="m2_cycle.state_stability_level",
-        ),
-        evidence_bundle=_copy_mapping(
-            payload.get("evidence_bundle", {}),
-            field_name="m2_cycle.evidence_bundle",
-        ),
-        confidence=_copy_mapping(
-            payload.get("confidence", {}),
-            field_name="m2_cycle.confidence",
-        ),
-        invalidation=_copy_mapping(
-            payload.get("invalidation", {}),
-            field_name="m2_cycle.invalidation",
-        ),
-        state_transition_log=_copy_mapping_list(
-            payload.get("state_transition_log", []),
-            field_name="m2_cycle.state_transition_log",
-        ),
-        input_data_version=_require_text(
-            payload.get("input_data_version"),
-            field_name="m2_cycle.input_data_version",
-        ),
-        rule_version=_require_text(
-            payload.get("rule_version"),
-            field_name="m2_cycle.rule_version",
-        ),
-        object_type=str(payload.get("object_type") or "small_cycle"),
-        object_version=int(payload.get("object_version", 1)),
-    )
+    return SmallCycle.from_dict(dict(payload))
 
 
 _RESOLVER_STUB_PAYLOADS: dict[str, dict[str, Any]] = {
     "m2-cycle-ref-600000-2026-07-07": {
         "object_type": "small_cycle",
-        "object_version": 1,
+        "object_version": 2,
         "payload": {
             "object_type": "small_cycle",
-            "object_version": 1,
+            "object_version": 2,
             "stock_code": "600000",
             "trade_date": "2026-07-07",
             "cycle_state": "S2 Advancing",
             "state_stability_level": "stable",
+            "quality_status": "ok",
+            "quality_reasons": [],
             "evidence_bundle": {
                 "e1_price_structure": {
                     "status": "supported",

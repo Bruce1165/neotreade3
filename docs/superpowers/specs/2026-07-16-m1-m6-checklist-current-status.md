@@ -53,10 +53,11 @@ Last_reviewed: 2026-07-16
     - list_shadow_cycle_intelligence_bundle_ledgers：[shadow_bundle.py:L328-L357](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/shadow_bundle.py#L328-L357)
   - 证据：列表检索单测（排序 + limit）：
     - [test_m2_cycle_intelligence_list_ledgers.py:L67-L105](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L67-L105)
-- [ ] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
-  - 证据：SmallCycle 契约包含 state_stability_level / evidence_bundle / invalidation 作为“质量/可用性状态与原因”承载槽位：[contracts.py:L37-L68](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/contracts.py#L37-L68)
-  - 证据：build_small_cycle_from_m1(...) 对数据就绪与可交易性做门禁，并输出 blocked/not_ready 与 invalidation.reasons：[assembler.py:L159-L315](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L159-L315)
-  - 边界：尚未形成统一的 quality_status 顶层字段与“原因枚举冻结”；当前为自由字符串原因（如 pf1_window_not_ready/security_delisted），因此本条仍不勾选。
+- [x] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
+  - 证据：SmallCycle v2 冻结 quality_status/quality_reasons 枚举（allowlist + fail-closed 校验），并拒绝 v1 payload：[contracts.py:L9-L163](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/contracts.py#L9-L163)
+  - 证据：build_small_cycle / build_small_cycle_from_m1(...) 按 invalidation/state_stability_level 生成质量状态与原因（blocked/invalidated/insufficient_evidence/ok）：[assembler.py:L150-L380](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L150-L380)
+  - 证据：解析 fail-closed 单测（拒绝 v1、拒绝非法 quality_status、非 ok 必须有 reasons）：[test_m2_small_cycle_quality_enum.py:L8-L45](file:///Users/mac/NeoTrade3/tests/unit/test_m2_small_cycle_quality_enum.py#L8-L45)
+  - 边界：原因枚举仅覆盖当前已实现的门禁/失效原因集合；不包含“模型未收敛”等未来原因判定。
 - [x] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
   - 证据：M2 列表检索对坏 ledger 采用 fail-closed（读失败/JSON 非法/契约不满足即抛错）：
     - list_small_cycle_ledgers：[run_ledger.py:L148-L187](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L187)

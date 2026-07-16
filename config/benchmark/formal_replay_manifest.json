@@ -45,11 +45,13 @@
     },
     "m2_cycle": {
       "object_type": "small_cycle",
-      "object_version": 1,
+      "object_version": 2,
       "stock_code": "600000",
       "trade_date": "2026-07-07",
       "cycle_state": "S2 Advancing",
       "state_stability_level": "stable",
+      "quality_status": "ok",
+      "quality_reasons": [],
       "evidence_bundle": {
         "e1_price_structure": {
           "status": "supported"

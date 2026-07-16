@@ -31,6 +31,7 @@ from neotrade3.benchmark import (
 )
 from neotrade3.cycle_intelligence import (
     ShadowCycleIntelligenceBundle,
+    build_small_cycle,
     build_shadow_cycle_intelligence_bundle_record_id,
     build_shadow_cycle_intelligence_from_m1,
     SmallCycle,
@@ -174,7 +175,7 @@ def _build_m3_front_context_from_cycle(
 
 
 def _materialize_official_replay_refs_fixture(*, project_root: Path) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -351,7 +352,7 @@ def test_replay_refs_manifest_materializes_benchmark_artifact(tmp_path: Path) ->
 
 
 def test_replay_refs_materializes_with_real_m2_cycle_ref(tmp_path: Path) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -384,7 +385,7 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref(tmp_path: Path) -> None
                         "ref_kind": "artifact",
                         "ref_id": record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": "resolver_stub",
@@ -424,7 +425,7 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref(tmp_path: Path) -> None
 def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m2_shadow_bundle_ref_and_real_m1_context_ref_and_real_m3_context_ref(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -488,7 +489,7 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m2_shadow_bund
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
@@ -547,7 +548,7 @@ def test_replay_refs_contract_fails_closed_when_required_ref_missing() -> None:
                             "ref_kind": "artifact",
                             "ref_id": "m2-cycle",
                             "object_type": "small_cycle",
-                            "object_version": 1
+                            "object_version": 2
                         },
                         "m2_shadow_bundle_ref": {
                             "source_type": "resolver_stub",
@@ -641,7 +642,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_cycle_missing(tmp_path: P
                         "ref_kind": "artifact",
                         "ref_id": "missing-small-cycle-record",
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": 2
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": "resolver_stub",
@@ -682,7 +683,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_cycle_missing(tmp_path: P
 def test_replay_refs_runtime_fails_closed_when_real_m1_context_missing(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -713,7 +714,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_missing(
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": 2
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": "resolver_stub",
@@ -754,7 +755,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_missing(
 def test_replay_refs_runtime_fails_closed_when_real_m1_context_object_type_mismatches(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -785,7 +786,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_object_type_misma
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": "resolver_stub",
@@ -826,7 +827,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_object_type_misma
 def test_replay_refs_runtime_fails_closed_when_real_m1_context_version_mismatches(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -867,7 +868,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_version_mismatche
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": "resolver_stub",
@@ -908,7 +909,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m1_context_version_mismatche
 def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_missing(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -949,7 +950,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_missing(
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
@@ -990,7 +991,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_missing(
 def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_version_mismatches(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -1041,7 +1042,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_version_mis
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
@@ -1082,7 +1083,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m2_shadow_bundle_version_mis
 def test_replay_refs_runtime_fails_closed_when_real_m3_context_missing(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -1131,7 +1132,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_missing(
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
@@ -1172,7 +1173,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_missing(
 def test_replay_refs_runtime_fails_closed_when_real_m3_context_version_mismatches(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -1233,7 +1234,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_version_mismatche
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,
@@ -1274,7 +1275,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_version_mismatche
 def test_replay_refs_runtime_fails_closed_when_real_m3_context_object_type_mismatches(
     tmp_path: Path,
 ) -> None:
-    small_cycle = SmallCycle(
+    small_cycle = build_small_cycle(
         stock_code="600000",
         trade_date="2026-07-07",
         cycle_state="S2 Advancing",
@@ -1335,7 +1336,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_object_type_misma
                         "ref_kind": "artifact",
                         "ref_id": small_cycle_record_id,
                         "object_type": "small_cycle",
-                        "object_version": 1
+                        "object_version": small_cycle.object_version
                     },
                     "m2_shadow_bundle_ref": {
                         "source_type": M2_SHADOW_BUNDLE_SOURCE_TYPE,

@@ -18,7 +18,7 @@
         "ref_kind": "artifact",
         "ref_id": "600000-2026-07-07",
         "object_type": "small_cycle",
-        "object_version": 1
+        "object_version": 2
       },
       "m2_shadow_bundle_ref": {
         "source_type": "m2_shadow_bundle_persisted",
