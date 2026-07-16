@@ -61,3 +61,14 @@ def test_read_small_cycle_artifact_fails_closed_on_non_object_json(tmp_path: Pat
 
     with pytest.raises(TypeError, match="JSON object"):
         read_small_cycle_artifact(project_root=tmp_path, record_id="600000-2026-07-07")
+
+
+def test_read_small_cycle_propagates_artifact_parse_failure(tmp_path: Path) -> None:
+    artifact_file = (
+        tmp_path / "var/artifacts/m2_small_cycles/600000-2026-07-07/small_cycle.json"
+    )
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        read_small_cycle(project_root=tmp_path, record_id="600000-2026-07-07")
