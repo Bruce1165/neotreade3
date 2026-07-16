@@ -54,7 +54,9 @@ Last_reviewed: 2026-07-16
   - 证据：列表检索单测（排序 + limit）：
     - [test_m2_cycle_intelligence_list_ledgers.py:L67-L105](file:///Users/mac/NeoTrade3/tests/unit/test_m2_cycle_intelligence_list_ledgers.py#L67-L105)
 - [ ] 周期质量状态可输出（例如数据不足、模型未收敛、输入缺失等原因枚举）
-  - 证据：未在当前切片内定位到“质量状态枚举/输出契约”的统一证据。
+  - 证据：SmallCycle 契约包含 state_stability_level / evidence_bundle / invalidation 作为“质量/可用性状态与原因”承载槽位：[contracts.py:L37-L68](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/contracts.py#L37-L68)
+  - 证据：build_small_cycle_from_m1(...) 对数据就绪与可交易性做门禁，并输出 blocked/not_ready 与 invalidation.reasons：[assembler.py:L159-L315](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/assembler.py#L159-L315)
+  - 边界：尚未形成统一的 quality_status 顶层字段与“原因枚举冻结”；当前为自由字符串原因（如 pf1_window_not_ready/security_delisted），因此本条仍不勾选。
 - [x] 失败策略明确：关键契约/解析失败 fail-closed；展示可降级 degraded
   - 证据：M2 列表检索对坏 ledger 采用 fail-closed（读失败/JSON 非法/契约不满足即抛错）：
     - list_small_cycle_ledgers：[run_ledger.py:L148-L187](file:///Users/mac/NeoTrade3/neotrade3/cycle_intelligence/run_ledger.py#L148-L187)
