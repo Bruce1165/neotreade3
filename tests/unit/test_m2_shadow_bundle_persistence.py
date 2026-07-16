@@ -105,3 +105,17 @@ def test_read_shadow_bundle_artifact_fails_closed_on_non_object_json(tmp_path: P
             project_root=tmp_path,
             record_id="600000-2026-07-07",
         )
+
+
+def test_read_shadow_bundle_propagates_artifact_parse_failure(tmp_path: Path) -> None:
+    artifact_file = (
+        tmp_path / "var/artifacts/m2_shadow_bundles/600000-2026-07-07/shadow_bundle.json"
+    )
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        read_shadow_cycle_intelligence_bundle(
+            project_root=tmp_path,
+            record_id="600000-2026-07-07",
+        )
