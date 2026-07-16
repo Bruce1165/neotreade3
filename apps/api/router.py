@@ -17,6 +17,13 @@ from apps.api.shared import ApiBinaryResponse, ApiError
 class BootstrapApiRouter:
     """Pure router used by the HTTP handler and tests."""
 
+    _EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_BASE = (
+        "expected /api/governance/final-validations/<source_run_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_DOWNLOAD = (
+        "expected /api/governance/final-validations/<source_run_id>/(download|download-ledger)"
+    )
+
     def __init__(self, service: Any) -> None:
         self.service = service
 
@@ -1340,7 +1347,7 @@ class BootstrapApiRouter:
                 raise ApiError(
                     status_code=HTTPStatus.BAD_REQUEST,
                     code="invalid_path",
-                    message="expected /api/governance/final-validations/<source_run_id>[/download|/download-ledger]",
+                    message=self._EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_BASE,
                     details={"path": parsed.path},
                 )
             _, _, _, source_run_id, *rest = parts
@@ -1360,7 +1367,7 @@ class BootstrapApiRouter:
                     raise ApiError(
                         status_code=HTTPStatus.BAD_REQUEST,
                         code="invalid_path",
-                        message="expected /api/governance/final-validations/<source_run_id>/(download|download-ledger)",
+                        message=self._EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_DOWNLOAD,
                         details={"path": parsed.path},
                     )
                 return HTTPStatus.OK, self.service.governance_final_validation_download_view(
