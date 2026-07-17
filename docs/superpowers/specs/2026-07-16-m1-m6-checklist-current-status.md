@@ -125,7 +125,7 @@ Last_reviewed: 2026-07-16
   - 证据：cursor decode 契约 fail-closed 单测矩阵（400 invalid_cursor）：[test_m3_lifecycle_log_api_readback.py:L457-L517](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L457-L517)
   - 证据：cursor 翻页语义（不重放上一页最后一条；同 written_at tie-break）：[test_m3_lifecycle_log_api_readback.py:L166-L212](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L166-L212)
   - 证据：run_id 过滤 + cursor 翻页语义（不重放上一页最后一条；同 written_at tie-break）：[test_m3_lifecycle_log_api_readback.py:L350-L422](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L350-L422)
-  - 证据：run_id + cursor/offset 冲突（400 invalid_pagination）：[test_m3_lifecycle_log_api_readback.py:L520-L558](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L520-L558)
+  - 证据：run_id + cursor+offset 错误码优先级（invalid_cursor 优先于 invalid_pagination）：[test_m3_lifecycle_log_api_readback.py:L608-L654](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L608-L654)
   - 证据：run_id 过滤 + offset 分页（offset=1/越界；matched_count 与 offset 回显）：[test_m3_lifecycle_log_api_readback.py:L425-L496](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L425-L496)
   - 证据：run_id 过滤 + invalid_offset（400 invalid_offset）：[test_m3_lifecycle_log_api_readback.py:L515-L539](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L515-L539)
   - 证据：run_id 过滤 + invalid_cursor（400 invalid_cursor）：[test_m3_lifecycle_log_api_readback.py:L540-L607](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L540-L607)
