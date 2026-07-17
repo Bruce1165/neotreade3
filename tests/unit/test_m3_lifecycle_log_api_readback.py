@@ -560,8 +560,10 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
         assert exc.value.code == "invalid_cursor"
 
     _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=abc")
+    _assert_invalid_cursor("/api/m3/lifecycle-logs?run_id=run_a&cursor=abc")
     _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=%20")
     _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=a*b")
+    _assert_invalid_cursor("/api/m3/lifecycle-logs?run_id=run_a&cursor=a*b")
     _assert_invalid_cursor(
         f"/api/m3/lifecycle-logs?cursor={base64.urlsafe_b64encode(b'{').decode('ascii').rstrip('=')}"
     )
@@ -570,6 +572,9 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
     )
     _assert_invalid_cursor(
         f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 2, 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?run_id=run_a&cursor={_encode_cursor_payload({'v': 2, 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
     )
     _assert_invalid_cursor(
         f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': '1', 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
