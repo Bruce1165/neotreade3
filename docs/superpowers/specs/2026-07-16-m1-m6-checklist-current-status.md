@@ -34,8 +34,11 @@ Last_reviewed: 2026-07-16
   - 证据：M1 attention 输出契约 SSOT（结构 + API 输出 + 稳定落盘路径）：[2026-07-17-m1-attention-visibility-ssot.md:L1-L57](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m1-attention-visibility-ssot.md#L1-L57)
   - 证据：API 响应包含 attention_items（示例：D1 缺失生成 m1_d1_missing_for_target_date）：[main.py:L16360-L16401](file:///Users/mac/NeoTrade3/apps/api/main.py#L16360-L16401)
   - 证据：DataControl stage artifact/ledger 落盘路径计算（稳定落盘）：[pipeline.py:L910-L918](file:///Users/mac/NeoTrade3/neotrade3/data_control/pipeline.py#L910-L918)
-- [ ] 关键事实读取具备只读 API 或内部稳定访问入口（含错误语义）
-  - 证据：本切片仅定位到“事实写入/更新”接口与管线；未定位到“关键事实只读查询 API”的统一入口。
+- [x] 关键事实读取具备只读 API 或内部稳定访问入口（含错误语义）
+  - 证据：M1 关键事实只读读取入口 SSOT（对外端点 + 错误语义 + 内部 facade）：[2026-07-17-m1-facts-read-access-ssot.md:L1-L68](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m1-facts-read-access-ssot.md#L1-L68)
+  - 证据：对外路由分发（D1/D7/D8 正式端点）：[router.py:L1197-L1277](file:///Users/mac/NeoTrade3/apps/api/router.py#L1197-L1277)
+  - 证据：对外 handler 错误语义（503 not_ready）：[main.py:L16304-L16322](file:///Users/mac/NeoTrade3/apps/api/main.py#L16304-L16322)、[main.py:L16406-L16423](file:///Users/mac/NeoTrade3/apps/api/main.py#L16406-L16423)、[main.py:L16543-L16567](file:///Users/mac/NeoTrade3/apps/api/main.py#L16543-L16567)
+  - 证据：内部稳定访问入口（engine facade）：[formal_input_adapter.py:L235-L253](file:///Users/mac/NeoTrade3/neotrade3/data_control/formal_input_adapter.py#L235-L253)
 
 ## 3. M2 周期识别层（Cycle Layer）
 
