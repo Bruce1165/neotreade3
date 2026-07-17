@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from lowfreq_engine_v16_advanced import LowFreqTradingEngineV16, TradeRecord
+from pathlib import Path
+
+from lowfreq_engine_v16_advanced import (
+    LowFreqTradingEngineV16,
+    TradeRecord,
+    materialize_sell_signal_audit_as_m3_lifecycle_logs,
+)
 from neotrade3.decision_engine import (
     DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
     build_decision_lifecycle_logs,
+    build_decision_m3_lifecycle_log_record_id,
+    read_decision_m3_lifecycle_log,
+    read_decision_m3_lifecycle_log_ledger,
 )
 
 
@@ -735,3 +744,46 @@ def test_sell_signal_audit_rows_formalize_into_decision_lifecycle_logs() -> None
         log["events"][-1]["position_contract_snapshot"]["local_exit_semantics"]
         == "local_end_only"
     )
+
+
+def test_sell_signal_audit_rows_materialize_into_m3_lifecycle_logs(tmp_path: Path) -> None:
+    engine = _make_engine(price=100.0, market_exit_snapshot=_market_exit_hit_snapshot(), sector_exit_snapshot=None)
+    trade = _make_trade()
+
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 18)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 19)) is None
+    assert engine.check_sell_signal_v2(trade, date(2026, 6, 20)) is not None
+
+    records = materialize_sell_signal_audit_as_m3_lifecycle_logs(
+        project_root=tmp_path,
+        sell_signal_audit=engine._sell_signal_audit_current_run,
+        run_id="2026-06-20",
+        source_run_id="2026-06-20",
+    )
+
+    assert len(records) == 1
+    record_id = build_decision_m3_lifecycle_log_record_id(
+        stock_code=trade.code,
+        run_id="2026-06-20",
+    )
+    assert records[0].record_id == record_id
+    assert (
+        tmp_path
+        / "var/artifacts/m3_lifecycle_logs"
+        / record_id
+        / "lifecycle_log.json"
+    ).exists()
+    assert (
+        tmp_path
+        / "var/ledgers/m3_lifecycle_logs"
+        / record_id
+        / "lifecycle_log.json"
+    ).exists()
+
+    ledger = read_decision_m3_lifecycle_log_ledger(project_root=tmp_path, record_id=record_id)
+    assert ledger is not None
+    assert ledger.stock_code == trade.code
+    assert ledger.run_id == "2026-06-20"
+    lifecycle_log = read_decision_m3_lifecycle_log(project_root=tmp_path, record_id=record_id)
+    assert lifecycle_log is not None
+    assert lifecycle_log.stock_code == trade.code

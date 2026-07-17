@@ -19,7 +19,7 @@ import numpy as np
 from pathlib import Path
 from datetime import date, timedelta
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional, Any, Union
 from enum import Enum
 
 from neotrade3.decision_engine.formal_front import (
@@ -90,6 +90,13 @@ from neotrade3.decision_engine.buy_signal_audit_contract import (
     resolve_buy_signal_audit_funnel_stage,
     resolve_execution_action_fields,
 )
+from neotrade3.decision_engine import (
+    DecisionLifecycleLog,
+    DecisionM3LifecycleLogLedgerRecord,
+    build_decision_lifecycle_logs,
+    build_decision_m3_lifecycle_log_record_id,
+    materialize_decision_m3_lifecycle_log,
+)
 from neotrade3.cycle_intelligence.legacy_recognition import (
     apply_strong_leader_soft_release,
     detect_wave_phase_from_series,
@@ -122,6 +129,59 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path("var/db/stock_data.db")
+
+
+def materialize_sell_signal_audit_as_m3_lifecycle_logs(
+    *,
+    project_root: Union[str, Path],
+    sell_signal_audit: Optional[list[dict[str, Any]]],
+    run_id: str,
+    source_run_id: str,
+    dry_run: bool = False,
+) -> list[DecisionM3LifecycleLogLedgerRecord]:
+    normalized_run_id = str(run_id or "").strip()
+    normalized_source_run_id = str(source_run_id or "").strip()
+    if not normalized_run_id:
+        raise ValueError("run_id must be non-empty")
+    if not normalized_source_run_id:
+        raise ValueError("source_run_id must be non-empty")
+
+    audit_rows = sell_signal_audit or []
+    if not isinstance(audit_rows, list):
+        raise TypeError("sell_signal_audit must be a list of JSON objects")
+    for row in audit_rows:
+        if not isinstance(row, dict):
+            raise TypeError("sell_signal_audit must be a list of JSON objects")
+        stock_code = str(row.get("code") or "").strip()
+        trade_date = str(row.get("date") or "").strip()
+        event = str(row.get("event") or "").strip()
+        if not stock_code or not trade_date or not event:
+            raise ValueError("sell_signal_audit rows must contain code/date/event")
+
+    payloads = build_decision_lifecycle_logs(
+        audit_rows,
+        run_id=normalized_run_id,
+        source_run_id=normalized_source_run_id,
+    )
+    lifecycle_logs: list[DecisionLifecycleLog] = []
+    for payload in payloads:
+        lifecycle_logs.append(DecisionLifecycleLog.from_dict(payload))
+
+    records: list[DecisionM3LifecycleLogLedgerRecord] = []
+    for lifecycle_log in lifecycle_logs:
+        record_id = build_decision_m3_lifecycle_log_record_id(
+            stock_code=lifecycle_log.stock_code,
+            run_id=normalized_run_id,
+        )
+        records.append(
+            materialize_decision_m3_lifecycle_log(
+                project_root=project_root,
+                record_id=record_id,
+                lifecycle_log=lifecycle_log,
+                dry_run=bool(dry_run),
+            )
+        )
+    return records
 
 
 class SignalType(Enum):
@@ -3252,6 +3312,9 @@ class LowFreqTradingEngineV16:
         *,
         include_daily_values: bool = False,
         include_trades: bool = False,
+        project_root: Optional[Union[str, Path]] = None,
+        run_id: Optional[str] = None,
+        source_run_id: Optional[str] = None,
     ) -> dict:
         logger.info(f"低频交易回测 v16: {start_date} ~ {end_date}")
 
@@ -3966,6 +4029,15 @@ class LowFreqTradingEngineV16:
         }
         gross_metrics["sell_signal_audit"] = sell_signal_audit
         gross_metrics["buy_signal_audit"] = buy_signal_audit
+        normalized_run_id = str(run_id or "").strip()
+        normalized_source_run_id = str(source_run_id or "").strip()
+        if project_root is not None and normalized_run_id and normalized_source_run_id:
+            materialize_sell_signal_audit_as_m3_lifecycle_logs(
+                project_root=project_root,
+                sell_signal_audit=sell_signal_audit,
+                run_id=normalized_run_id,
+                source_run_id=normalized_source_run_id,
+            )
         if bool(include_daily_values):
             gross_metrics["daily_values_gross"] = daily_values_gross
             gross_metrics["daily_values_net"] = daily_values_net
