@@ -135,11 +135,15 @@ def test_lowfreq_backtest_run_view_projects_formal_front_into_next_candidates(tm
     payload = service.lowfreq_backtest_run_view(
         start_date="2026-06-10",
         end_date="2026-06-10",
+        async_run=False,
         requested_by="pytest",
     )
 
-    assert payload["meta"]["next_trading_day"] == "2026-06-11"
-    assert payload["next_candidates"][0]["code"] == "600001"
-    assert payload["next_candidates"][0]["formal_front"]["status"] == "ok"
-    assert payload["next_candidates"][0]["formal_front"]["entry_state"]["actionable"] is True
-    assert payload["signal_summary"]["candidate_count"] == 1
+    assert payload["next_session"]["next_trading_day"] == "2026-06-11"
+    assert payload["next_session"]["candidates"][0]["code"] == "600001"
+    assert payload["next_session"]["candidates"][0]["formal_front"]["status"] == "ok"
+    assert (
+        payload["next_session"]["candidates"][0]["formal_front"]["entry_state"]["actionable"]
+        is True
+    )
+    assert payload["next_session"]["signal_summary"]["candidate_count"] == 1

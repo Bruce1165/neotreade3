@@ -18597,6 +18597,15 @@ class BootstrapApiService:
     def _lowfreq_trade_date_range(self) -> tuple[str, str]:
         conn = sqlite3.connect(str(self._stock_db_default_path))
         try:
+            try:
+                row = conn.execute(
+                    "SELECT MIN(trade_date), MAX(trade_date) FROM trading_calendar_cache"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            if row and row[0] and row[1]:
+                return str(row[0]), str(row[1])
+
             row = conn.execute(
                 "SELECT MIN(trade_date), MAX(trade_date) FROM daily_prices"
             ).fetchone()
@@ -24968,10 +24977,17 @@ class BootstrapApiService:
         trade_payloads = metrics.get("trades")
         trades: list[Any] = []
         if isinstance(trade_payloads, list):
+            normalized_trade_payloads: list[dict[str, Any]] = []
             for payload in trade_payloads:
-                if not isinstance(payload, dict):
+                if isinstance(payload, dict):
+                    normalized = payload
+                elif isinstance(getattr(payload, "__dict__", None), dict):
+                    normalized = dict(getattr(payload, "__dict__", {}))
+                else:
                     continue
-                trades.append(self._lowfreq_trade_from_payload(payload))
+                normalized_trade_payloads.append(normalized)
+                trades.append(self._lowfreq_trade_from_payload(normalized))
+            metrics["trades"] = normalized_trade_payloads
         return metrics, trades
 
     def lowfreq_backtest_run_view(
