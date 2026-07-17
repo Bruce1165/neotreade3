@@ -30,8 +30,10 @@ Last_reviewed: 2026-07-16
 - [x] 数据质量证明可输出（完整性、新鲜度、时点一致性、口径稳定性）
   - 证据：权威行情更新结果包含质量门禁与格式门禁状态（quality_gate/format_gate）：[main.py:L11345-L11433](file:///Users/mac/NeoTrade3/apps/api/main.py#L11345-L11433)
   - 证据：DataControl 汇总包含 freshness/attention 槽位（freshness_proof/attention_items）：[pipeline.py:L97-L118](file:///Users/mac/NeoTrade3/neotrade3/data_control/pipeline.py#L97-L118)
-- [ ] 缺失与异常可见（Attention 或等价机制，能指向缺口原因与定位线索）
-  - 证据：存在 attention_items 槽位但未在当前切片内定位到“对外输出/端点/稳定落盘形态”的统一证据：[pipeline.py:L97-L118](file:///Users/mac/NeoTrade3/neotrade3/data_control/pipeline.py#L97-L118)
+- [x] 缺失与异常可见（Attention 或等价机制，能指向缺口原因与定位线索）
+  - 证据：M1 attention 输出契约 SSOT（结构 + API 输出 + 稳定落盘路径）：[2026-07-17-m1-attention-visibility-ssot.md:L1-L57](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m1-attention-visibility-ssot.md#L1-L57)
+  - 证据：API 响应包含 attention_items（示例：D1 缺失生成 m1_d1_missing_for_target_date）：[main.py:L16360-L16401](file:///Users/mac/NeoTrade3/apps/api/main.py#L16360-L16401)
+  - 证据：DataControl stage artifact/ledger 落盘路径计算（稳定落盘）：[pipeline.py:L910-L918](file:///Users/mac/NeoTrade3/neotrade3/data_control/pipeline.py#L910-L918)
 - [ ] 关键事实读取具备只读 API 或内部稳定访问入口（含错误语义）
   - 证据：本切片仅定位到“事实写入/更新”接口与管线；未定位到“关键事实只读查询 API”的统一入口。
 
