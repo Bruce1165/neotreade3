@@ -121,6 +121,7 @@ Last_reviewed: 2026-07-16
   - 证据：单测覆盖（sell audit → lifecycle log → 落盘 → 读回）：[test_lowfreq_engine_v16_sell_logic.py:L749-L789](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_engine_v16_sell_logic.py#L749-L789)
   - 证据：report runner backtest 路径生成 report_id，传入 project_root/run_id/source_run_id 并回写到返回 _meta.report_id：[report_runner_backtest_source.py:L17-L62](file:///Users/mac/NeoTrade3/neotrade3/orchestration/report_runner_backtest_source.py#L17-L62)
   - 证据：单测覆盖（_meta.report_id == run_id，report_id 前缀稳定 + project_root 透传）：[test_lowfreq_report_runner_backtest_source.py:L76-L145](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_report_runner_backtest_source.py#L76-L145)
+  - 证据：串联证据（从 report payload 取 report_id → 生成 record_id → lifecycle log API 读回并断言 run_id 一致）：[test_m3_report_id_lifecycle_log_readback_chain.py:L1-L104](file:///Users/mac/NeoTrade3/tests/unit/test_m3_report_id_lifecycle_log_readback_chain.py#L1-L104)
 
 ## 5. M4 基准评估层（Benchmark Layer）
 
