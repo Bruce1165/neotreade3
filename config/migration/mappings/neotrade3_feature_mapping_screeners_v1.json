@@ -1,0 +1,366 @@
+{
+  "version": 1,
+  "inventory_source": "docs/migration/neotrade2_feature_inventory.v3.json",
+  "scope": {
+    "domain": "screeners"
+  },
+  "description": "Migration mapping for NeoTrade2 screener run and management features into NeoTrade3 domains. This file captures intended landing modules and current migration status for each screener-related feature.",
+  "mappings": [
+    {
+      "feature_id": "nt2.screener.algorithms",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "learning",
+          "issue_center",
+          "orchestration",
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/learning",
+          "neotrade3/issue_center",
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "decision_evidence": [
+        "2026-05-19: 筛选器按需成为因子矩阵的一部分，但需要保留用户能够独立运行它们的入口。",
+        "2026-05-20: 3.0 v1 只上线内部公式的 7 个筛选器，其它筛选器放弃。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.base-filter-contract",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "learning"
+        ],
+        "modules": [
+          "neotrade3/data_control",
+          "neotrade3/learning"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.registry-and-config",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard",
+          "config"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added screener registry config + loader"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.catalog-listing",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added GET /api/screeners to expose screener catalog"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.config-read-write",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard",
+          "config"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added GET/POST /api/screeners/config/<screener_id> and config/screeners/<screener_id>.json"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.run-results-export",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "learning",
+          "issue_center",
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "neotrade3/learning",
+          "neotrade3/issue_center",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "decision_evidence": [
+        "2026-05-19: 需要保留用户可独立触发筛选器运行的入口，同时系统侧应支持自动化日跑与可追溯台账。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.single-run",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "decision_evidence": [
+        "2026-05-19: 保留用户独立运行入口，但应纳入统一编排与审计台账。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added CLI entrypoint + POST /api/screeners/run and var/ run ledger + artifact placeholders"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.bulk-run",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "issue_center",
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "decision_evidence": [
+        "2026-05-19: 日学习/筛选/进化/处理反馈等行为应自动化运行；UI 只呈现结果与运行维护指标。"
+      ],
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added POST /api/screeners/bulk-run to run registered screeners in batch and write ledgers/artifacts"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.results-query-export",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added GET /api/screeners/runs (list) and GET /api/screeners/runs/<date>/<screener_id> (detail) to read run ledgers + artifacts"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.monitor-summary",
+      "migration_strategy": "merge",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "issue_center",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/issue_center",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.stock.check-and-chart",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.single-stock-check",
+      "migration_strategy": "replace",
+      "migration_status": "scaffolded",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        },
+        {
+          "at": "2026-05-20",
+          "status": "scaffolded",
+          "note": "added GET /api/check-stock to provide per-screener pass/fail/unknown with evidence; tracking list check returns pending_development"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.screeners.stock-chart-inspection",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "api",
+          "dashboard"
+        ],
+        "modules": [
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    }
+  ]
+}

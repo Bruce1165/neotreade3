@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "created_at": "2026-05-19",
+  "description": "NeoTrade3 migration mapping for NeoTrade2 'operations' domain. This file records NeoTrade3 landing targets and migration status, while keeping NeoTrade2 inventory facts in neotrade2_feature_inventory.v3.json.",
+  "scope": {
+    "domain": "operations"
+  },
+  "inventory_source": "docs/migration/neotrade2_feature_inventory.v3.json",
+  "mappings": [
+    {
+      "feature_id": "nt2.data-health.monitor-and-upload",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "orchestration",
+          "issue_center",
+          "dashboard",
+          "api"
+        ],
+        "modules": [
+          "neotrade3/data_control",
+          "neotrade3/orchestration",
+          "neotrade3/issue_center",
+          "apps/api",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "2.0 的 data health 总览应在 3.0 中与 data_control 的台账、orchestration 的运行批次、issue_center 的失败聚合统一呈现。上传入口若保留，应以受控的 artifact 导入/校验流程表达。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.operations.data-health-summary",
+      "migration_strategy": "merge",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "orchestration",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/data_control",
+          "neotrade3/orchestration",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "建议与 3.0 的 data_control 视图合并为单一数据生命周期面板，不单独保留 2.0 风格页面。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.operations.data-health-upload",
+      "migration_strategy": "migrate",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "data_control",
+          "issue_center"
+        ],
+        "modules": [
+          "neotrade3/data_control",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "上传属于排障辅助入口；3.0 应把上传数据作为可追溯 artifact，并把校验结果写入 issue_center 作为证据。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.system.tasks-and-jobs",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "dashboard",
+          "api",
+          "issue_center"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "apps/dashboard",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "2.0 的 cron/launchd 任务注册与手动触发，在 3.0 中应被 Daily Master Orchestrator 的单一入口替代；可保留“观察与诊断”视图作为 orchestrator ledger 的读取层。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.operations.system-task-readiness-board",
+      "migration_strategy": "merge",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "dashboard"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/dashboard"
+        ]
+      },
+      "notes": "ready 条件与任务状态应由 preflight 与 run ledger 统一表达；在 dashboard 中作为 orchestrator 的一部分呈现。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.operations.system-task-trigger",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api"
+        ]
+      },
+      "notes": "手动触发语义在 3.0 中等价为 orchestrator 的受控入口（例如按日期/phase 触发），不再直接执行 2.0 脚本或依赖 launchd。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    },
+    {
+      "feature_id": "nt2.operations.system-job-polling",
+      "migration_strategy": "replace",
+      "migration_status": "planned",
+      "target": {
+        "neotrade3_domains": [
+          "orchestration",
+          "api",
+          "issue_center"
+        ],
+        "modules": [
+          "neotrade3/orchestration",
+          "apps/api",
+          "neotrade3/issue_center"
+        ]
+      },
+      "notes": "job polling 在 3.0 中应由 run/task ledger 与统一日志尾部读取替代，并可关联到 issue_center 的 case。",
+      "status_history": [
+        {
+          "at": "2026-05-19",
+          "status": "planned",
+          "note": "initial mapping record"
+        }
+      ]
+    }
+  ]
+}
