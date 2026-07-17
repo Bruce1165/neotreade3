@@ -21,8 +21,9 @@ Last_reviewed: 2026-07-16
 
 ### 2.1 Checklist
 
-- [ ] 事实对象清单已冻结（至少包含核心事实表/派生事实表的范围与命名）
-  - 证据：未在当前切片内定位到“事实对象清单冻结”的单一真相源文档/清单文件（仅定位到设计文档与若干事实写入/管线代码）。
+- [x] 事实对象清单已冻结（至少包含核心事实表/派生事实表的范围与命名）
+  - 证据：M1 事实对象清单单一真相源（含 F*/PF* 抽象命名 + Phase 1 实现态对象族冻结清单）：[2026-07-17-m1-fact-objects-ssot.md:L1-L110](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m1-fact-objects-ssot.md#L1-L110)
+  - 证据：实现态正式入口清单锚点（_m1_formal_contract_catalog）：[main.py:L16273-L16299](file:///Users/mac/NeoTrade3/apps/api/main.py#L16273-L16299)
 - [x] 主事实链路的刷新契约已定义（输入/输出/依赖/频率/完成条件）
   - 证据：DataControl capture/compose/publish 步骤定义：[pipeline.py:L27-L63](file:///Users/mac/NeoTrade3/neotrade3/data_control/pipeline.py#L27-L63)
   - 证据：Worker 将 DataControl 纳入 daily 运行计划并执行：[main.py:L737-L781](file:///Users/mac/NeoTrade3/apps/worker/main.py#L737-L781)
