@@ -8812,6 +8812,25 @@ class BootstrapApiService:
                     for index in range(0, len(values), chunk_size)
                 ]
 
+            asof_date: Optional[str] = None
+            if table_exists("daily_prices"):
+                for chunk in iter_chunks(valid_codes):
+                    placeholders = ",".join(["?"] * len(chunk))
+                    row = cur.execute(
+                        f"SELECT MAX(trade_date) AS max_trade_date FROM daily_prices WHERE code IN ({placeholders})",
+                        tuple(chunk),
+                    ).fetchone()
+                    candidate = (
+                        str(row["max_trade_date"])
+                        if row and row["max_trade_date"] is not None
+                        else None
+                    )
+                    if candidate and (asof_date is None or candidate > asof_date):
+                        asof_date = candidate
+            if asof_date is None:
+                row = cur.execute("SELECT DATE('now') AS today").fetchone()
+                asof_date = str(row["today"]) if row and row["today"] is not None else "1970-01-01"
+
             concept_name_by_code, concept_members = self._load_ths_concept_caches()
             stock_code_set = set(valid_codes)
             stock_concepts_by_code: dict[str, list[dict[str, str]]] = {
@@ -8891,10 +8910,10 @@ class BootstrapApiService:
                         SELECT code, COUNT(1) AS cnt
                         FROM announcements
                         WHERE code IN ({placeholders})
-                          AND DATE(publish_date) >= DATE('now', '-30 day')
+                          AND DATE(publish_date) >= DATE(?, '-30 day')
                         GROUP BY code
                         """,
-                        tuple(chunk),
+                        tuple(chunk) + (asof_date,),
                     ).fetchall():
                         code = self._normalize_stock_code(row["code"])
                         if code:
@@ -8946,10 +8965,10 @@ class BootstrapApiService:
                             COUNT(DISTINCT inst_csname) AS distinct_institutions
                         FROM research_reports
                         WHERE ts_code IN ({placeholders})
-                          AND DATE(trade_date) >= DATE('now', '-90 day')
+                          AND DATE(trade_date) >= DATE(?, '-90 day')
                         GROUP BY ts_code
                         """,
-                        tuple(chunk),
+                        tuple(chunk) + (asof_date,),
                     ).fetchall():
                         ts_code = str(row["ts_code"] or "").strip()
                         if ts_code:
@@ -9076,10 +9095,10 @@ class BootstrapApiService:
                             MAX(surv_date) AS latest_survey_date
                         FROM institutional_surveys
                         WHERE ts_code IN ({placeholders})
-                          AND DATE(surv_date) >= DATE('now', '-180 day')
+                          AND DATE(surv_date) >= DATE(?, '-180 day')
                         GROUP BY ts_code
                         """,
-                        tuple(chunk),
+                        tuple(chunk) + (asof_date,),
                     ).fetchall():
                         ts_code = str(row["ts_code"] or "").strip()
                         if ts_code:
