@@ -42,6 +42,11 @@ cursor 为 URL-safe base64 的 JSON（无 padding），包含：
 - `written_at`: string（来自 ledger）
 - `record_id`: string（来自 ledger）
 
+#### 3.2.1 版本策略（Reject v!=1）
+
+- 当前实现仅接受 `v=1`
+- 任意 `v!=1`（包括未来版本）一律 fail-closed，返回 400 `invalid_cursor`
+
 示例结构（未编码）：
 
 ```json

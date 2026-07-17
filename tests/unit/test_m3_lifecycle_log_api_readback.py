@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from http import HTTPStatus
@@ -337,6 +338,20 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
 
     with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m3/lifecycle-logs?cursor=abc")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_cursor"
+
+    raw = json.dumps(
+        {"v": 2, "written_at": "2026-06-20T00:00:00Z", "record_id": "300001-2026-06-20"},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    cursor_v2 = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch(f"/api/m3/lifecycle-logs?cursor={cursor_v2}")
 
     assert exc.value.status_code == HTTPStatus.BAD_REQUEST
     assert exc.value.code == "invalid_cursor"
