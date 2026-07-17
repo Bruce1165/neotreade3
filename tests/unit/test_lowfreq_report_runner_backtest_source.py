@@ -112,6 +112,7 @@ def test_load_lowfreq_report_backtest_payload_applies_engine_overrides_and_wraps
         "requested_by": "script",
         "model": "lowfreq_engine_v16_advanced",
         "generated_at": "2026-07-12T11:00:00Z",
+        "report_id": call["run_id"],
     }
     assert out["summary"] == {
         "total_return_pct": 11.1,
@@ -122,7 +123,8 @@ def test_load_lowfreq_report_backtest_payload_applies_engine_overrides_and_wraps
 
 
 def test_load_lowfreq_report_backtest_payload_normalizes_non_dict_metrics(tmp_path: Path) -> None:
-    service = FakeService(FakeEngine(metrics=None), project_root=tmp_path)
+    engine = FakeEngine(metrics=None)
+    service = FakeService(engine, project_root=tmp_path)
 
     out = load_lowfreq_report_backtest_payload(
         service=service,
@@ -135,6 +137,9 @@ def test_load_lowfreq_report_backtest_payload_normalizes_non_dict_metrics(tmp_pa
         generated_at="2026-07-12T12:00:00Z",
     )
 
+    assert len(engine.calls) == 1
     assert out["_meta"]["generated_at"] == "2026-07-12T12:00:00Z"
+    assert out["_meta"]["report_id"] == engine.calls[0]["run_id"]
+    assert out["_meta"]["report_id"].startswith("lowfreq_v16_2024-01-01_2024-01-31__")
     assert out["summary"] == {}
     assert out["trades"] == []

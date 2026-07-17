@@ -49,9 +49,14 @@ def load_lowfreq_report_backtest_payload(
     trades = metrics.get("trades", []) if isinstance(metrics, dict) else []
     summary = dict(metrics) if isinstance(metrics, dict) else {}
     summary.pop("trades", None)
-    return build_attribution_backtest_payload(
+    payload = build_attribution_backtest_payload(
         requested_by="script",
         generated_at=str(generated_at or ""),
         summary=summary,
         trades=trades,
     )
+    meta = payload.get("_meta")
+    if not isinstance(meta, dict):
+        raise RuntimeError("build_attribution_backtest_payload returned invalid _meta")
+    meta["report_id"] = report_id
+    return payload

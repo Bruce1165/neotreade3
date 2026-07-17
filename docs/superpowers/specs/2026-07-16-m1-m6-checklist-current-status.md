@@ -119,8 +119,8 @@ Last_reviewed: 2026-07-16
   - 证据：lifecycle log API（list/read/download/download-ledger）与 fail-closed 单测：[test_m3_lifecycle_log_api_readback.py:L1-L213](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L1-L213)
   - 证据：engine sell_signal_audit 自动物化为 m3_lifecycle_log 的 helper（显式 run_id/source_run_id/project_root 启用）：[lowfreq_engine_v16_advanced.py:L134-L184](file:///Users/mac/NeoTrade3/lowfreq_engine_v16_advanced.py#L134-L184)
   - 证据：单测覆盖（sell audit → lifecycle log → 落盘 → 读回）：[test_lowfreq_engine_v16_sell_logic.py:L749-L789](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_engine_v16_sell_logic.py#L749-L789)
-  - 证据：report runner backtest 路径传入 project_root/run_id/source_run_id 以启用真实 backtest 落盘：[report_runner_backtest_source.py:L16-L50](file:///Users/mac/NeoTrade3/neotrade3/orchestration/report_runner_backtest_source.py#L16-L50)
-  - 证据：单测覆盖（run_id/source_run_id 前缀与一致性 + project_root 透传）：[test_lowfreq_report_runner_backtest_source.py:L69-L118](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_report_runner_backtest_source.py#L69-L118)
+  - 证据：report runner backtest 路径生成 report_id，传入 project_root/run_id/source_run_id 并回写到返回 _meta.report_id：[report_runner_backtest_source.py:L17-L62](file:///Users/mac/NeoTrade3/neotrade3/orchestration/report_runner_backtest_source.py#L17-L62)
+  - 证据：单测覆盖（_meta.report_id == run_id，report_id 前缀稳定 + project_root 透传）：[test_lowfreq_report_runner_backtest_source.py:L76-L145](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_report_runner_backtest_source.py#L76-L145)
 
 ## 5. M4 基准评估层（Benchmark Layer）
 
