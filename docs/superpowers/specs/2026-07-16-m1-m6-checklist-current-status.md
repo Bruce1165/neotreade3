@@ -166,9 +166,11 @@ Last_reviewed: 2026-07-16
 - [x] 解释与证据引用可追溯（能定位到 M3/M1 输入或运行产物）
   - 证据：设计（M4 benchmark evidence bundle + fail-closed 错误码）：[2026-07-17-m4-benchmark-evidence-traceability-design.md:L1-L140](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m4-benchmark-evidence-traceability-design.md#L1-L140)
   - 证据：对外 view 组装 evidence（seed registry + m1/m3 projection refs + path_escape 防护）：[main.py:L1745-L2016](file:///Users/mac/NeoTrade3/apps/api/main.py#L1745-L2016)
-  - 证据：端到端单测覆盖（happy-path + registry 缺失/样本缺失/path_escape → 500）：[test_m4_benchmark_api_readback.py:L149-L293](file:///Users/mac/NeoTrade3/tests/unit/test_m4_benchmark_api_readback.py#L149-L293)
-- [ ] 失败策略明确：契约与解析 fail-closed；展示可降级 degraded
-  - 证据：未在当前切片内定位到“对外错误语义/门禁策略”的统一证据。
+  - 证据：端到端单测覆盖（happy-path 回传 sample evidence_refs + m1/m3 projection refs）：[test_m4_benchmark_api_readback.py:L149-L186](file:///Users/mac/NeoTrade3/tests/unit/test_m4_benchmark_api_readback.py#L149-L186)
+- [x] 失败策略明确：契约与解析 fail-closed；展示可降级 degraded
+  - 证据：设计（仅 evidence 降级，主体仍 fail-closed）：[2026-07-17-m4-benchmark-degraded-failure-policy-design.md:L1-L217](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m4-benchmark-degraded-failure-policy-design.md#L1-L217)
+  - 证据：实现（run view evidence 降级返回 `_meta.status=degraded` + `degraded_reasons`，evidence 置空）：[main.py:L1850-L2033](file:///Users/mac/NeoTrade3/apps/api/main.py#L1850-L2033)
+  - 证据：端到端单测（degraded: registry missing/invalid/sample missing/path escape；fail-closed: artifact invalid）：[test_m4_benchmark_api_readback.py:L235-L370](file:///Users/mac/NeoTrade3/tests/unit/test_m4_benchmark_api_readback.py#L235-L370)
 
 ## 6. M5 治理层（Evolution Controller / Governance Layer）
 

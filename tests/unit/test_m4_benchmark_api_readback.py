@@ -116,6 +116,16 @@ def _write_benchmark_projection_fixtures(
         path.write_text("{}", encoding="utf-8")
 
 
+def _write_invalid_seed_registry_fixture(
+    *,
+    project_root: Path,
+    registry_path: str = "config/benchmark/validation_seed_samples.json",
+) -> None:
+    path = project_root / registry_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{", encoding="utf-8")
+
+
 def test_m4_benchmark_runs_list_endpoint_returns_records_sorted_and_limited(
     tmp_path: Path,
 ) -> None:
@@ -232,7 +242,7 @@ def test_m4_benchmark_run_view_rejects_invalid_run_id(tmp_path: Path) -> None:
     assert exc.value.code == "invalid_run_id"
 
 
-def test_m4_benchmark_run_view_returns_500_when_seed_registry_missing(tmp_path: Path) -> None:
+def test_m4_benchmark_run_view_returns_degraded_when_seed_registry_missing(tmp_path: Path) -> None:
     _write_benchmark_run_fixtures(
         project_root=tmp_path,
         run_id="run-a",
@@ -241,13 +251,35 @@ def test_m4_benchmark_run_view_returns_500_when_seed_registry_missing(tmp_path: 
     service = BootstrapApiService(project_root=tmp_path)
     router = BootstrapApiRouter(service)
 
-    with pytest.raises(ApiError) as exc:
-        router.dispatch("/api/m4/benchmark-runs/run-a")
-    assert exc.value.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    assert exc.value.code == "benchmark_seed_registry_not_found"
+    status, payload = router.dispatch("/api/m4/benchmark-runs/run-a")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["status"] == "degraded"
+    assert payload["_meta"]["degraded_reasons"][0]["code"] == "benchmark_seed_registry_not_found"
+    assert payload["benchmark_run"]["run_id"] == "run-a"
+    assert payload["benchmark_run_artifact"]["run_id"] == "run-a"
+    assert payload["evidence"] is None
 
 
-def test_m4_benchmark_run_view_returns_500_when_seed_sample_missing(tmp_path: Path) -> None:
+def test_m4_benchmark_run_view_returns_degraded_when_seed_registry_invalid(
+    tmp_path: Path,
+) -> None:
+    _write_benchmark_run_fixtures(
+        project_root=tmp_path,
+        run_id="run-a",
+        written_at="2026-07-11T00:00:00Z",
+    )
+    _write_invalid_seed_registry_fixture(project_root=tmp_path)
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m4/benchmark-runs/run-a")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["status"] == "degraded"
+    assert payload["_meta"]["degraded_reasons"][0]["code"] == "benchmark_seed_registry_invalid"
+    assert payload["evidence"] is None
+
+
+def test_m4_benchmark_run_view_returns_degraded_when_seed_sample_missing(tmp_path: Path) -> None:
     _write_benchmark_run_fixtures(
         project_root=tmp_path,
         run_id="run-a",
@@ -269,13 +301,14 @@ def test_m4_benchmark_run_view_returns_500_when_seed_sample_missing(tmp_path: Pa
     service = BootstrapApiService(project_root=tmp_path)
     router = BootstrapApiRouter(service)
 
-    with pytest.raises(ApiError) as exc:
-        router.dispatch("/api/m4/benchmark-runs/run-a")
-    assert exc.value.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    assert exc.value.code == "benchmark_seed_sample_not_found"
+    status, payload = router.dispatch("/api/m4/benchmark-runs/run-a")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["status"] == "degraded"
+    assert payload["_meta"]["degraded_reasons"][0]["code"] == "benchmark_seed_sample_not_found"
+    assert payload["evidence"] is None
 
 
-def test_m4_benchmark_run_view_returns_500_when_seed_registry_path_escapes(
+def test_m4_benchmark_run_view_returns_degraded_when_seed_registry_path_escapes(
     tmp_path: Path,
 ) -> None:
     _write_benchmark_run_fixtures(
@@ -287,7 +320,29 @@ def test_m4_benchmark_run_view_returns_500_when_seed_registry_path_escapes(
     service = BootstrapApiService(project_root=tmp_path)
     router = BootstrapApiRouter(service)
 
+    status, payload = router.dispatch("/api/m4/benchmark-runs/run-a")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["status"] == "degraded"
+    assert payload["_meta"]["degraded_reasons"][0]["code"] == "benchmark_seed_registry_path_escape"
+    assert payload["evidence"] is None
+
+
+def test_m4_benchmark_run_view_keeps_fail_closed_when_artifact_invalid(
+    tmp_path: Path,
+) -> None:
+    _write_benchmark_run_fixtures(
+        project_root=tmp_path,
+        run_id="run-a",
+        written_at="2026-07-11T00:00:00Z",
+    )
+    artifact_path = (
+        tmp_path / "var/artifacts/benchmark_runs/run-a/benchmark_batch_result.json"
+    )
+    artifact_path.write_text("{", encoding="utf-8")
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
     with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m4/benchmark-runs/run-a")
     assert exc.value.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    assert exc.value.code == "benchmark_seed_registry_path_escape"
+    assert exc.value.code == "benchmark_run_artifact_invalid"
