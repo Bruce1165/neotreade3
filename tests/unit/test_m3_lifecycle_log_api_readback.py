@@ -162,6 +162,19 @@ def test_m3_lifecycle_logs_list_endpoint_returns_records_sorted_and_limited(
     assert payload["_meta"]["offset"] == 2
     assert payload["lifecycle_logs"] == []
 
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?limit=0&run_id=..&offset=-1&cursor=abc")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_limit"
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch(
+            f"/api/m3/lifecycle-logs?limit=0&run_id=..&offset=1&cursor={first_page_cursor}"
+        )
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_limit"
 
 def test_m3_lifecycle_logs_list_cursor_pagination_does_not_replay_last_item(
     tmp_path: Path,
