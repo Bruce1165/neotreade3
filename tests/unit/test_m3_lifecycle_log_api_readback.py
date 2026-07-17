@@ -544,6 +544,14 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_cursor_offset_conflict(
     assert exc.value.code == "invalid_pagination"
 
     with pytest.raises(ApiError) as exc:
+        router.dispatch(
+            f"/api/m3/lifecycle-logs?run_id=2026-06-20&limit=1&offset=1&cursor={cursor}"
+        )
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_pagination"
+
+    with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m3/lifecycle-logs?offset=abc")
 
     assert exc.value.status_code == HTTPStatus.BAD_REQUEST
