@@ -524,6 +524,18 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_offset(
     assert exc.value.status_code == HTTPStatus.BAD_REQUEST
     assert exc.value.code == "invalid_offset"
 
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?run_id=2026-06-20&offset=-1")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_offset"
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?run_id=2026-06-20&offset=abc")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_offset"
+
 
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
     tmp_path: Path,

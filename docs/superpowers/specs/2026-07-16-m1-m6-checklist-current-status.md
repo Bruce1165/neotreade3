@@ -127,6 +127,7 @@ Last_reviewed: 2026-07-16
   - 证据：run_id 过滤 + cursor 翻页语义（不重放上一页最后一条；同 written_at tie-break）：[test_m3_lifecycle_log_api_readback.py:L350-L422](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L350-L422)
   - 证据：run_id + cursor/offset 冲突（400 invalid_pagination）：[test_m3_lifecycle_log_api_readback.py:L520-L558](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L520-L558)
   - 证据：run_id 过滤 + offset 分页（offset=1/越界；matched_count 与 offset 回显）：[test_m3_lifecycle_log_api_readback.py:L425-L496](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L425-L496)
+  - 证据：run_id 过滤 + invalid_offset（400 invalid_offset）：[test_m3_lifecycle_log_api_readback.py:L515-L539](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L515-L539)
   - 证据：engine sell_signal_audit 自动物化为 m3_lifecycle_log 的 helper（显式 run_id/source_run_id/project_root 启用）：[lowfreq_engine_v16_advanced.py:L134-L184](file:///Users/mac/NeoTrade3/lowfreq_engine_v16_advanced.py#L134-L184)
   - 证据：单测覆盖（sell audit → lifecycle log → 落盘 → 读回）：[test_lowfreq_engine_v16_sell_logic.py:L749-L789](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_engine_v16_sell_logic.py#L749-L789)
   - 证据：report runner backtest 路径生成 report_id，传入 project_root/run_id/source_run_id 并回写到返回 _meta.report_id：[report_runner_backtest_source.py:L17-L62](file:///Users/mac/NeoTrade3/neotrade3/orchestration/report_runner_backtest_source.py#L17-L62)
