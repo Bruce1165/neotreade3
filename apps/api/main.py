@@ -1698,6 +1698,223 @@ class BootstrapApiService:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
+    def _normalize_benchmark_run_id(self, value: str, *, field_name: str, error_code: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code=error_code,
+                message=f"{field_name} must be a non-empty string",
+                details={field_name: value},
+            )
+        parsed = Path(normalized)
+        if (
+            parsed.is_absolute()
+            or len(parsed.parts) != 1
+            or parsed.name != normalized
+            or normalized in {".", ".."}
+        ):
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code=error_code,
+                message=f"invalid {field_name}",
+                details={field_name: value},
+            )
+        return normalized
+
+    def _resolve_benchmark_file_under_root(
+        self,
+        *,
+        root_dir: Path,
+        relative_path: Path,
+    ) -> Path:
+        root_resolved = root_dir.resolve()
+        resolved = (root_dir / relative_path).resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_download_path_escape",
+                message="invalid benchmark download path",
+                details={"root": str(root_dir), "path": str(resolved)},
+            ) from exc
+        return resolved
+
+    def benchmark_runs_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        base_dir = self.project_root / "var/ledgers/benchmark_runs"
+        if not base_dir.exists():
+            return {
+                "_meta": {"matched_count": 0, "returned_count": 0, "limit": limit},
+                "benchmark_runs": [],
+            }
+
+        records: list[dict[str, Any]] = []
+        matched_count = 0
+        for ledger_file in sorted(base_dir.glob("*/benchmark_batch_run.json")):
+            payload: object
+            try:
+                payload = json.loads(ledger_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="benchmark_run_ledger_invalid",
+                    message="benchmark run ledger is not a valid JSON object",
+                    details={"path": str(ledger_file)},
+                ) from exc
+            if not isinstance(payload, dict):
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="benchmark_run_ledger_invalid",
+                    message="benchmark run ledger is not a valid JSON object",
+                    details={"path": str(ledger_file)},
+                )
+            run_id = str(payload.get("run_id") or "").strip()
+            if not run_id:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="benchmark_run_ledger_invalid",
+                    message="benchmark run ledger missing run_id",
+                    details={"path": str(ledger_file)},
+                )
+            self._normalize_benchmark_run_id(
+                run_id, field_name="run_id", error_code="benchmark_run_ledger_invalid"
+            )
+            record: dict[str, Any] = dict(payload)
+            record["url"] = f"/api/m4/benchmark-runs/{run_id}"
+            record["download_url"] = f"/api/m4/benchmark-runs/{run_id}/download"
+            record["download_ledger_url"] = f"/api/m4/benchmark-runs/{run_id}/download-ledger"
+            records.append(record)
+            matched_count += 1
+
+        records.sort(
+            key=lambda p: (str(p.get("written_at") or ""), str(p.get("run_id") or "")),
+            reverse=True,
+        )
+        if len(records) > limit:
+            records = records[:limit]
+        return {
+            "_meta": {
+                "matched_count": matched_count,
+                "returned_count": len(records),
+                "limit": limit,
+            },
+            "benchmark_runs": records,
+        }
+
+    def benchmark_run_view(self, *, run_id: str) -> dict[str, Any]:
+        normalized_run_id = self._normalize_benchmark_run_id(
+            run_id, field_name="run_id", error_code="invalid_run_id"
+        )
+        domain_ledger_root = self.project_root / "var/ledgers/benchmark_runs"
+        ledger_path = self._resolve_benchmark_file_under_root(
+            root_dir=domain_ledger_root,
+            relative_path=Path(normalized_run_id) / "benchmark_batch_run.json",
+        )
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="benchmark_run_not_found",
+                message="benchmark run ledger not found",
+                details={"run_id": normalized_run_id},
+            )
+        domain_artifact_root = self.project_root / "var/artifacts/benchmark_runs"
+        artifact_path = self._resolve_benchmark_file_under_root(
+            root_dir=domain_artifact_root,
+            relative_path=Path(normalized_run_id) / "benchmark_batch_result.json",
+        )
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="benchmark_run_artifact_not_found",
+                message="benchmark run artifact not found",
+                details={"run_id": normalized_run_id},
+            )
+
+        try:
+            ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_run_ledger_invalid",
+                message="benchmark run ledger is not a valid JSON object",
+                details={"run_id": normalized_run_id},
+            ) from exc
+        try:
+            artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_run_artifact_invalid",
+                message="benchmark run artifact is not a valid JSON object",
+                details={"run_id": normalized_run_id},
+            ) from exc
+        if not isinstance(ledger_payload, dict) or not isinstance(artifact_payload, dict):
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_run_invalid",
+                message="benchmark stored payloads are not JSON objects",
+                details={"run_id": normalized_run_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "benchmark_run": ledger_payload,
+            "benchmark_run_artifact": artifact_payload,
+        }
+
+    def benchmark_run_download_view(self, *, run_id: str) -> ApiBinaryResponse:
+        normalized_run_id = self._normalize_benchmark_run_id(
+            run_id, field_name="run_id", error_code="invalid_run_id"
+        )
+        domain_root = self.project_root / "var/artifacts/benchmark_runs"
+        artifact_path = self._resolve_benchmark_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_run_id) / "benchmark_batch_result.json",
+        )
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="benchmark_run_artifact_not_found",
+                message="benchmark run artifact not found",
+                details={"run_id": normalized_run_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def benchmark_run_ledger_download_view(self, *, run_id: str) -> ApiBinaryResponse:
+        normalized_run_id = self._normalize_benchmark_run_id(
+            run_id, field_name="run_id", error_code="invalid_run_id"
+        )
+        domain_root = self.project_root / "var/ledgers/benchmark_runs"
+        ledger_path = self._resolve_benchmark_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_run_id) / "benchmark_batch_run.json",
+        )
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="benchmark_run_not_found",
+                message="benchmark run ledger not found",
+                details={"run_id": normalized_run_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     def _normalize_governance_token(
         self,
         value: str,

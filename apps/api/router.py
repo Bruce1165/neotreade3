@@ -67,6 +67,12 @@ class BootstrapApiRouter:
     _EXPECTED_GOVERNANCE_CANDIDATE_VALIDATIONS_DOWNLOAD = (
         "expected /api/governance/candidate-validations/<validation_id>/(download|download-ledger)"
     )
+    _EXPECTED_M4_BENCHMARK_RUNS_BASE = (
+        "expected /api/m4/benchmark-runs/<run_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_M4_BENCHMARK_RUNS_DOWNLOAD = (
+        "expected /api/m4/benchmark-runs/<run_id>/(download|download-ledger)"
+    )
 
     def __init__(self, service: Any) -> None:
         self.service = service
@@ -200,6 +206,10 @@ class BootstrapApiRouter:
                         "/api/governance/candidate-validations/<validation_id>/download — 下载候选验证 artifact",
                         "/api/governance/candidate-validations/<validation_id>/download-ledger — 下载候选验证 ledger",
                         "/api/governance/index?limit=... — 治理聚合索引（按 source_run_id）",
+                        "/api/m4/benchmark-runs?limit=... — M4 benchmark 运行列表",
+                        "/api/m4/benchmark-runs/<run_id> — M4 benchmark 运行详情",
+                        "/api/m4/benchmark-runs/<run_id>/download — 下载 M4 benchmark artifact",
+                        "/api/m4/benchmark-runs/<run_id>/download-ledger — 下载 M4 benchmark ledger",
                         "/api/strategies?limit=... — 策略配置列表",
                         "/api/strategies/<strategy_id> — 策略配置详情",
                         "/api/strategies/<strategy_id>/download — 下载策略配置原始 JSON",
@@ -1816,6 +1826,45 @@ class BootstrapApiRouter:
                     record_id=record_id
                 )
             return HTTPStatus.OK, self.service.decision_m3_lifecycle_log_view(record_id=record_id)
+
+        if parsed.path == "/api/m4/benchmark-runs" or parsed.path == "/api/v1/m4/benchmark-runs":
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.benchmark_runs_view(limit=limit)
+
+        if parsed.path.startswith("/api/m4/benchmark-runs/") or parsed.path.startswith(
+            "/api/v1/m4/benchmark-runs/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_M4_BENCHMARK_RUNS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, run_id, *rest = parts
+            if not run_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_run_id",
+                    message="run_id must be a non-empty string",
+                    details={"run_id": run_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.benchmark_run_ledger_download_view(
+                        run_id=run_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_M4_BENCHMARK_RUNS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.benchmark_run_download_view(run_id=run_id)
+            return HTTPStatus.OK, self.service.benchmark_run_view(run_id=run_id)
 
         if parsed.path == "/api/strategies" or parsed.path == "/api/v1/strategies":
             raw_limit = query.get("limit", [None])[0]

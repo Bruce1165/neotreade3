@@ -159,8 +159,10 @@ Last_reviewed: 2026-07-16
 - [x] Benchmark 生成入口可复现（输入范围、时间窗口、输出落点）
   - 证据：Worker BENCHMARK executor 调用 `run_benchmark_for_manifest(...)` 并返回 ledger/artifact refs：[main.py:L304-L338](file:///Users/mac/NeoTrade3/apps/worker/main.py#L304-L338)
   - 证据：Daily orchestrator phases 显式包含 BENCHMARK 阶段：[main.py:L758-L769](file:///Users/mac/NeoTrade3/apps/worker/main.py#L758-L769)
-- [ ] Benchmark 结果可读回（read/list/download 或内部入口）
-  - 证据：未在当前切片内定位到对外 read/list/download API 端点。
+- [x] Benchmark 结果可读回（read/list/download 或内部入口）
+  - 证据：路由分发（list/read/download/download-ledger）：[router.py:L1830-L1867](file:///Users/mac/NeoTrade3/apps/api/router.py#L1830-L1867)
+  - 证据：对外读回 service（run_id 归一化 + list/read/download）：[main.py:L1701-L1916](file:///Users/mac/NeoTrade3/apps/api/main.py#L1701-L1916)
+  - 证据：端到端单测覆盖（list/read/download/404/invalid_run_id）：[test_m4_benchmark_api_readback.py:L1-L157](file:///Users/mac/NeoTrade3/tests/unit/test_m4_benchmark_api_readback.py#L1-L157)
 - [ ] 解释与证据引用可追溯（能定位到 M3/M1 输入或运行产物）
   - 证据：未在当前切片内定位到“对外解释/证据引用解析”的统一输出。
 - [ ] 失败策略明确：契约与解析 fail-closed；展示可降级 degraded
