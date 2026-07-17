@@ -164,8 +164,9 @@ Last_reviewed: 2026-07-16
 
 ### 6.1 Checklist
 
-- [ ] 治理对象契约已冻结（candidate、final_validation、rejection、status_transition、handoff 等）
-  - 证据：存在治理 ledger/artifact 读回底座，但“契约冻结”需单独文档明确（本切片未补充该文档）：[run_ledger.py:L701-L982](file:///Users/mac/NeoTrade3/neotrade3/governance/run_ledger.py#L701-L982)
+- [x] 治理对象契约已冻结（candidate、final_validation、rejection、status_transition、handoff 等）
+  - 证据：M5 治理对象契约单一真相源（冻结清单 + 标识符 + 落盘路径 + API 读回锚点）：[2026-07-17-m5-governance-objects-ssot.md:L1-L122](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m5-governance-objects-ssot.md#L1-L122)
+  - 证据：治理 ledger/artifact 读回底座（read/list）：[run_ledger.py:L701-L982](file:///Users/mac/NeoTrade3/neotrade3/governance/run_ledger.py#L701-L982)
 - [x] 治理只读 API 三件套齐备（read/list/download，必要时 +download-ledger）
   - 证据：final-validations read/list/download/download-ledger 路由分发：[router.py:L1387-L1433](file:///Users/mac/NeoTrade3/apps/api/router.py#L1387-L1433)
   - 证据：rejections、status-transitions、handoffs、candidate-validations 路由分发（含 download/download-ledger）：[router.py:L1480-L1674](file:///Users/mac/NeoTrade3/apps/api/router.py#L1480-L1674)
