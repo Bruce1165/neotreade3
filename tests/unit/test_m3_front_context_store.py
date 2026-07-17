@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -153,10 +154,31 @@ def test_materialize_decision_m3_front_context(tmp_path: Path) -> None:
     )
 
     assert ledger_record.record_id == record_id
+    assert ledger_record.stock_code == "600000"
+    assert ledger_record.trade_date == "2026-07-07"
+    assert ledger_record.run_id == "run-001"
+    assert ledger_record.source_run_id == "source-001"
+    assert ledger_record.identify_status == front_context.identify_state["status"]
+    assert ledger_record.tracking_status == front_context.tracking_state["status"]
+    assert ledger_record.entry_status == front_context.entry_state["status"]
+    assert ledger_record.entry_decision == front_context.entry_state["decision"]
+    assert ledger_record.entry_actionable == front_context.entry_state["actionable"]
+    assert ledger_record.entry_blocking_reasons == front_context.entry_state["blocking_reasons"]
+    assert ledger_record.m1_blocked == front_context.m1_constraints_ref["blocked"]
+    assert ledger_record.m1_blocking_reasons == front_context.m1_constraints_ref["blocking_reasons"]
+    assert ledger_record.m2_cycle_record_id == "600000-2026-07-07"
+    assert ledger_record.m2_cycle_state
+    assert ledger_record.m2_state_stability_level
     assert artifact_payload is not None
     assert artifact_payload["identify_state"]["object_type"] == "identify_state"
     assert reconstructed == front_context
     assert reconstructed_ledger == ledger_record
+
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_text = artifact_file.read_text(encoding="utf-8")
+    assert ledger_record.artifact_sha256 == hashlib.sha256(
+        artifact_text.encode("utf-8")
+    ).hexdigest()
 
 
 def _artifact_file(*, project_root: Path, record_id: str) -> Path:

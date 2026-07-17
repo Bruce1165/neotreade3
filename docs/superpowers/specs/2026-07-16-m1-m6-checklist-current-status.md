@@ -112,8 +112,9 @@ Last_reviewed: 2026-07-16
   - 证据：下载路径防护（record_id 归一化 + resolve + relative_to(root)）：[main.py:L3063-L3099](file:///Users/mac/NeoTrade3/apps/api/main.py#L3063-L3099)
   - 证据：路径穿越与坏 JSON fail-closed 单测：[test_m3_front_context_api_readback.py:L147-L193](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_api_readback.py#L147-L193)
   - 边界：展示层 degraded 策略未形成对外统一契约；当前证据覆盖 API 与内部读回的 fail-closed 语义。
-- [ ] 决策可审计（至少包含输入引用与关键派生/中间状态的定位线索）
-  - 证据：contracts 中存在 evidence_ref/m2_cycle_ref/m1_constraints_ref 槽位，但缺少端到端落盘/读回证据：[contracts.py:L37-L62](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L62)
+- [x] 决策可审计（至少包含输入引用与关键派生/中间状态的定位线索）
+  - 证据：m3_front_context ledger 写入审计索引字段（状态摘要 + 输入引用摘要）并包含 artifact_sha256：[front_context_store.py:L296-L425](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L296-L425)
+  - 证据：单测覆盖（ledger 字段齐全 + sha256 可比对）：[test_m3_front_context_store.py:L131-L183](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L131-L183)
 
 ## 5. M4 基准评估层（Benchmark Layer）
 

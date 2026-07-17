@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,14 @@ DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION = 2
 
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _dump_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def _sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _copy_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
@@ -141,6 +150,22 @@ class DecisionM3FrontContextArtifactRecord:
 class DecisionM3FrontContextLedgerRecord:
     record_id: str
     written_at: str
+    stock_code: str
+    trade_date: str
+    run_id: str
+    source_run_id: str
+    identify_status: str
+    tracking_status: str
+    entry_status: str
+    entry_decision: str
+    entry_actionable: bool
+    entry_blocking_reasons: list[str]
+    m1_blocked: bool
+    m1_blocking_reasons: list[str]
+    m2_cycle_record_id: str
+    m2_cycle_state: str
+    m2_state_stability_level: str
+    artifact_sha256: str
     artifact_path: str
     ledger_path: str
 
@@ -148,9 +173,61 @@ class DecisionM3FrontContextLedgerRecord:
     def from_dict(cls, payload: Any) -> "DecisionM3FrontContextLedgerRecord":
         if not isinstance(payload, Mapping):
             raise TypeError("m3_front_context ledger root must be a JSON object")
+        entry_actionable = payload.get("entry_actionable", False)
+        if not isinstance(entry_actionable, bool):
+            raise TypeError("m3_front_context.entry_actionable must be a boolean")
+        m1_blocked = payload.get("m1_blocked", False)
+        if not isinstance(m1_blocked, bool):
+            raise TypeError("m3_front_context.m1_blocked must be a boolean")
+
+        raw_entry_blocking_reasons = payload.get("entry_blocking_reasons")
+        if raw_entry_blocking_reasons is None:
+            entry_blocking_reasons: list[str] = []
+        elif not isinstance(raw_entry_blocking_reasons, list):
+            raise TypeError("m3_front_context.entry_blocking_reasons must be a list of strings")
+        else:
+            entry_blocking_reasons = []
+            for item in raw_entry_blocking_reasons:
+                if not isinstance(item, str):
+                    raise TypeError("m3_front_context.entry_blocking_reasons must be a list of strings")
+                normalized = item.strip()
+                if not normalized:
+                    raise ValueError("m3_front_context.entry_blocking_reasons must not contain empty strings")
+                entry_blocking_reasons.append(normalized)
+
+        raw_m1_blocking_reasons = payload.get("m1_blocking_reasons")
+        if raw_m1_blocking_reasons is None:
+            m1_blocking_reasons: list[str] = []
+        elif not isinstance(raw_m1_blocking_reasons, list):
+            raise TypeError("m3_front_context.m1_blocking_reasons must be a list of strings")
+        else:
+            m1_blocking_reasons = []
+            for item in raw_m1_blocking_reasons:
+                if not isinstance(item, str):
+                    raise TypeError("m3_front_context.m1_blocking_reasons must be a list of strings")
+                normalized = item.strip()
+                if not normalized:
+                    raise ValueError("m3_front_context.m1_blocking_reasons must not contain empty strings")
+                m1_blocking_reasons.append(normalized)
         return cls(
             record_id=str(payload.get("record_id") or "").strip(),
             written_at=str(payload.get("written_at") or "").strip(),
+            stock_code=str(payload.get("stock_code") or "").strip(),
+            trade_date=str(payload.get("trade_date") or "").strip(),
+            run_id=str(payload.get("run_id") or "").strip(),
+            source_run_id=str(payload.get("source_run_id") or "").strip(),
+            identify_status=str(payload.get("identify_status") or "").strip(),
+            tracking_status=str(payload.get("tracking_status") or "").strip(),
+            entry_status=str(payload.get("entry_status") or "").strip(),
+            entry_decision=str(payload.get("entry_decision") or "").strip(),
+            entry_actionable=entry_actionable,
+            entry_blocking_reasons=entry_blocking_reasons,
+            m1_blocked=m1_blocked,
+            m1_blocking_reasons=m1_blocking_reasons,
+            m2_cycle_record_id=str(payload.get("m2_cycle_record_id") or "").strip(),
+            m2_cycle_state=str(payload.get("m2_cycle_state") or "").strip(),
+            m2_state_stability_level=str(payload.get("m2_state_stability_level") or "").strip(),
+            artifact_sha256=str(payload.get("artifact_sha256") or "").strip(),
             artifact_path=str(payload.get("artifact_path") or "").strip(),
             ledger_path=str(payload.get("ledger_path") or "").strip(),
         )
@@ -206,7 +283,7 @@ def write_decision_m3_front_context_artifact(
     if not dry_run:
         artifact_file.parent.mkdir(parents=True, exist_ok=True)
         artifact_file.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            _dump_json(payload),
             encoding="utf-8",
         )
     return DecisionM3FrontContextArtifactRecord(
@@ -226,16 +303,123 @@ def write_decision_m3_front_context_ledger(
 ) -> DecisionM3FrontContextLedgerRecord:
     project_root_path = Path(project_root)
     ledger_file = _ledger_file(project_root=project_root_path, record_id=record_id)
+    identify_state = _copy_mapping(
+        front_context.identify_state,
+        field_name="m3_front_context.identify_state",
+    )
+    tracking_state = _copy_mapping(
+        front_context.tracking_state,
+        field_name="m3_front_context.tracking_state",
+    )
+    entry_state = _copy_mapping(
+        front_context.entry_state,
+        field_name="m3_front_context.entry_state",
+    )
+    stock_code = str(
+        entry_state.get("stock_code")
+        or tracking_state.get("stock_code")
+        or identify_state.get("stock_code")
+        or ""
+    ).strip()
+    trade_date = str(
+        entry_state.get("trade_date")
+        or tracking_state.get("trade_date")
+        or identify_state.get("trade_date")
+        or ""
+    ).strip()
+    identify_status = str(identify_state.get("status") or "").strip()
+    tracking_status = str(tracking_state.get("status") or "").strip()
+    entry_status = str(entry_state.get("status") or "").strip()
+    entry_decision = str(entry_state.get("decision") or "").strip()
+    entry_actionable = entry_state.get("actionable", False)
+    if not isinstance(entry_actionable, bool):
+        raise TypeError("m3_front_context.entry_state.actionable must be a boolean")
+    raw_entry_blocking_reasons = entry_state.get("blocking_reasons")
+    if raw_entry_blocking_reasons is None:
+        entry_blocking_reasons: list[str] = []
+    elif not isinstance(raw_entry_blocking_reasons, list):
+        raise TypeError("m3_front_context.entry_state.blocking_reasons must be a list of strings")
+    else:
+        entry_blocking_reasons = []
+        for item in raw_entry_blocking_reasons:
+            if not isinstance(item, str):
+                raise TypeError("m3_front_context.entry_state.blocking_reasons must be a list of strings")
+            normalized = item.strip()
+            if not normalized:
+                raise ValueError("m3_front_context.entry_state.blocking_reasons must not contain empty strings")
+            entry_blocking_reasons.append(normalized)
+
+    m1_constraints_ref = _copy_mapping(
+        front_context.m1_constraints_ref,
+        field_name="m3_front_context.m1_constraints_ref",
+    )
+    m1_blocked = m1_constraints_ref.get("blocked", False)
+    if not isinstance(m1_blocked, bool):
+        raise TypeError("m3_front_context.m1_constraints_ref.blocked must be a boolean")
+    raw_m1_blocking_reasons = m1_constraints_ref.get("blocking_reasons")
+    if raw_m1_blocking_reasons is None:
+        m1_blocking_reasons: list[str] = []
+    elif not isinstance(raw_m1_blocking_reasons, list):
+        raise TypeError("m3_front_context.m1_constraints_ref.blocking_reasons must be a list of strings")
+    else:
+        m1_blocking_reasons = []
+        for item in raw_m1_blocking_reasons:
+            if not isinstance(item, str):
+                raise TypeError("m3_front_context.m1_constraints_ref.blocking_reasons must be a list of strings")
+            normalized = item.strip()
+            if not normalized:
+                raise ValueError("m3_front_context.m1_constraints_ref.blocking_reasons must not contain empty strings")
+            m1_blocking_reasons.append(normalized)
+
+    raw_m2_cycle_ref = (
+        entry_state.get("m2_cycle_ref")
+        or tracking_state.get("m2_cycle_ref")
+        or identify_state.get("m2_cycle_ref")
+        or {}
+    )
+    m2_cycle_ref = _copy_mapping(
+        raw_m2_cycle_ref,
+        field_name="m3_front_context.m2_cycle_ref",
+    )
+    m2_cycle_record_id = str(m2_cycle_ref.get("record_id") or "").strip()
+    if not m2_cycle_record_id and stock_code and trade_date:
+        m2_cycle_record_id = f"{stock_code}-{trade_date}"
+    m2_cycle_state = str(m2_cycle_ref.get("cycle_state") or "").strip()
+    m2_state_stability_level = str(m2_cycle_ref.get("state_stability_level") or "").strip()
+
+    artifact_payload = {
+        **front_context.to_payload(),
+        "record_id": record_id,
+        "written_at": artifact_record.written_at,
+    }
+    artifact_text = _dump_json(artifact_payload)
+    artifact_sha256 = _sha256_hex(artifact_text)
     payload = {
         "record_id": record_id,
         "written_at": artifact_record.written_at,
+        "stock_code": stock_code,
+        "trade_date": trade_date,
+        "run_id": front_context.run_id,
+        "source_run_id": front_context.source_run_id,
+        "identify_status": identify_status,
+        "tracking_status": tracking_status,
+        "entry_status": entry_status,
+        "entry_decision": entry_decision,
+        "entry_actionable": entry_actionable,
+        "entry_blocking_reasons": entry_blocking_reasons,
+        "m1_blocked": m1_blocked,
+        "m1_blocking_reasons": m1_blocking_reasons,
+        "m2_cycle_record_id": m2_cycle_record_id,
+        "m2_cycle_state": m2_cycle_state,
+        "m2_state_stability_level": m2_state_stability_level,
+        "artifact_sha256": artifact_sha256,
         "artifact_path": artifact_record.artifact_path,
         "ledger_path": str(ledger_file.relative_to(project_root_path)),
     }
     if not dry_run:
         ledger_file.parent.mkdir(parents=True, exist_ok=True)
         ledger_file.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            _dump_json(payload),
             encoding="utf-8",
         )
     return DecisionM3FrontContextLedgerRecord.from_dict(payload)

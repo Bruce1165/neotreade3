@@ -67,6 +67,7 @@ def _cycle_ref(cycle: SmallCycle) -> dict[str, Any]:
     return {
         "object_type": cycle.object_type,
         "object_version": cycle.object_version,
+        "record_id": f"{cycle.stock_code}-{cycle.trade_date}",
         "stock_code": cycle.stock_code,
         "trade_date": cycle.trade_date,
         "cycle_state": cycle.cycle_state,
