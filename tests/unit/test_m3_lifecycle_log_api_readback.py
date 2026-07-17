@@ -336,25 +336,61 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
     service = BootstrapApiService(project_root=tmp_path)
     router = BootstrapApiRouter(service)
 
-    with pytest.raises(ApiError) as exc:
-        router.dispatch("/api/m3/lifecycle-logs?cursor=abc")
+    def _encode_cursor_payload(payload: object) -> str:
+        raw = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
-    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
-    assert exc.value.code == "invalid_cursor"
+    def _assert_invalid_cursor(url: str) -> None:
+        with pytest.raises(ApiError) as exc:
+            router.dispatch(url)
 
-    raw = json.dumps(
-        {"v": 2, "written_at": "2026-06-20T00:00:00Z", "record_id": "300001-2026-06-20"},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    cursor_v2 = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+        assert exc.value.code == "invalid_cursor"
 
-    with pytest.raises(ApiError) as exc:
-        router.dispatch(f"/api/m3/lifecycle-logs?cursor={cursor_v2}")
-
-    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
-    assert exc.value.code == "invalid_cursor"
+    _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=abc")
+    _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=%20")
+    _assert_invalid_cursor("/api/m3/lifecycle-logs?cursor=a*b")
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={base64.urlsafe_b64encode(b'{').decode('ascii').rstrip('=')}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload([])}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 2, 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': '1', 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1.0, 'written_at': '2026-06-20T00:00:00Z', 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': '2026-06-20T00:00:00Z'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': 123, 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': '2026-06-20T00:00:00Z', 'record_id': 123})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': ' ', 'record_id': '300001-2026-06-20'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': '2026-06-20T00:00:00Z', 'record_id': 'a/b'})}"
+    )
+    _assert_invalid_cursor(
+        f"/api/m3/lifecycle-logs?cursor={_encode_cursor_payload({'v': 1, 'written_at': '2026-06-20T00:00:00Z', 'record_id': '..'})}"
+    )
 
 
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_cursor_offset_conflict(

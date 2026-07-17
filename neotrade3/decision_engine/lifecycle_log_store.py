@@ -86,10 +86,15 @@ def decode_decision_m3_lifecycle_log_list_cursor(cursor: str) -> tuple[str, str]
         raise ValueError("invalid cursor") from exc
     if not isinstance(payload, dict):
         raise ValueError("invalid cursor")
-    if int(payload.get("v", 0)) != 1:
+    v = payload.get("v")
+    if type(v) is not int or v != 1:
         raise ValueError("invalid cursor")
-    written_at = str(payload.get("written_at") or "").strip()
-    record_id = str(payload.get("record_id") or "").strip()
+    raw_written_at = payload.get("written_at")
+    raw_record_id = payload.get("record_id")
+    if not isinstance(raw_written_at, str) or not isinstance(raw_record_id, str):
+        raise ValueError("invalid cursor")
+    written_at = raw_written_at.strip()
+    record_id = raw_record_id.strip()
     if not written_at or not record_id:
         raise ValueError("invalid cursor")
     parsed = Path(record_id)
