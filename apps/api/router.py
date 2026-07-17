@@ -7,7 +7,7 @@ from datetime import date
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional, Union
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 from neotrade3.governance.contracts import ValidationResult
 
@@ -1766,6 +1766,11 @@ class BootstrapApiRouter:
             raw_offset = query.get("offset", [None])[0]
             offset = self._parse_non_negative_offset(raw_offset, default=0)
             raw_run_id = query.get("run_id", [None])[0]
+            if raw_run_id is None:
+                for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+                    if key == "run_id":
+                        raw_run_id = value
+                        break
             run_id = str(raw_run_id).strip() if isinstance(raw_run_id, str) else None
             raw_cursor = query.get("cursor", [None])[0]
             cursor = str(raw_cursor).strip() if isinstance(raw_cursor, str) else None
