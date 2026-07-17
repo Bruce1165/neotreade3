@@ -17,6 +17,8 @@ def _write_lifecycle_log_fixtures(
     project_root: Path,
     record_id: str,
     written_at: str,
+    stock_code: str = "300001",
+    run_id: str = "2026-06-20",
 ) -> None:
     artifact_rel = f"var/artifacts/m3_lifecycle_logs/{record_id}/lifecycle_log.json"
     ledger_rel = f"var/ledgers/m3_lifecycle_logs/{record_id}/lifecycle_log.json"
@@ -28,17 +30,17 @@ def _write_lifecycle_log_fixtures(
     artifact_payload = {
         "object_type": "decision_lifecycle_log",
         "object_version": 2,
-        "stock_code": "300001",
-        "run_id": "2026-06-20",
-        "source_run_id": "2026-06-20",
+        "stock_code": stock_code,
+        "run_id": run_id,
+        "source_run_id": run_id,
         "events": [
             {
                 "object_type": "decision_lifecycle_event",
                 "object_version": 2,
-                "stock_code": "300001",
+                "stock_code": stock_code,
                 "trade_date": "2026-06-20",
-                "run_id": "2026-06-20",
-                "source_run_id": "2026-06-20",
+                "run_id": run_id,
+                "source_run_id": run_id,
                 "event": "market_exit_confirmed",
                 "source_layer": "sell",
                 "stage": "exit_ready",
@@ -61,9 +63,9 @@ def _write_lifecycle_log_fixtures(
             {
                 "record_id": record_id,
                 "written_at": written_at,
-                "stock_code": "300001",
-                "run_id": "2026-06-20",
-                "source_run_id": "2026-06-20",
+                "stock_code": stock_code,
+                "run_id": run_id,
+                "source_run_id": run_id,
                 "events_count": 1,
                 "first_trade_date": "2026-06-20",
                 "last_trade_date": "2026-06-20",
@@ -191,6 +193,56 @@ def test_m3_lifecycle_log_readback_endpoint_returns_400_for_path_traversal_recor
     assert exc.value.code == "invalid_record_id"
 
 
+def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id(tmp_path: Path) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a",
+        written_at="2026-06-20T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300002-run_a",
+        written_at="2026-06-19T00:00:00Z",
+        stock_code="300002",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300003-run_b",
+        written_at="2026-06-21T00:00:00Z",
+        stock_code="300003",
+        run_id="run_b",
+    )
+
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=20")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["returned_count"] == 2
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a",
+        "300002-run_a",
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+
+
+def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_run_id(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?run_id=..")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_run_id"
+
+
 def test_m3_lifecycle_logs_list_endpoint_fails_closed_when_invalid_json_exists(
     tmp_path: Path,
 ) -> None:
@@ -209,4 +261,3 @@ def test_m3_lifecycle_logs_list_endpoint_fails_closed_when_invalid_json_exists(
 
     assert exc.value.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert exc.value.code == "m3_lifecycle_log_ledger_invalid"
-

@@ -3335,7 +3335,12 @@ class BootstrapApiService:
             ) from exc
         return resolved
 
-    def decision_m3_lifecycle_logs_view(self, *, limit: int = 20) -> dict[str, Any]:
+    def decision_m3_lifecycle_logs_view(
+        self,
+        *,
+        limit: int = 20,
+        run_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         if limit <= 0:
             raise ApiError(
                 status_code=HTTPStatus.BAD_REQUEST,
@@ -3343,10 +3348,34 @@ class BootstrapApiService:
                 message="limit must be a positive integer",
                 details={"limit": limit},
             )
+        normalized_run_id: Optional[str] = None
+        if run_id is not None:
+            normalized_run_id = str(run_id or "").strip()
+            if not normalized_run_id:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_run_id",
+                    message="run_id must be a non-empty string",
+                    details={"run_id": run_id},
+                )
+            parsed = Path(normalized_run_id)
+            if (
+                parsed.is_absolute()
+                or len(parsed.parts) != 1
+                or parsed.name != normalized_run_id
+                or normalized_run_id in {".", ".."}
+            ):
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_run_id",
+                    message="invalid run_id",
+                    details={"run_id": normalized_run_id},
+                )
         try:
             records = list_decision_m3_lifecycle_log_ledgers(
                 project_root=self.project_root,
                 limit=limit,
+                run_id=normalized_run_id,
             )
         except Exception as exc:
             raise ApiError(

@@ -299,9 +299,23 @@ def list_decision_m3_lifecycle_log_ledgers(
     *,
     project_root: str | Path,
     limit: int = 200,
+    run_id: str | None = None,
 ) -> list[DecisionM3LifecycleLogLedgerRecord]:
     if limit <= 0:
         raise ValueError("limit must be a positive integer")
+    normalized_run_id: str | None = None
+    if run_id is not None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            raise ValueError("run_id must be non-empty")
+        parsed = Path(normalized_run_id)
+        if (
+            parsed.is_absolute()
+            or len(parsed.parts) != 1
+            or parsed.name != normalized_run_id
+            or normalized_run_id in {".", ".."}
+        ):
+            raise ValueError("invalid run_id")
     root = Path(project_root) / "var/ledgers/m3_lifecycle_logs"
     if not root.exists():
         return []
@@ -330,6 +344,8 @@ def list_decision_m3_lifecycle_log_ledgers(
             raise ValueError(f"m3_lifecycle_log ledger missing artifact_path: {ledger_file}")
         if not record.ledger_path:
             raise ValueError(f"m3_lifecycle_log ledger missing ledger_path: {ledger_file}")
+        if normalized_run_id is not None and record.run_id != normalized_run_id:
+            continue
         records.append(record)
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
