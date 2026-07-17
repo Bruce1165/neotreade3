@@ -86,6 +86,7 @@ from neotrade3.decision_engine import (
     read_decision_m3_lifecycle_log_artifact,
     read_decision_m3_lifecycle_log_ledger,
 )
+from neotrade3.benchmark.sample_registry import load_benchmark_seed_registry
 from neotrade3.decision_engine.buy_signal_audit_contract import (
     normalize_execution_block_reason,
 )
@@ -1741,6 +1742,43 @@ class BootstrapApiService:
             ) from exc
         return resolved
 
+    def _resolve_benchmark_seed_registry_file_under_project_root(self, *, registry_path: str) -> Path:
+        normalized = str(registry_path or "").strip()
+        if not normalized:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_seed_registry_invalid",
+                message="benchmark seed registry_path must be a non-empty string",
+                details={"registry_path": registry_path},
+            )
+        candidate = Path(normalized)
+        if candidate.is_absolute():
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_seed_registry_path_escape",
+                message="invalid benchmark seed registry path",
+                details={"registry_path": normalized},
+            )
+        root_resolved = self.project_root.resolve()
+        resolved = (self.project_root / candidate).resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_seed_registry_path_escape",
+                message="invalid benchmark seed registry path",
+                details={"registry_path": normalized, "path": str(resolved)},
+            ) from exc
+        if not resolved.exists():
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_seed_registry_not_found",
+                message="benchmark seed registry not found",
+                details={"registry_path": normalized},
+            )
+        return resolved
+
     def benchmark_runs_view(self, *, limit: int = 20) -> dict[str, Any]:
         if limit <= 0:
             raise ApiError(
@@ -1863,10 +1901,118 @@ class BootstrapApiService:
                 message="benchmark stored payloads are not JSON objects",
                 details={"run_id": normalized_run_id},
             )
+
+        registry_path = str(ledger_payload.get("registry_path") or "").strip()
+        registry_file = self._resolve_benchmark_seed_registry_file_under_project_root(
+            registry_path=registry_path
+        )
+        try:
+            seed_registry = load_benchmark_seed_registry(registry_file)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_seed_registry_invalid",
+                message="benchmark seed registry is not a valid JSON object",
+                details={"registry_path": registry_path},
+            ) from exc
+
+        raw_executed_sample_ids = ledger_payload.get("executed_sample_ids", [])
+        if not isinstance(raw_executed_sample_ids, list):
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="benchmark_run_ledger_invalid",
+                message="benchmark run ledger executed_sample_ids must be a JSON array",
+                details={"run_id": normalized_run_id},
+            )
+        executed_sample_ids: list[str] = []
+        for item in raw_executed_sample_ids:
+            sample_id = str(item).strip()
+            if not sample_id:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="benchmark_run_ledger_invalid",
+                    message="benchmark run ledger executed_sample_ids items must be non-empty strings",
+                    details={"run_id": normalized_run_id},
+                )
+            executed_sample_ids.append(sample_id)
+
+        samples: list[dict[str, Any]] = []
+        for sample_id in executed_sample_ids:
+            try:
+                registration = seed_registry.get_sample(sample_id)
+            except KeyError as exc:
+                raise ApiError(
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code="benchmark_seed_sample_not_found",
+                    message="benchmark seed sample not found",
+                    details={"registry_path": registry_path, "sample_id": sample_id},
+                ) from exc
+
+            record_id = f"{registration.stock_code}-{registration.trade_date}"
+
+            m1_artifact_rel = (
+                Path("var/artifacts/benchmark_m1_contexts")
+                / record_id
+                / "m1_context_projection.json"
+            )
+            m1_ledger_rel = (
+                Path("var/ledgers/benchmark_m1_contexts") / record_id / "m1_context_projection.json"
+            )
+            m1_context_projection = (
+                {
+                    "record_id": record_id,
+                    "artifact_path": str(m1_artifact_rel),
+                    "ledger_path": str(m1_ledger_rel),
+                }
+                if (self.project_root / m1_artifact_rel).exists()
+                and (self.project_root / m1_ledger_rel).exists()
+                else None
+            )
+
+            m3_artifact_rel = (
+                Path("var/artifacts/benchmark_m3_contexts")
+                / record_id
+                / "m3_context_projection.json"
+            )
+            m3_ledger_rel = (
+                Path("var/ledgers/benchmark_m3_contexts") / record_id / "m3_context_projection.json"
+            )
+            m3_context_projection = (
+                {
+                    "record_id": record_id,
+                    "artifact_path": str(m3_artifact_rel),
+                    "ledger_path": str(m3_ledger_rel),
+                }
+                if (self.project_root / m3_artifact_rel).exists()
+                and (self.project_root / m3_ledger_rel).exists()
+                else None
+            )
+
+            samples.append(
+                {
+                    "sample_id": registration.sample_id,
+                    "stock_code": registration.stock_code,
+                    "trade_date": registration.trade_date,
+                    "fixture_id": registration.fixture_id,
+                    "sample_bucket": registration.sample_bucket,
+                    "target_state_type": registration.target_state_type,
+                    "evidence_refs": [dict(item) for item in registration.evidence_refs],
+                    "scenario_tags": list(registration.scenario_tags),
+                    "note": registration.note,
+                    "input_data_version": registration.input_data_version,
+                    "rule_version": registration.rule_version,
+                    "m1_context_projection": m1_context_projection,
+                    "m3_context_projection": m3_context_projection,
+                }
+            )
         return {
             "_meta": {"status": "ok"},
             "benchmark_run": ledger_payload,
             "benchmark_run_artifact": artifact_payload,
+            "evidence": {
+                "seed_registry": {"registry_path": registry_path},
+                "samples": samples,
+            },
         }
 
     def benchmark_run_download_view(self, *, run_id: str) -> ApiBinaryResponse:
