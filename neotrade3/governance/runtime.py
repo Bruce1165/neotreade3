@@ -96,11 +96,19 @@ def _resolve_candidate_validation_outcome(
     *,
     project_root: Path,
     validation_id: str,
+    bundle_validation_results: tuple[ValidationResult, ...] | None = None,
 ) -> ValidationResult:
     validation_result = read_governance_candidate_validation_result(
         project_root=project_root,
         validation_id=validation_id,
     )
+    if validation_result is None and bundle_validation_results is not None:
+        return _require_final_validation_result(
+            validation_result=_find_validation_result(
+                validation_results=bundle_validation_results,
+                validation_id=validation_id,
+            )
+        )
     if validation_result is None:
         raise ValueError(
             f"persisted candidate validation outcome not found for validation_id={validation_id}"
@@ -551,6 +559,7 @@ def run_governance_reject_transition_chain(
         validation_result = _resolve_candidate_validation_outcome(
             project_root=project_root_path,
             validation_id=final_record.selected_validation_id,
+            bundle_validation_results=bundle.validation_results,
         )
         _resolve_baseline_validation_result(
             bundle_validation_results=bundle.validation_results,
@@ -628,6 +637,7 @@ def run_governance_reject_execution(
     validation_result = _resolve_candidate_validation_outcome(
         project_root=project_root_path,
         validation_id=resolved_validation_id,
+        bundle_validation_results=bundle.validation_results,
     )
     if validation_result.baseline_run_id != resolved_source_run_id:
         raise ValueError(
@@ -677,6 +687,7 @@ def run_governance_status_transition(
     validation_result = _resolve_candidate_validation_outcome(
         project_root=project_root_path,
         validation_id=resolved_validation_id,
+        bundle_validation_results=bundle.validation_results,
     )
     if validation_result.baseline_run_id != resolved_source_run_id:
         raise ValueError(
