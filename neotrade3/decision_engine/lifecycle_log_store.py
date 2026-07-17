@@ -301,6 +301,20 @@ def list_decision_m3_lifecycle_log_ledgers(
     limit: int = 200,
     run_id: str | None = None,
 ) -> list[DecisionM3LifecycleLogLedgerRecord]:
+    records, _ = list_decision_m3_lifecycle_log_ledgers_with_count(
+        project_root=project_root,
+        limit=limit,
+        run_id=run_id,
+    )
+    return records
+
+
+def list_decision_m3_lifecycle_log_ledgers_with_count(
+    *,
+    project_root: str | Path,
+    limit: int = 200,
+    run_id: str | None = None,
+) -> tuple[list[DecisionM3LifecycleLogLedgerRecord], int]:
     if limit <= 0:
         raise ValueError("limit must be a positive integer")
     normalized_run_id: str | None = None
@@ -349,6 +363,7 @@ def list_decision_m3_lifecycle_log_ledgers(
         records.append(record)
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
+    matched_count = len(records)
     if len(records) > limit:
         records = records[:limit]
-    return records
+    return records, matched_count

@@ -76,6 +76,7 @@ from neotrade3.orchestration.models import DailyRunRequest, RunStatus
 from neotrade3.decision_engine import (
     list_decision_m3_front_context_ledgers,
     list_decision_m3_lifecycle_log_ledgers,
+    list_decision_m3_lifecycle_log_ledgers_with_count,
     project_lowfreq_formal_front,
     read_decision_m3_front_context,
     read_decision_m3_front_context_artifact,
@@ -3372,7 +3373,7 @@ class BootstrapApiService:
                     details={"run_id": normalized_run_id},
                 )
         try:
-            records = list_decision_m3_lifecycle_log_ledgers(
+            records, matched_count = list_decision_m3_lifecycle_log_ledgers_with_count(
                 project_root=self.project_root,
                 limit=limit,
                 run_id=normalized_run_id,
@@ -3393,7 +3394,13 @@ class BootstrapApiService:
             }
             for record in records
         ]
-        return {"_meta": {"returned_count": len(items)}, "lifecycle_logs": items}
+        meta: dict[str, Any] = {
+            "returned_count": len(items),
+            "matched_count": int(matched_count),
+        }
+        if normalized_run_id is not None:
+            meta["run_id"] = normalized_run_id
+        return {"_meta": meta, "lifecycle_logs": items}
 
     def decision_m3_lifecycle_log_view(self, *, record_id: str) -> dict[str, Any]:
         normalized_record_id = self._normalize_m3_lifecycle_log_record_id(

@@ -107,6 +107,7 @@ def test_m3_lifecycle_logs_list_endpoint_returns_records_sorted_and_limited(
 
     assert status == HTTPStatus.OK
     assert payload["_meta"]["returned_count"] == 2
+    assert payload["_meta"]["matched_count"] == 2
     assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
         "300001-2026-06-20",
         "300001-2026-06-19",
@@ -115,6 +116,7 @@ def test_m3_lifecycle_logs_list_endpoint_returns_records_sorted_and_limited(
     status, payload = router.dispatch("/api/m3/lifecycle-logs?limit=1")
     assert status == HTTPStatus.OK
     assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["matched_count"] == 2
     assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
         "300001-2026-06-20"
     ]
@@ -221,7 +223,9 @@ def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id(tmp_path: Path) -> No
 
     status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=20")
     assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
     assert payload["_meta"]["returned_count"] == 2
+    assert payload["_meta"]["matched_count"] == 2
     assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
         "300001-run_a",
         "300002-run_a",
