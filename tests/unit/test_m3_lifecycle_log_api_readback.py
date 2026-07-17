@@ -163,6 +163,55 @@ def test_m3_lifecycle_logs_list_endpoint_returns_records_sorted_and_limited(
     assert payload["lifecycle_logs"] == []
 
 
+def test_m3_lifecycle_logs_list_cursor_pagination_does_not_replay_last_item(
+    tmp_path: Path,
+) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-19",
+        written_at="2026-06-19T00:00:00Z",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-20-a",
+        written_at="2026-06-20T00:00:00Z",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-20-b",
+        written_at="2026-06-20T00:00:00Z",
+    )
+
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?limit=1")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["has_more"] is True
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-2026-06-20-b"
+    ]
+    cursor = payload["_meta"]["next_cursor"]
+
+    status, payload = router.dispatch(f"/api/m3/lifecycle-logs?limit=1&cursor={cursor}")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["cursor"] == cursor
+    assert payload["_meta"]["has_more"] is True
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-2026-06-20-a"
+    ]
+    cursor = payload["_meta"]["next_cursor"]
+
+    status, payload = router.dispatch(f"/api/m3/lifecycle-logs?limit=1&cursor={cursor}")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["cursor"] == cursor
+    assert payload["_meta"]["has_more"] is False
+    assert "next_cursor" not in payload["_meta"]
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-2026-06-19"
+    ]
+
+
 def test_m3_lifecycle_log_readback_endpoint_returns_payload(tmp_path: Path) -> None:
     _write_lifecycle_log_fixtures(
         project_root=tmp_path,
