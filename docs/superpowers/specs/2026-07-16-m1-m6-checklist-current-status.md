@@ -88,6 +88,11 @@ Last_reviewed: 2026-07-16
   - 证据：DecisionLifecycleEvent/Log 顶层契约冻结（from_dict + unknown-fields + events 策略）：[contracts.py:L37-L600](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L600)
   - 证据：DecisionLifecycleEvent/Log 合同单测：[test_m3_decision_lifecycle_contracts.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_lifecycle_contracts.py#L1-L81)
   - 证据：contracts 内部 `_copy_*` 族统一 fail-closed（拒绝非 dict/list 的静默降级）：[test_m3_contract_copy_helpers_fail_closed.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_contract_copy_helpers_fail_closed.py#L1-L81)
+  - 证据：assembler/hold_exit_bridge 内部 `_copy_*` 同口径 fail-closed（去除静默 {} / []）：
+    - [assembler.py:L33-L63](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/assembler.py#L33-L63)
+    - [hold_exit_bridge.py:L17-L34](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/hold_exit_bridge.py#L17-L34)
+    - [test_m3_assembler_copy_helpers_fail_closed.py:L1-L43](file:///Users/mac/NeoTrade3/tests/unit/test_m3_assembler_copy_helpers_fail_closed.py#L1-L43)
+    - [test_m3_hold_exit_bridge.py:L1-L114](file:///Users/mac/NeoTrade3/tests/unit/test_m3_hold_exit_bridge.py#L1-L114)
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
