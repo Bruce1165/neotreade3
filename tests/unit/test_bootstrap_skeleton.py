@@ -303,9 +303,9 @@ def test_daily_master_orchestrator_builds_bootstrap_plan() -> None:
         DailyRunRequest(target_date=date(2026, 5, 19), publish_succeeded=False)
     )
 
-    assert len(plan.phases) == 6
+    assert len(plan.phases) == 8
     assert plan.preflight_report is not None
-    assert len(plan.preflight_report.checks) == 4
+    assert len(plan.preflight_report.checks) == 5
     assert any(task.task_id == "data_control.capture" for task in plan.planned_tasks)
     assert any(
         task.task_id == "cup_handle_lab.daily_review"
@@ -719,7 +719,7 @@ def test_daily_master_orchestrator_blocks_when_dependency_not_completed_yet() ->
     )
 
     assert results[0].status == RunStatus.BLOCKED
-    assert results[1] is plan.planned_tasks[1]
+    assert results[1] == plan.planned_tasks[1]
     assert executed == ["upstream.late"]
 
 

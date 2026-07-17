@@ -119,7 +119,7 @@ def test_http_smoke_bootstrap_summary_reads_stored_snapshot(tmp_path: Path) -> N
     assert status == 200
     assert payload.get("target_date") == "2026-05-19"
     assert payload.get("publish_succeeded") is True
-    assert payload.get("summary", {}).get("planned_task_count") == 6
+    assert payload.get("summary", {}).get("planned_task_count") == 10
     assert payload.get("_meta", {}).get("self_heal") == "none"
 
 
