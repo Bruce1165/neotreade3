@@ -97,8 +97,10 @@ Last_reviewed: 2026-07-16
       - [hold_exit_bridge.py:L17-L34](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/hold_exit_bridge.py#L17-L34)
       - [test_m3_assembler_copy_helpers_fail_closed.py:L1-L43](file:///Users/mac/NeoTrade3/tests/unit/test_m3_assembler_copy_helpers_fail_closed.py#L1-L43)
       - [test_m3_hold_exit_bridge.py:L1-L114](file:///Users/mac/NeoTrade3/tests/unit/test_m3_hold_exit_bridge.py#L1-L114)
-- [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
-  - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
+- [x] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
+  - 证据：CLI 入口（materialize-front-contexts），显式输入 target_date + codes + run_id/source_run_id，并落盘到 var/artifacts + var/ledgers：[cli.py:L1-L209](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/cli.py#L1-L209)
+  - 证据：单测覆盖（成功落盘 + 缺 code 全量 fail-closed 不落盘）：[test_m3_decision_engine_cli_repro_entry.py:L1-L190](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_engine_cli_repro_entry.py#L1-L190)
+  - 边界：当前入口仅覆盖 `m3_front_context` 这一类 M3 产物的可复现生成与落盘。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
   - 证据：内部 front_context store 提供 artifact/ledger read + ledger list 入口：[front_context_store.py:L235-L364](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L235-L364)
   - 证据：对外 API 路由分发（read/list/download/download-ledger）：[router.py:L1690-L1729](file:///Users/mac/NeoTrade3/apps/api/router.py#L1690-L1729)
