@@ -13,7 +13,7 @@ HOLD_STATE_OBJECT_TYPE = "hold_state"
 EXIT_STATE_OBJECT_TYPE = "exit_state"
 DECISION_LIFECYCLE_EVENT_OBJECT_TYPE = "decision_lifecycle_event"
 DECISION_LIFECYCLE_LOG_OBJECT_TYPE = "decision_lifecycle_log"
-M3_OBJECT_VERSION = 1
+M3_OBJECT_VERSION = 2
 
 
 def _copy_mapping(value: object) -> dict[str, Any]:
@@ -128,6 +128,8 @@ class IdentifyState:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     status: str
     reason: str
     evidence_ref: dict[str, Any]
@@ -142,6 +144,8 @@ class IdentifyState:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "status": self.status,
             "reason": self.reason,
             "evidence_ref": _copy_mapping(self.evidence_ref),
@@ -157,6 +161,8 @@ class IdentifyState:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "status",
             "reason",
             "evidence_ref",
@@ -173,6 +179,8 @@ class IdentifyState:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="identify_state"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="identify_state"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="identify_state"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="identify_state"),
             status=_require_non_empty_str(obj, field_name="status", object_name="identify_state"),
             reason=_require_non_empty_str(obj, field_name="reason", object_name="identify_state"),
             evidence_ref=_require_mapping(obj, field_name="evidence_ref", object_name="identify_state"),
@@ -189,6 +197,8 @@ class TrackingState:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     status: str
     maturity: str
     transition_reason: str
@@ -204,6 +214,8 @@ class TrackingState:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "status": self.status,
             "maturity": self.maturity,
             "transition_reason": self.transition_reason,
@@ -220,6 +232,8 @@ class TrackingState:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "status",
             "maturity",
             "transition_reason",
@@ -237,6 +251,8 @@ class TrackingState:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="tracking_state"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="tracking_state"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="tracking_state"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="tracking_state"),
             status=_require_non_empty_str(obj, field_name="status", object_name="tracking_state"),
             maturity=_require_non_empty_str(obj, field_name="maturity", object_name="tracking_state"),
             transition_reason=_require_non_empty_str(obj, field_name="transition_reason", object_name="tracking_state"),
@@ -254,6 +270,8 @@ class EntryState:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     status: str
     decision: str
     actionable: bool
@@ -270,6 +288,8 @@ class EntryState:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "status": self.status,
             "decision": self.decision,
             "actionable": self.actionable,
@@ -287,6 +307,8 @@ class EntryState:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "status",
             "decision",
             "actionable",
@@ -305,6 +327,8 @@ class EntryState:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="entry_state"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="entry_state"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="entry_state"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="entry_state"),
             status=_require_non_empty_str(obj, field_name="status", object_name="entry_state"),
             decision=_require_non_empty_str(obj, field_name="decision", object_name="entry_state"),
             actionable=_require_bool(obj, field_name="actionable", object_name="entry_state"),
@@ -323,6 +347,8 @@ class HoldState:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     status: str
     hold_state: str
     warning_flags: list[str]
@@ -339,6 +365,8 @@ class HoldState:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "status": self.status,
             "hold_state": self.hold_state,
             "warning_flags": _copy_text_list(self.warning_flags),
@@ -356,6 +384,8 @@ class HoldState:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "status",
             "hold_state",
             "warning_flags",
@@ -374,6 +404,8 @@ class HoldState:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="hold_state"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="hold_state"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="hold_state"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="hold_state"),
             status=_require_non_empty_str(obj, field_name="status", object_name="hold_state"),
             hold_state=_require_non_empty_str(obj, field_name="hold_state", object_name="hold_state"),
             warning_flags=_require_str_list(obj, field_name="warning_flags", object_name="hold_state"),
@@ -392,6 +424,8 @@ class ExitState:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     status: str
     exit_ready: bool
     exit_scope: str
@@ -411,6 +445,8 @@ class ExitState:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "status": self.status,
             "exit_ready": self.exit_ready,
             "exit_scope": self.exit_scope,
@@ -431,6 +467,8 @@ class ExitState:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "status",
             "exit_ready",
             "exit_scope",
@@ -452,6 +490,8 @@ class ExitState:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="exit_state"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="exit_state"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="exit_state"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="exit_state"),
             status=_require_non_empty_str(obj, field_name="status", object_name="exit_state"),
             exit_ready=_require_bool(obj, field_name="exit_ready", object_name="exit_state"),
             exit_scope=_require_non_empty_str(obj, field_name="exit_scope", object_name="exit_state"),
@@ -476,6 +516,8 @@ class DecisionLifecycleEvent:
 
     stock_code: str
     trade_date: str
+    run_id: str
+    source_run_id: str
     event: str
     source_layer: str
     stage: str
@@ -493,6 +535,8 @@ class DecisionLifecycleEvent:
             "object_version": self.object_version,
             "stock_code": self.stock_code,
             "trade_date": self.trade_date,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "event": self.event,
             "source_layer": self.source_layer,
             "stage": self.stage,
@@ -511,6 +555,8 @@ class DecisionLifecycleEvent:
             "object_version",
             "stock_code",
             "trade_date",
+            "run_id",
+            "source_run_id",
             "event",
             "source_layer",
             "stage",
@@ -536,6 +582,8 @@ class DecisionLifecycleEvent:
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="decision_lifecycle_event"),
             trade_date=_require_non_empty_str(obj, field_name="trade_date", object_name="decision_lifecycle_event"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="decision_lifecycle_event"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="decision_lifecycle_event"),
             event=_require_non_empty_str(obj, field_name="event", object_name="decision_lifecycle_event"),
             source_layer=_require_non_empty_str(obj, field_name="source_layer", object_name="decision_lifecycle_event"),
             stage=_require_non_empty_str(obj, field_name="stage", object_name="decision_lifecycle_event"),
@@ -562,6 +610,8 @@ class DecisionLifecycleLog:
     """Formal M3 per-stock decision-lifecycle log object skeleton."""
 
     stock_code: str
+    run_id: str
+    source_run_id: str
     events: list[DecisionLifecycleEvent]
     object_type: str = DECISION_LIFECYCLE_LOG_OBJECT_TYPE
     object_version: int = M3_OBJECT_VERSION
@@ -571,6 +621,8 @@ class DecisionLifecycleLog:
             "object_type": self.object_type,
             "object_version": self.object_version,
             "stock_code": self.stock_code,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "events": [event.to_payload() for event in self.events],
         }
 
@@ -581,6 +633,8 @@ class DecisionLifecycleLog:
             "object_type",
             "object_version",
             "stock_code",
+            "run_id",
+            "source_run_id",
             "events",
         }
         _reject_unknown_fields(obj, allowed_keys=allowed, object_name="decision_lifecycle_log")
@@ -598,6 +652,8 @@ class DecisionLifecycleLog:
             events.append(DecisionLifecycleEvent.from_dict(item))
         return cls(
             stock_code=_require_non_empty_str(obj, field_name="stock_code", object_name="decision_lifecycle_log"),
+            run_id=_require_non_empty_str(obj, field_name="run_id", object_name="decision_lifecycle_log"),
+            source_run_id=_require_non_empty_str(obj, field_name="source_run_id", object_name="decision_lifecycle_log"),
             events=events,
             object_type=DECISION_LIFECYCLE_LOG_OBJECT_TYPE,
             object_version=M3_OBJECT_VERSION,

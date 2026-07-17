@@ -13,6 +13,8 @@ def test_build_m3_hold_exit_bridge_maps_watch_hold_snapshot() -> None:
     bridge = build_m3_hold_exit_bridge(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         position_snapshot={
             "hold_state": "review_watch",
             "warning_flags": ["market_exit_state:review", "trend_exhaustion_armed"],
@@ -48,6 +50,8 @@ def test_build_m3_hold_exit_bridge_maps_exit_ready_snapshot() -> None:
     bridge = build_m3_hold_exit_bridge(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         position_snapshot={
             "hold_state": "exit_ready",
             "warning_flags": ["market_exit_state:confirmed"],
@@ -84,6 +88,8 @@ def test_build_m3_hold_exit_bridge_rejects_invalid_warning_flags_type() -> None:
         build_m3_hold_exit_bridge(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             position_snapshot={
                 "exit_ready": False,
                 "hold_state": "holding",
@@ -97,6 +103,8 @@ def test_build_m3_hold_exit_bridge_rejects_warning_flags_empty_string() -> None:
         build_m3_hold_exit_bridge(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             position_snapshot={
                 "exit_ready": False,
                 "hold_state": "holding",
@@ -110,5 +118,7 @@ def test_build_m3_hold_exit_bridge_rejects_non_mapping_snapshot() -> None:
         build_m3_hold_exit_bridge(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             position_snapshot=None,
         )

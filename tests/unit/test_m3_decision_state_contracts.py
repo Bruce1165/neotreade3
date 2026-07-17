@@ -15,6 +15,8 @@ def test_identify_state_roundtrip() -> None:
     obj = IdentifyState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="ok",
         reason="test",
         evidence_ref={"kind": "test"},
@@ -28,6 +30,8 @@ def test_tracking_state_roundtrip() -> None:
     obj = TrackingState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="ok",
         maturity="M1",
         transition_reason="test",
@@ -42,6 +46,8 @@ def test_entry_state_roundtrip() -> None:
     obj = EntryState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="ok",
         decision="buy",
         actionable=True,
@@ -57,6 +63,8 @@ def test_hold_state_roundtrip() -> None:
     obj = HoldState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="ok",
         hold_state="hold",
         warning_flags=["w1"],
@@ -72,6 +80,8 @@ def test_exit_state_roundtrip() -> None:
     obj = ExitState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="ok",
         exit_ready=False,
         exit_scope="local",
@@ -92,9 +102,11 @@ def test_exit_state_roundtrip() -> None:
         (
             IdentifyState,
             {
-                "object_version": 1,
+                "object_version": 2,
                 "stock_code": "600000",
                 "trade_date": "2026-07-07",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "status": "ok",
                 "reason": "x",
                 "evidence_ref": {},
@@ -108,6 +120,8 @@ def test_exit_state_roundtrip() -> None:
                 "object_type": "tracking_state",
                 "stock_code": "600000",
                 "trade_date": "2026-07-07",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "status": "ok",
                 "maturity": "M1",
                 "transition_reason": "x",
@@ -128,9 +142,11 @@ def test_state_from_dict_fail_closed_on_missing_header(
 def test_entry_state_fail_closed_on_invalid_list() -> None:
     payload = {
         "object_type": "entry_state",
-        "object_version": 1,
+        "object_version": 2,
         "stock_code": "600000",
         "trade_date": "2026-07-07",
+        "run_id": "run-001",
+        "source_run_id": "source-001",
         "status": "ok",
         "decision": "buy",
         "actionable": True,
@@ -146,9 +162,11 @@ def test_entry_state_fail_closed_on_invalid_list() -> None:
 def test_exit_state_fail_closed_on_unknown_fields() -> None:
     payload = {
         "object_type": "exit_state",
-        "object_version": 1,
+        "object_version": 2,
         "stock_code": "600000",
         "trade_date": "2026-07-07",
+        "run_id": "run-001",
+        "source_run_id": "source-001",
         "status": "ok",
         "exit_ready": False,
         "exit_scope": "local",
@@ -164,3 +182,46 @@ def test_exit_state_fail_closed_on_unknown_fields() -> None:
     with pytest.raises(ValueError):
         ExitState.from_dict(payload)
 
+
+@pytest.mark.parametrize(
+    "cls,payload",
+    [
+        (
+            IdentifyState,
+            {
+                "object_type": "identify_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
+                "status": "ok",
+                "reason": "x",
+                "evidence_ref": {},
+                "m2_cycle_ref": {},
+                "m1_constraints_ref": {},
+            },
+        ),
+        (
+            EntryState,
+            {
+                "object_type": "entry_state",
+                "object_version": 1,
+                "stock_code": "600000",
+                "trade_date": "2026-07-07",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
+                "status": "ok",
+                "decision": "buy",
+                "actionable": True,
+                "blocking_reasons": ["a"],
+                "evidence_ref": {},
+                "m2_cycle_ref": {},
+                "m1_constraints_ref": {},
+            },
+        ),
+    ],
+)
+def test_state_from_dict_rejects_v1_payload(cls, payload) -> None:
+    with pytest.raises(ValueError):
+        cls.from_dict(payload)

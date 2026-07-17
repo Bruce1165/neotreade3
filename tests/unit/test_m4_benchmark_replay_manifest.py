@@ -154,20 +154,30 @@ def _build_m3_front_context_from_cycle(
         trading_day_status=trading_day_status,
         trading_profile=profile,
     )
+    run_id = cycle.trade_date
+    source_run_id = cycle.trade_date
     return DecisionM3FrontContext(
+        run_id=run_id,
+        source_run_id=source_run_id,
         m1_constraints_ref=dict(constraints),
         identify_state=build_identify_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         tracking_state=build_tracking_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         entry_state=build_entry_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
@@ -510,7 +520,7 @@ def test_replay_refs_materializes_with_real_m2_cycle_ref_and_real_m2_shadow_bund
                         "ref_kind": "artifact",
                         "ref_id": m3_context_record_id,
                         "object_type": "m3_front_context",
-                        "object_version": 1
+                        "object_version": 2
                     }
                 }
             }
@@ -1264,7 +1274,7 @@ def test_replay_refs_runtime_fails_closed_when_real_m3_context_version_mismatche
 
     with pytest.raises(
         ValueError,
-        match="resolver_refs.m3_context_ref.object_version mismatch: expected 1",
+        match="resolver_refs.m3_context_ref.object_version mismatch: expected 2",
     ):
         run_benchmark_manifest(
             project_root=tmp_path,

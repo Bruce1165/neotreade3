@@ -712,7 +712,11 @@ def test_sell_signal_audit_rows_formalize_into_decision_lifecycle_logs() -> None
     assert engine.check_sell_signal_v2(trade, date(2026, 6, 19)) is None
     assert engine.check_sell_signal_v2(trade, date(2026, 6, 20)) is not None
 
-    logs = build_decision_lifecycle_logs(engine._sell_signal_audit_current_run)
+    logs = build_decision_lifecycle_logs(
+        engine._sell_signal_audit_current_run,
+        run_id="2026-06-20",
+        source_run_id="2026-06-20",
+    )
 
     assert len(logs) == 1
     log = logs[0]

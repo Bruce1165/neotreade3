@@ -125,6 +125,9 @@ def _build_evidence_ref(entry: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_decision_lifecycle_event_from_sell_audit_entry(
     entry: Mapping[str, Any] | None,
+    *,
+    run_id: str,
+    source_run_id: str,
 ) -> dict[str, Any]:
     """Formalize one raw sell-side audit row into a lifecycle-event payload."""
 
@@ -134,6 +137,8 @@ def build_decision_lifecycle_event_from_sell_audit_entry(
     return build_decision_lifecycle_event(
         stock_code=_text(raw_entry.get("code")),
         trade_date=_text(raw_entry.get("date")),
+        run_id=run_id,
+        source_run_id=source_run_id,
         event=event_type,
         source_layer=_resolve_source_layer(raw_entry, snapshot),
         stage=_resolve_stage(event_type, raw_entry, snapshot),
@@ -147,6 +152,9 @@ def build_decision_lifecycle_event_from_sell_audit_entry(
 
 def build_decision_lifecycle_logs(
     sell_signal_audit: list[Mapping[str, Any]] | None,
+    *,
+    run_id: str,
+    source_run_id: str,
 ) -> list[dict[str, Any]]:
     """Group current raw sell-side audit rows into per-stock lifecycle logs."""
 
@@ -172,12 +180,18 @@ def build_decision_lifecycle_logs(
             key=lambda item: (_text(item[1].get("date")), item[0]),
         )
         events = [
-            build_decision_lifecycle_event_from_sell_audit_entry(raw_entry)
+            build_decision_lifecycle_event_from_sell_audit_entry(
+                raw_entry,
+                run_id=run_id,
+                source_run_id=source_run_id,
+            )
             for _, raw_entry in ordered_rows
         ]
         logs.append(
             build_decision_lifecycle_log(
                 stock_code=stock_code,
+                run_id=run_id,
+                source_run_id=source_run_id,
                 events=events,
             ).to_payload()
         )

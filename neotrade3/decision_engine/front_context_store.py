@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 
 DECISION_M3_FRONT_CONTEXT_OBJECT_TYPE = "m3_front_context"
-DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION = 1
+DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION = 2
 
 
 def _now_iso() -> str:
@@ -25,6 +25,8 @@ def _copy_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class DecisionM3FrontContext:
+    run_id: str
+    source_run_id: str
     m1_constraints_ref: dict[str, Any]
     identify_state: dict[str, Any]
     tracking_state: dict[str, Any]
@@ -36,6 +38,8 @@ class DecisionM3FrontContext:
         return {
             "object_type": self.object_type,
             "object_version": self.object_version,
+            "run_id": self.run_id,
+            "source_run_id": self.source_run_id,
             "m1_constraints_ref": _copy_mapping(
                 self.m1_constraints_ref,
                 field_name="m3_front_context.m1_constraints_ref",
@@ -63,6 +67,8 @@ class DecisionM3FrontContext:
             "object_version",
             "record_id",
             "written_at",
+            "run_id",
+            "source_run_id",
             "m1_constraints_ref",
             "identify_state",
             "tracking_state",
@@ -94,7 +100,15 @@ class DecisionM3FrontContext:
                 "m3_front_context.object_version must equal "
                 f"{DECISION_M3_FRONT_CONTEXT_OBJECT_VERSION}"
             )
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            raise ValueError("m3_front_context.run_id must be non-empty")
+        source_run_id = str(payload.get("source_run_id") or "").strip()
+        if not source_run_id:
+            raise ValueError("m3_front_context.source_run_id must be non-empty")
         return cls(
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=_copy_mapping(
                 payload.get("m1_constraints_ref"),
                 field_name="m3_front_context.m1_constraints_ref",

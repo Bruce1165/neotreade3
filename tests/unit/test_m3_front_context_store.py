@@ -97,20 +97,30 @@ def _build_front_context() -> DecisionM3FrontContext:
         trading_day_status=trading_day_status,
         trading_profile=profile,
     )
+    run_id = "run-001"
+    source_run_id = "source-001"
     return DecisionM3FrontContext(
+        run_id=run_id,
+        source_run_id=source_run_id,
         m1_constraints_ref=dict(constraints),
         identify_state=build_identify_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         tracking_state=build_tracking_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         entry_state=build_entry_state_from_formal_inputs(
             cycle=cycle,
+            run_id=run_id,
+            source_run_id=source_run_id,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
@@ -201,9 +211,11 @@ def test_read_decision_m3_front_context_fail_closed_on_contract_mismatch(
         json.dumps(
             {
                 "object_type": "wrong_type",
-                "object_version": 1,
+                "object_version": 2,
                 "record_id": record_id,
                 "written_at": "2026-07-07T00:00:00Z",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "m1_constraints_ref": {},
                 "identify_state": {},
                 "tracking_state": {},
@@ -230,9 +242,11 @@ def test_read_decision_m3_front_context_fail_closed_on_missing_object_type(
     artifact_file.write_text(
         json.dumps(
             {
-                "object_version": 1,
+                "object_version": 2,
                 "record_id": record_id,
                 "written_at": "2026-07-07T00:00:00Z",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "m1_constraints_ref": {},
                 "identify_state": {},
                 "tracking_state": {},
@@ -262,6 +276,40 @@ def test_read_decision_m3_front_context_fail_closed_on_missing_object_version(
                 "object_type": "m3_front_context",
                 "record_id": record_id,
                 "written_at": "2026-07-07T00:00:00Z",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
+                "m1_constraints_ref": {},
+                "identify_state": {},
+                "tracking_state": {},
+                "entry_state": {},
+            },
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_decision_m3_front_context(project_root=tmp_path, record_id=record_id)
+
+
+def test_read_decision_m3_front_context_fail_closed_on_v1_payload(
+    tmp_path: Path,
+) -> None:
+    record_id = "600000-2026-07-07"
+    artifact_file = _artifact_file(project_root=tmp_path, record_id=record_id)
+    artifact_file.parent.mkdir(parents=True, exist_ok=True)
+    artifact_file.write_text(
+        json.dumps(
+            {
+                "object_type": "m3_front_context",
+                "object_version": 1,
+                "record_id": record_id,
+                "written_at": "2026-07-07T00:00:00Z",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "m1_constraints_ref": {},
                 "identify_state": {},
                 "tracking_state": {},
@@ -289,9 +337,11 @@ def test_read_decision_m3_front_context_fail_closed_on_unknown_fields(
         json.dumps(
             {
                 "object_type": "m3_front_context",
-                "object_version": 1,
+                "object_version": 2,
                 "record_id": record_id,
                 "written_at": "2026-07-07T00:00:00Z",
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "m1_constraints_ref": {},
                 "identify_state": {},
                 "tracking_state": {},

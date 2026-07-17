@@ -137,6 +137,8 @@ def build_m1_constraints_ref(
 def build_identify_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
+    run_id: str,
+    source_run_id: str,
     m1_constraints_ref: Mapping[str, Any],
     cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> IdentifyState:
@@ -159,6 +161,8 @@ def build_identify_state_from_formal_inputs(
     return build_identify_state(
         stock_code=cycle.stock_code,
         trade_date=cycle.trade_date,
+        run_id=run_id,
+        source_run_id=source_run_id,
         status=status,
         reason=reason,
         evidence_ref={
@@ -174,6 +178,8 @@ def build_identify_state_from_formal_inputs(
 def build_tracking_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
+    run_id: str,
+    source_run_id: str,
     m1_constraints_ref: Mapping[str, Any],
     cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> TrackingState:
@@ -205,6 +211,8 @@ def build_tracking_state_from_formal_inputs(
     return build_tracking_state(
         stock_code=cycle.stock_code,
         trade_date=cycle.trade_date,
+        run_id=run_id,
+        source_run_id=source_run_id,
         status=status,
         maturity=maturity,
         transition_reason=transition_reason,
@@ -221,6 +229,8 @@ def build_tracking_state_from_formal_inputs(
 def build_entry_state_from_formal_inputs(
     *,
     cycle: SmallCycle,
+    run_id: str,
+    source_run_id: str,
     m1_constraints_ref: Mapping[str, Any],
     cycle_linkage_state_ref: Mapping[str, Any] | None = None,
 ) -> EntryState:
@@ -249,6 +259,8 @@ def build_entry_state_from_formal_inputs(
     return build_entry_state(
         stock_code=cycle.stock_code,
         trade_date=cycle.trade_date,
+        run_id=run_id,
+        source_run_id=source_run_id,
         status=status,
         decision=decision,
         actionable=actionable,
@@ -267,6 +279,8 @@ def build_identify_state(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     status: str,
     reason: str,
     evidence_ref: Mapping[str, Any] | None = None,
@@ -278,6 +292,8 @@ def build_identify_state(
     return IdentifyState(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         status=_require_text(status, field_name="status"),
         reason=_require_text(reason, field_name="reason"),
         evidence_ref=_copy_mapping(evidence_ref or {}),
@@ -290,6 +306,8 @@ def build_tracking_state(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     status: str,
     maturity: str,
     transition_reason: str,
@@ -302,6 +320,8 @@ def build_tracking_state(
     return TrackingState(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         status=_require_text(status, field_name="status"),
         maturity=_require_text(maturity, field_name="maturity"),
         transition_reason=_require_text(
@@ -318,6 +338,8 @@ def build_entry_state(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     status: str,
     decision: str,
     actionable: bool,
@@ -331,6 +353,8 @@ def build_entry_state(
     return EntryState(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         status=_require_text(status, field_name="status"),
         decision=_require_text(decision, field_name="decision"),
         actionable=bool(actionable),
@@ -345,6 +369,8 @@ def build_hold_state(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     status: str,
     hold_state: str,
     warning_flags: list[str] | None = None,
@@ -358,6 +384,8 @@ def build_hold_state(
     return HoldState(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         status=_require_text(status, field_name="status"),
         hold_state=_require_text(hold_state, field_name="hold_state"),
         warning_flags=_copy_text_list(warning_flags or []),
@@ -372,6 +400,8 @@ def build_exit_state(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     status: str,
     exit_ready: bool,
     exit_scope: str,
@@ -388,6 +418,8 @@ def build_exit_state(
     return ExitState(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         status=_require_text(status, field_name="status"),
         exit_ready=bool(exit_ready),
         exit_scope=_require_text(exit_scope, field_name="exit_scope"),
@@ -417,6 +449,8 @@ def build_decision_lifecycle_event(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     event: str,
     source_layer: str,
     stage: str,
@@ -431,6 +465,8 @@ def build_decision_lifecycle_event(
     return DecisionLifecycleEvent(
         stock_code=_require_text(stock_code, field_name="stock_code"),
         trade_date=_require_text(trade_date, field_name="trade_date"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         event=_require_text(event, field_name="event"),
         source_layer=_require_text(source_layer, field_name="source_layer"),
         stage=_require_text(stage, field_name="stage"),
@@ -445,6 +481,8 @@ def build_decision_lifecycle_event(
 def build_decision_lifecycle_log(
     *,
     stock_code: str,
+    run_id: str,
+    source_run_id: str,
     events: list[Mapping[str, Any]] | None = None,
 ) -> DecisionLifecycleLog:
     """Build a formal per-stock M3 decision-lifecycle log from already-decided inputs."""
@@ -456,5 +494,7 @@ def build_decision_lifecycle_log(
         parsed_events.append(DecisionLifecycleEvent.from_dict(dict(item)))
     return DecisionLifecycleLog(
         stock_code=_require_text(stock_code, field_name="stock_code"),
+        run_id=_require_text(run_id, field_name="run_id"),
+        source_run_id=_require_text(source_run_id, field_name="source_run_id"),
         events=parsed_events,
     )

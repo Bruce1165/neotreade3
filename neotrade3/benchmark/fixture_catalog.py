@@ -115,6 +115,8 @@ def _build_front_m3_context(
     trading_day_status: D7TradingDayStatus,
     trading_profile: PF1TradingProfile,
 ) -> dict[str, Any]:
+    run_id = str(cycle.trade_date or "").strip()
+    source_run_id = str(cycle.trade_date or "").strip()
     constraints = build_m1_constraints_ref(
         d1_fact=d1_fact,
         security_master=security_master,
@@ -128,16 +130,22 @@ def _build_front_m3_context(
     )
     identify_state = build_identify_state_from_formal_inputs(
         cycle=cycle,
+        run_id=run_id,
+        source_run_id=source_run_id,
         m1_constraints_ref=constraints,
         cycle_linkage_state_ref=cycle_linkage_state_ref,
     )
     tracking_state = build_tracking_state_from_formal_inputs(
         cycle=cycle,
+        run_id=run_id,
+        source_run_id=source_run_id,
         m1_constraints_ref=constraints,
         cycle_linkage_state_ref=cycle_linkage_state_ref,
     )
     entry_state = build_entry_state_from_formal_inputs(
         cycle=cycle,
+        run_id=run_id,
+        source_run_id=source_run_id,
         m1_constraints_ref=constraints,
         cycle_linkage_state_ref=cycle_linkage_state_ref,
     )

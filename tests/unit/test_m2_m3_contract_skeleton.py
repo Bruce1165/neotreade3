@@ -70,6 +70,8 @@ def test_build_m3_front_states_returns_formal_payloads() -> None:
     identify = build_identify_state(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="identified",
         reason="small_cycle_emerging",
         m2_cycle_ref={"object_type": "small_cycle", "stock_code": "600000"},
@@ -77,6 +79,8 @@ def test_build_m3_front_states_returns_formal_payloads() -> None:
     tracking = build_tracking_state(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="tracking",
         maturity="observe",
         transition_reason="await_more_confirmation",
@@ -85,6 +89,8 @@ def test_build_m3_front_states_returns_formal_payloads() -> None:
     entry = build_entry_state(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="blocked",
         decision="wait",
         actionable=False,
@@ -111,6 +117,8 @@ def test_build_m3_hold_exit_states_returns_formal_payloads() -> None:
     hold = build_hold_state(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="watch",
         hold_state="review_watch",
         warning_flags=["market_exit_state:review"],
@@ -121,6 +129,8 @@ def test_build_m3_hold_exit_states_returns_formal_payloads() -> None:
     exit_state = build_exit_state(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run-001",
+        source_run_id="source-001",
         status="exit_ready",
         exit_ready=True,
         exit_scope="position_only",
@@ -160,6 +170,8 @@ def test_build_tracking_state_requires_transition_reason() -> None:
         build_tracking_state(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             status="tracking",
             maturity="observe",
             transition_reason="",
@@ -388,14 +400,20 @@ def test_build_front_states_from_formal_inputs_respects_constraints() -> None:
 
     identify = build_identify_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
     )
     tracking = build_tracking_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
     )
     entry = build_entry_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
     )
 
@@ -438,10 +456,14 @@ def test_build_front_states_from_formal_inputs_waits_when_cycle_only_emerging() 
 
     tracking = build_tracking_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
     )
     entry = build_entry_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
     )
 
@@ -487,11 +509,15 @@ def test_build_front_states_from_formal_inputs_respects_linkage_blocking() -> No
 
     tracking = build_tracking_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
         cycle_linkage_state_ref=linkage_state.to_payload(),
     )
     entry = build_entry_state_from_formal_inputs(
         cycle=cycle,
+        run_id=cycle.trade_date,
+        source_run_id=cycle.trade_date,
         m1_constraints_ref=constraints,
         cycle_linkage_state_ref=linkage_state.to_payload(),
     )

@@ -1972,6 +1972,8 @@ class LowFreqTradingEngineV16:
             self._conn,
             target_date=target_date,
             candidate_signals=candidate_signals,
+            run_id=target_date.isoformat(),
+            source_run_id=target_date.isoformat(),
             history_limit=20,
         )
 

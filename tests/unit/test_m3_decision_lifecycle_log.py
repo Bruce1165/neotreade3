@@ -26,7 +26,9 @@ def test_build_decision_lifecycle_event_prefers_snapshot_truth() -> None:
                 "exit_scope": "",
                 "hold_state": "observe_watch",
             },
-        }
+        },
+        run_id="run-001",
+        source_run_id="source-001",
     )
 
     assert payload["object_type"] == DECISION_LIFECYCLE_EVENT_OBJECT_TYPE
@@ -51,7 +53,9 @@ def test_build_decision_lifecycle_event_uses_conservative_confirm_fallbacks() ->
             "event": "market_exit_confirmed",
             "details": "市场退出确认",
             "scope": "market",
-        }
+        },
+        run_id="run-001",
+        source_run_id="source-001",
     )
 
     assert payload["object_type"] == DECISION_LIFECYCLE_EVENT_OBJECT_TYPE
@@ -80,7 +84,9 @@ def test_build_decision_lifecycle_event_preserves_grace_evidence_fields() -> Non
                 "exit_scope": "",
                 "hold_state": "review_watch",
             },
-        }
+        },
+        run_id="run-001",
+        source_run_id="source-001",
     )
 
     assert payload["event"] == "system_exit_downgraded"
@@ -118,7 +124,9 @@ def test_build_decision_lifecycle_logs_groups_rows_by_stock_code() -> None:
                 "event": "market_exit_confirmed",
                 "details": "A 确认",
             },
-        ]
+        ],
+        run_id="run-001",
+        source_run_id="source-001",
     )
 
     assert len(logs) == 2

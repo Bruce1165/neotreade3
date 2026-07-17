@@ -143,16 +143,22 @@ def _build_reference_cycle_and_shadow_bundle() -> tuple[
         "m1_constraints_ref": dict(constraints),
         "identify_state": build_identify_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "tracking_state": build_tracking_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
         "entry_state": build_entry_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=constraints,
             cycle_linkage_state_ref=cycle_linkage_state_ref,
         ).to_payload(),
@@ -313,6 +319,8 @@ def test_build_benchmark_assessment_from_m2_shadow_projects_watch_hold_summary()
     m3_context = build_m3_hold_exit_bridge(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="2026-07-07",
+        source_run_id="2026-07-07",
         position_snapshot={
             "hold_state": "review_watch",
             "warning_flags": ["market_exit_state:review"],
@@ -359,6 +367,8 @@ def test_build_benchmark_assessment_from_m2_shadow_projects_exit_ready_summary()
     m3_context = build_m3_hold_exit_bridge(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="2026-07-07",
+        source_run_id="2026-07-07",
         position_snapshot={
             "hold_state": "exit_ready",
             "warning_flags": ["market_exit_state:confirmed"],
@@ -446,16 +456,22 @@ def test_build_benchmark_assessment_from_m2_shadow_fails_b2_seed() -> None:
         "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
         "identify_state": build_identify_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),
         "tracking_state": build_tracking_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),
         "entry_state": build_entry_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),
@@ -552,16 +568,22 @@ def test_build_benchmark_assessment_from_m2_shadow_flags_b4_guardrail_breach() -
         "m1_constraints_ref": dict(m3_context["m1_constraints_ref"]),
         "identify_state": build_identify_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),
         "tracking_state": build_tracking_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),
         "entry_state": build_entry_state_from_formal_inputs(
             cycle=cycle,
+            run_id=cycle.trade_date,
+            source_run_id=cycle.trade_date,
             m1_constraints_ref=m3_context["m1_constraints_ref"],
             cycle_linkage_state_ref=bad_linkage.to_payload(),
         ).to_payload(),

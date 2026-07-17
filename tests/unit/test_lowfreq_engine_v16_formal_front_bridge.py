@@ -25,10 +25,12 @@ def test_build_lowfreq_formal_front_payload_from_connection_delegates_and_closes
     cursor = object()
     conn = _FakeConn(cursor)
 
-    def _fake_build(raw_cursor, *, target_date, candidate_signals, history_limit=20):
+    def _fake_build(raw_cursor, *, target_date, candidate_signals, run_id, source_run_id, history_limit=20):
         seen["cursor"] = raw_cursor
         seen["target_date"] = target_date
         seen["candidate_signals"] = list(candidate_signals)
+        seen["run_id"] = run_id
+        seen["source_run_id"] = source_run_id
         seen["history_limit"] = history_limit
         return {"status": "ok"}
 
@@ -38,6 +40,8 @@ def test_build_lowfreq_formal_front_payload_from_connection_delegates_and_closes
         lambda: conn,
         target_date=date(2026, 7, 7),
         candidate_signals=[{"code": "600460"}],
+        run_id="2026-07-07",
+        source_run_id="2026-07-07",
         history_limit=20,
     )
 
@@ -46,6 +50,8 @@ def test_build_lowfreq_formal_front_payload_from_connection_delegates_and_closes
         "cursor": cursor,
         "target_date": date(2026, 7, 7),
         "candidate_signals": [{"code": "600460"}],
+        "run_id": "2026-07-07",
+        "source_run_id": "2026-07-07",
         "history_limit": 20,
     }
     assert conn.closed is True
@@ -64,6 +70,8 @@ def test_build_lowfreq_formal_front_payload_from_connection_closes_on_build_erro
             lambda: conn,
             target_date=date(2026, 7, 7),
             candidate_signals=[{"code": "600460"}],
+            run_id="2026-07-07",
+            source_run_id="2026-07-07",
         )
     except RuntimeError as exc:
         assert str(exc) == "boom"

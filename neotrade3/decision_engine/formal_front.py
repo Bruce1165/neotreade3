@@ -66,6 +66,8 @@ def build_lowfreq_formal_front_payload(
     *,
     target_date: date,
     candidate_signals: list[dict[str, Any]],
+    run_id: str,
+    source_run_id: str,
     history_limit: int = 20,
 ) -> dict[str, Any]:
     codes = _candidate_codes(candidate_signals)
@@ -139,16 +141,22 @@ def build_lowfreq_formal_front_payload(
             )
             identify_state = build_identify_state_from_formal_inputs(
                 cycle=small_cycle,
+                run_id=run_id,
+                source_run_id=source_run_id,
                 m1_constraints_ref=constraints,
                 cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
             tracking_state = build_tracking_state_from_formal_inputs(
                 cycle=small_cycle,
+                run_id=run_id,
+                source_run_id=source_run_id,
                 m1_constraints_ref=constraints,
                 cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
             entry_state = build_entry_state_from_formal_inputs(
                 cycle=small_cycle,
+                run_id=run_id,
+                source_run_id=source_run_id,
                 m1_constraints_ref=constraints,
                 cycle_linkage_state_ref=cycle_linkage_state_ref,
             )
@@ -185,6 +193,8 @@ def build_lowfreq_formal_front_payload_from_connection(
     *,
     target_date: date,
     candidate_signals: list[dict[str, Any]],
+    run_id: str,
+    source_run_id: str,
     history_limit: int = 20,
 ) -> dict[str, Any]:
     conn = connect()
@@ -193,6 +203,8 @@ def build_lowfreq_formal_front_payload_from_connection(
             conn.cursor(),
             target_date=target_date,
             candidate_signals=candidate_signals,
+            run_id=run_id,
+            source_run_id=source_run_id,
             history_limit=history_limit,
         )
     finally:

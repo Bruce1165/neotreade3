@@ -28,9 +28,11 @@ def _write_front_context_fixtures(
         json.dumps(
             {
                 "object_type": "m3_front_context",
-                "object_version": 1,
+                "object_version": 2,
                 "record_id": record_id,
                 "written_at": written_at,
+                "run_id": "run-001",
+                "source_run_id": "source-001",
                 "m1_constraints_ref": {},
                 "identify_state": {},
                 "tracking_state": {},
@@ -189,4 +191,3 @@ def test_m3_front_contexts_list_endpoint_fails_closed_when_invalid_json_exists(
 
     assert exc.value.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert exc.value.code == "m3_front_context_ledger_invalid"
-

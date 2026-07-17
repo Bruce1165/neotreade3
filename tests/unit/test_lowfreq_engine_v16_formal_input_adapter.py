@@ -191,6 +191,8 @@ def test_build_lowfreq_formal_front_payload_consumes_adapter_output(tmp_path: Pa
             conn.cursor(),
             target_date=target,
             candidate_signals=[{"code": "000001"}],
+            run_id=target.isoformat(),
+            source_run_id=target.isoformat(),
         )
     finally:
         conn.close()

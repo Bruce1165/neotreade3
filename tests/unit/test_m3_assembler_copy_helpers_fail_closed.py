@@ -14,6 +14,8 @@ def test_build_identify_state_rejects_invalid_evidence_ref_type() -> None:
         build_identify_state(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             status="identified",
             reason="unit_test",
             evidence_ref="not-a-mapping",
@@ -25,6 +27,8 @@ def test_build_entry_state_rejects_invalid_blocking_reasons_type() -> None:
         build_entry_state(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             status="blocked",
             decision="wait",
             actionable=False,
@@ -37,6 +41,8 @@ def test_build_hold_state_rejects_warning_flags_empty_string() -> None:
         build_hold_state(
             stock_code="600000",
             trade_date="2026-07-07",
+            run_id="run-001",
+            source_run_id="source-001",
             status="watch",
             hold_state="review_watch",
             warning_flags=[""],

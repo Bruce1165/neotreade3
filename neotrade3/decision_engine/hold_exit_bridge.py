@@ -56,6 +56,8 @@ def build_m3_hold_exit_bridge(
     *,
     stock_code: str,
     trade_date: str,
+    run_id: str,
+    source_run_id: str,
     position_snapshot: Mapping[str, Any],
     m2_cycle_ref: Mapping[str, Any] | None = None,
     m1_constraints_ref: Mapping[str, Any] | None = None,
@@ -75,6 +77,8 @@ def build_m3_hold_exit_bridge(
         exit_state = build_exit_state(
             stock_code=stock_code,
             trade_date=trade_date,
+            run_id=run_id,
+            source_run_id=source_run_id,
             status="exit_ready",
             exit_ready=True,
             exit_scope=str(snapshot.get("exit_scope") or "position_only").strip(),
@@ -107,6 +111,8 @@ def build_m3_hold_exit_bridge(
         hold_state = build_hold_state(
             stock_code=stock_code,
             trade_date=trade_date,
+            run_id=run_id,
+            source_run_id=source_run_id,
             status="watch" if hold_state_value in _WATCH_HOLD_STATES else "holding",
             hold_state=hold_state_value,
             warning_flags=warning_flags,
