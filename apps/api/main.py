@@ -3341,6 +3341,7 @@ class BootstrapApiService:
         *,
         limit: int = 20,
         run_id: Optional[str] = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
         if limit <= 0:
             raise ApiError(
@@ -3348,6 +3349,13 @@ class BootstrapApiService:
                 code="invalid_limit",
                 message="limit must be a positive integer",
                 details={"limit": limit},
+            )
+        if offset < 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_offset",
+                message="offset must be a non-negative integer",
+                details={"offset": offset},
             )
         normalized_run_id: Optional[str] = None
         if run_id is not None:
@@ -3377,6 +3385,7 @@ class BootstrapApiService:
                 project_root=self.project_root,
                 limit=limit,
                 run_id=normalized_run_id,
+                offset=offset,
             )
         except Exception as exc:
             raise ApiError(
@@ -3397,6 +3406,8 @@ class BootstrapApiService:
         meta: dict[str, Any] = {
             "returned_count": len(items),
             "matched_count": int(matched_count),
+            "limit": int(limit),
+            "offset": int(offset),
         }
         if normalized_run_id is not None:
             meta["run_id"] = normalized_run_id

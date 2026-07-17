@@ -107,6 +107,28 @@ class BootstrapApiRouter:
             )
         return min(limit, int(max_limit))
 
+    @staticmethod
+    def _parse_non_negative_offset(raw_offset: object, *, default: int = 0) -> int:
+        if raw_offset is None:
+            return int(default)
+        try:
+            offset = int(str(raw_offset))
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_offset",
+                message="offset must be an integer",
+                details={"offset": raw_offset},
+            ) from exc
+        if offset < 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_offset",
+                message="offset must be a non-negative integer",
+                details={"offset": offset},
+            )
+        return offset
+
     def _normalize_path(self, raw_path: str) -> str:
         """Normalize path: support both /api/... and /api/v1/..."""
         parsed = urlparse(raw_path)
@@ -185,7 +207,7 @@ class BootstrapApiRouter:
                         "/api/m3/front-contexts/<record_id> — M3 决策前台上下文详情",
                         "/api/m3/front-contexts/<record_id>/download — 下载 M3 决策前台上下文 artifact",
                         "/api/m3/front-contexts/<record_id>/download-ledger — 下载 M3 决策前台上下文 ledger",
-                        "/api/m3/lifecycle-logs?run_id=...&limit=... — M3 决策 lifecycle log 列表",
+                        "/api/m3/lifecycle-logs?run_id=...&limit=...&offset=... — M3 决策 lifecycle log 列表",
                         "/api/m3/lifecycle-logs/<record_id> — M3 决策 lifecycle log 详情",
                         "/api/m3/lifecycle-logs/<record_id>/download — 下载 M3 决策 lifecycle log artifact",
                         "/api/m3/lifecycle-logs/<record_id>/download-ledger — 下载 M3 决策 lifecycle log ledger",
@@ -1741,11 +1763,14 @@ class BootstrapApiRouter:
         if parsed.path == "/api/m3/lifecycle-logs" or parsed.path == "/api/v1/m3/lifecycle-logs":
             raw_limit = query.get("limit", [None])[0]
             limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            raw_offset = query.get("offset", [None])[0]
+            offset = self._parse_non_negative_offset(raw_offset, default=0)
             raw_run_id = query.get("run_id", [None])[0]
             run_id = str(raw_run_id).strip() if isinstance(raw_run_id, str) else None
             return HTTPStatus.OK, self.service.decision_m3_lifecycle_logs_view(
                 limit=limit,
                 run_id=run_id,
+                offset=offset,
             )
 
         if parsed.path.startswith("/api/m3/lifecycle-logs/") or parsed.path.startswith(

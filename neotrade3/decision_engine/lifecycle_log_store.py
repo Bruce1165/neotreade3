@@ -300,11 +300,13 @@ def list_decision_m3_lifecycle_log_ledgers(
     project_root: str | Path,
     limit: int = 200,
     run_id: str | None = None,
+    offset: int = 0,
 ) -> list[DecisionM3LifecycleLogLedgerRecord]:
     records, _ = list_decision_m3_lifecycle_log_ledgers_with_count(
         project_root=project_root,
         limit=limit,
         run_id=run_id,
+        offset=offset,
     )
     return records
 
@@ -314,9 +316,12 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
     project_root: str | Path,
     limit: int = 200,
     run_id: str | None = None,
+    offset: int = 0,
 ) -> tuple[list[DecisionM3LifecycleLogLedgerRecord], int]:
     if limit <= 0:
         raise ValueError("limit must be a positive integer")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
     normalized_run_id: str | None = None
     if run_id is not None:
         normalized_run_id = str(run_id or "").strip()
@@ -332,7 +337,7 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
             raise ValueError("invalid run_id")
     root = Path(project_root) / "var/ledgers/m3_lifecycle_logs"
     if not root.exists():
-        return []
+        return [], 0
 
     records: list[DecisionM3LifecycleLogLedgerRecord] = []
     for ledger_file in root.glob("*/lifecycle_log.json"):
@@ -364,6 +369,8 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
     matched_count = len(records)
+    if offset:
+        records = records[offset:]
     if len(records) > limit:
         records = records[:limit]
     return records, matched_count
