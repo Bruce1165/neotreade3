@@ -422,6 +422,77 @@ def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id_cursor_does_not_repla
         assert item["run_id"] == "run_a"
 
 
+def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id_offset_pagination(
+    tmp_path: Path,
+) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-oldest",
+        written_at="2026-06-19T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-mid",
+        written_at="2026-06-20T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-newest",
+        written_at="2026-06-21T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_b-newest",
+        written_at="2026-06-22T00:00:00Z",
+        stock_code="300001",
+        run_id="run_b",
+    )
+
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=1")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["matched_count"] == 3
+    assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["limit"] == 1
+    assert payload["_meta"]["offset"] == 0
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a-newest"
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=1&offset=1")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["matched_count"] == 3
+    assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["limit"] == 1
+    assert payload["_meta"]["offset"] == 1
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a-mid"
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=1&offset=3")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["matched_count"] == 3
+    assert payload["_meta"]["returned_count"] == 0
+    assert payload["_meta"]["limit"] == 1
+    assert payload["_meta"]["offset"] == 3
+    assert payload["lifecycle_logs"] == []
+
+
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_run_id(
     tmp_path: Path,
 ) -> None:
