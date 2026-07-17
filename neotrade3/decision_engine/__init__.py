@@ -53,6 +53,8 @@ from .lifecycle_log_store import (
     DecisionM3LifecycleLogArtifactRecord,
     DecisionM3LifecycleLogLedgerRecord,
     build_decision_m3_lifecycle_log_record_id,
+    decode_decision_m3_lifecycle_log_list_cursor,
+    encode_decision_m3_lifecycle_log_list_cursor,
     list_decision_m3_lifecycle_log_ledgers,
     list_decision_m3_lifecycle_log_ledgers_with_count,
     materialize_decision_m3_lifecycle_log,
@@ -118,6 +120,8 @@ __all__ = [
     "list_decision_m3_lifecycle_log_ledgers",
     "list_decision_m3_lifecycle_log_ledgers_with_count",
     "build_decision_m3_lifecycle_log_record_id",
+    "encode_decision_m3_lifecycle_log_list_cursor",
+    "decode_decision_m3_lifecycle_log_list_cursor",
     "DecisionM3LifecycleLogArtifactRecord",
     "DecisionM3LifecycleLogLedgerRecord",
 ]

@@ -121,8 +121,26 @@ def test_m3_lifecycle_logs_list_endpoint_returns_records_sorted_and_limited(
     assert payload["_meta"]["matched_count"] == 2
     assert payload["_meta"]["limit"] == 1
     assert payload["_meta"]["offset"] == 0
+    assert payload["_meta"]["has_more"] is True
+    first_page_cursor = payload["_meta"]["next_cursor"]
+    assert isinstance(first_page_cursor, str)
     assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
         "300001-2026-06-20"
+    ]
+
+    status, payload = router.dispatch(
+        f"/api/m3/lifecycle-logs?limit=1&cursor={first_page_cursor}"
+    )
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["matched_count"] == 2
+    assert payload["_meta"]["limit"] == 1
+    assert payload["_meta"]["offset"] == 0
+    assert payload["_meta"]["cursor"] == first_page_cursor
+    assert payload["_meta"]["has_more"] is False
+    assert "next_cursor" not in payload["_meta"]
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-2026-06-19"
     ]
 
     status, payload = router.dispatch("/api/m3/lifecycle-logs?limit=1&offset=1")
@@ -257,6 +275,27 @@ def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id(tmp_path: Path) -> No
     for item in payload["lifecycle_logs"]:
         assert item["run_id"] == "run_a"
 
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=1")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["matched_count"] == 2
+    assert payload["_meta"]["has_more"] is True
+    run_a_cursor = payload["_meta"]["next_cursor"]
+    assert isinstance(run_a_cursor, str)
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == ["300001-run_a"]
+
+    status, payload = router.dispatch(
+        f"/api/m3/lifecycle-logs?run_id=run_a&limit=1&cursor={run_a_cursor}"
+    )
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["cursor"] == run_a_cursor
+    assert payload["_meta"]["returned_count"] == 1
+    assert payload["_meta"]["matched_count"] == 2
+    assert payload["_meta"]["has_more"] is False
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == ["300002-run_a"]
+
 
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_run_id(
     tmp_path: Path,
@@ -288,6 +327,46 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_offset(
 
     assert exc.value.status_code == HTTPStatus.BAD_REQUEST
     assert exc.value.code == "invalid_offset"
+
+
+def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_cursor(
+    tmp_path: Path,
+) -> None:
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?cursor=abc")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_cursor"
+
+
+def test_m3_lifecycle_logs_list_endpoint_returns_400_for_cursor_offset_conflict(
+    tmp_path: Path,
+) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-19",
+        written_at="2026-06-19T00:00:00Z",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-20",
+        written_at="2026-06-20T00:00:00Z",
+    )
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?limit=1")
+    assert status == HTTPStatus.OK
+    cursor = payload["_meta"]["next_cursor"]
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch(f"/api/m3/lifecycle-logs?limit=1&offset=1&cursor={cursor}")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_pagination"
 
     with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m3/lifecycle-logs?offset=abc")

@@ -207,7 +207,7 @@ class BootstrapApiRouter:
                         "/api/m3/front-contexts/<record_id> — M3 决策前台上下文详情",
                         "/api/m3/front-contexts/<record_id>/download — 下载 M3 决策前台上下文 artifact",
                         "/api/m3/front-contexts/<record_id>/download-ledger — 下载 M3 决策前台上下文 ledger",
-                        "/api/m3/lifecycle-logs?run_id=...&limit=...&offset=... — M3 决策 lifecycle log 列表",
+                        "/api/m3/lifecycle-logs?run_id=...&limit=...&offset=...&cursor=... — M3 决策 lifecycle log 列表",
                         "/api/m3/lifecycle-logs/<record_id> — M3 决策 lifecycle log 详情",
                         "/api/m3/lifecycle-logs/<record_id>/download — 下载 M3 决策 lifecycle log artifact",
                         "/api/m3/lifecycle-logs/<record_id>/download-ledger — 下载 M3 决策 lifecycle log ledger",
@@ -1767,10 +1767,13 @@ class BootstrapApiRouter:
             offset = self._parse_non_negative_offset(raw_offset, default=0)
             raw_run_id = query.get("run_id", [None])[0]
             run_id = str(raw_run_id).strip() if isinstance(raw_run_id, str) else None
+            raw_cursor = query.get("cursor", [None])[0]
+            cursor = str(raw_cursor).strip() if isinstance(raw_cursor, str) else None
             return HTTPStatus.OK, self.service.decision_m3_lifecycle_logs_view(
                 limit=limit,
                 run_id=run_id,
                 offset=offset,
+                cursor=cursor,
             )
 
         if parsed.path.startswith("/api/m3/lifecycle-logs/") or parsed.path.startswith(

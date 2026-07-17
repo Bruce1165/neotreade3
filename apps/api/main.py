@@ -74,6 +74,7 @@ from neotrade3.orchestration import load_orchestrator_config
 from neotrade3.orchestration.daily_master_orchestrator import DailyMasterOrchestrator
 from neotrade3.orchestration.models import DailyRunRequest, RunStatus
 from neotrade3.decision_engine import (
+    decode_decision_m3_lifecycle_log_list_cursor,
     list_decision_m3_front_context_ledgers,
     list_decision_m3_lifecycle_log_ledgers,
     list_decision_m3_lifecycle_log_ledgers_with_count,
@@ -3342,6 +3343,7 @@ class BootstrapApiService:
         limit: int = 20,
         run_id: Optional[str] = None,
         offset: int = 0,
+        cursor: Optional[str] = None,
     ) -> dict[str, Any]:
         if limit <= 0:
             raise ApiError(
@@ -3355,6 +3357,33 @@ class BootstrapApiService:
                 status_code=HTTPStatus.BAD_REQUEST,
                 code="invalid_offset",
                 message="offset must be a non-negative integer",
+                details={"offset": offset},
+            )
+        normalized_cursor: Optional[str] = None
+        cursor_key: Optional[tuple[str, str]] = None
+        if cursor is not None:
+            normalized_cursor = str(cursor or "").strip()
+            if not normalized_cursor:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_cursor",
+                    message="cursor must be a non-empty string",
+                    details={"cursor": cursor},
+                )
+            try:
+                cursor_key = decode_decision_m3_lifecycle_log_list_cursor(normalized_cursor)
+            except Exception as exc:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_cursor",
+                    message="invalid cursor",
+                    details={"cursor": normalized_cursor, "reason": str(exc)},
+                ) from exc
+        if cursor_key is not None and offset != 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_pagination",
+                message="cursor and offset cannot be used together",
                 details={"offset": offset},
             )
         normalized_run_id: Optional[str] = None
@@ -3381,11 +3410,12 @@ class BootstrapApiService:
                     details={"run_id": normalized_run_id},
                 )
         try:
-            records, matched_count = list_decision_m3_lifecycle_log_ledgers_with_count(
+            records, matched_count, next_cursor = list_decision_m3_lifecycle_log_ledgers_with_count(
                 project_root=self.project_root,
                 limit=limit,
                 run_id=normalized_run_id,
                 offset=offset,
+                cursor_key=cursor_key,
             )
         except Exception as exc:
             raise ApiError(
@@ -3411,6 +3441,11 @@ class BootstrapApiService:
         }
         if normalized_run_id is not None:
             meta["run_id"] = normalized_run_id
+        if normalized_cursor is not None:
+            meta["cursor"] = normalized_cursor
+        if next_cursor is not None:
+            meta["next_cursor"] = next_cursor
+        meta["has_more"] = bool(next_cursor)
         return {"_meta": meta, "lifecycle_logs": items}
 
     def decision_m3_lifecycle_log_view(self, *, record_id: str) -> dict[str, Any]:

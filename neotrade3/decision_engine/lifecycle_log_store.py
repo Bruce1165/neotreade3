@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,6 +45,57 @@ def build_decision_m3_lifecycle_log_record_id_from_report_id(
     report_id: str,
 ) -> str:
     return build_decision_m3_lifecycle_log_record_id(stock_code=stock_code, run_id=report_id)
+
+
+def encode_decision_m3_lifecycle_log_list_cursor(*, written_at: str, record_id: str) -> str:
+    normalized_written_at = str(written_at or "").strip()
+    normalized_record_id = str(record_id or "").strip()
+    if not normalized_written_at:
+        raise ValueError("written_at must be non-empty")
+    if not normalized_record_id:
+        raise ValueError("record_id must be non-empty")
+    parsed = Path(normalized_record_id)
+    if (
+        parsed.is_absolute()
+        or len(parsed.parts) != 1
+        or parsed.name != normalized_record_id
+        or normalized_record_id in {".", ".."}
+    ):
+        raise ValueError("invalid record_id")
+    raw = json.dumps(
+        {"v": 1, "written_at": normalized_written_at, "record_id": normalized_record_id},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_decision_m3_lifecycle_log_list_cursor(cursor: str) -> tuple[str, str]:
+    normalized = str(cursor or "").strip()
+    if not normalized:
+        raise ValueError("cursor must be non-empty")
+    padded = normalized + ("=" * (-len(normalized) % 4))
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except Exception as exc:
+        raise ValueError("invalid cursor") from exc
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("invalid cursor") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid cursor")
+    if int(payload.get("v", 0)) != 1:
+        raise ValueError("invalid cursor")
+    written_at = str(payload.get("written_at") or "").strip()
+    record_id = str(payload.get("record_id") or "").strip()
+    if not written_at or not record_id:
+        raise ValueError("invalid cursor")
+    parsed = Path(record_id)
+    if parsed.is_absolute() or len(parsed.parts) != 1 or parsed.name != record_id or record_id in {".", ".."}:
+        raise ValueError("invalid cursor")
+    return written_at, record_id
 
 
 @dataclass(frozen=True)
@@ -301,12 +353,14 @@ def list_decision_m3_lifecycle_log_ledgers(
     limit: int = 200,
     run_id: str | None = None,
     offset: int = 0,
+    cursor_key: tuple[str, str] | None = None,
 ) -> list[DecisionM3LifecycleLogLedgerRecord]:
-    records, _ = list_decision_m3_lifecycle_log_ledgers_with_count(
+    records, _, _ = list_decision_m3_lifecycle_log_ledgers_with_count(
         project_root=project_root,
         limit=limit,
         run_id=run_id,
         offset=offset,
+        cursor_key=cursor_key,
     )
     return records
 
@@ -317,11 +371,14 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
     limit: int = 200,
     run_id: str | None = None,
     offset: int = 0,
-) -> tuple[list[DecisionM3LifecycleLogLedgerRecord], int]:
+    cursor_key: tuple[str, str] | None = None,
+) -> tuple[list[DecisionM3LifecycleLogLedgerRecord], int, str | None]:
     if limit <= 0:
         raise ValueError("limit must be a positive integer")
     if offset < 0:
         raise ValueError("offset must be non-negative")
+    if cursor_key is not None and offset != 0:
+        raise ValueError("invalid pagination")
     normalized_run_id: str | None = None
     if run_id is not None:
         normalized_run_id = str(run_id or "").strip()
@@ -337,7 +394,7 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
             raise ValueError("invalid run_id")
     root = Path(project_root) / "var/ledgers/m3_lifecycle_logs"
     if not root.exists():
-        return [], 0
+        return [], 0, None
 
     records: list[DecisionM3LifecycleLogLedgerRecord] = []
     for ledger_file in root.glob("*/lifecycle_log.json"):
@@ -369,8 +426,23 @@ def list_decision_m3_lifecycle_log_ledgers_with_count(
 
     records.sort(key=lambda item: (item.written_at, item.record_id), reverse=True)
     matched_count = len(records)
+    if cursor_key is not None:
+        cursor_written_at, cursor_record_id = cursor_key
+        records = [
+            record
+            for record in records
+            if (record.written_at, record.record_id) < (cursor_written_at, cursor_record_id)
+        ]
     if offset:
         records = records[offset:]
+    next_cursor: str | None = None
     if len(records) > limit:
-        records = records[:limit]
-    return records, matched_count
+        returned = records[:limit]
+        if returned:
+            last = returned[-1]
+            next_cursor = encode_decision_m3_lifecycle_log_list_cursor(
+                written_at=last.written_at,
+                record_id=last.record_id,
+            )
+        records = returned
+    return records, matched_count, next_cursor
