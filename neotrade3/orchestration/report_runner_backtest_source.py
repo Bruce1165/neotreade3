@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+import uuid
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -32,11 +33,18 @@ def load_lowfreq_report_backtest_payload(
         engine.MAX_POSITIONS = int(max_positions_override)
     if execution_one_price_limit_only:
         engine.EXEC_BLOCK_ONLY_ONE_PRICE_LIMIT = True
+    start_key = start_date.isoformat()
+    end_key = end_date.isoformat()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    report_id = f"lowfreq_v16_{start_key}_{end_key}__{stamp}_{uuid.uuid4().hex[:8]}"
     metrics = engine.run_backtest(
         start_date=start_date,
         end_date=end_date,
         initial_capital=float(initial_capital),
         include_trades=True,
+        project_root=service.project_root,
+        run_id=report_id,
+        source_run_id=report_id,
     )
     trades = metrics.get("trades", []) if isinstance(metrics, dict) else []
     summary = dict(metrics) if isinstance(metrics, dict) else {}

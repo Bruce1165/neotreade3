@@ -23,6 +23,9 @@ class FakeEngine:
         end_date: date,
         initial_capital: float,
         include_trades: bool,
+        project_root: Path,
+        run_id: str,
+        source_run_id: str,
     ) -> object:
         self.calls.append(
             {
@@ -30,15 +33,19 @@ class FakeEngine:
                 "end_date": end_date,
                 "initial_capital": initial_capital,
                 "include_trades": include_trades,
+                "project_root": project_root,
+                "run_id": run_id,
+                "source_run_id": source_run_id,
             }
         )
         return self.metrics
 
 
 class FakeService:
-    def __init__(self, engine: FakeEngine) -> None:
+    def __init__(self, engine: FakeEngine, *, project_root: Path) -> None:
         self.engine = engine
         self.calls = 0
+        self.project_root = project_root
 
     def _lowfreq_engine_v16(self) -> FakeEngine:
         self.calls += 1
@@ -49,7 +56,7 @@ def test_load_lowfreq_report_backtest_payload_returns_file_json_unchanged(tmp_pa
     payload = {"summary": {"total_return_pct": 12.3}, "trades": [{"code": "600000"}]}
     backtest_json = tmp_path / "backtest.json"
     backtest_json.write_text(json.dumps(payload), encoding="utf-8")
-    service = FakeService(FakeEngine(metrics={"ignored": True}))
+    service = FakeService(FakeEngine(metrics={"ignored": True}), project_root=tmp_path)
 
     out = load_lowfreq_report_backtest_payload(
         service=service,
@@ -74,7 +81,7 @@ def test_load_lowfreq_report_backtest_payload_applies_engine_overrides_and_wraps
             "trades": [{"code": "600000", "action": "buy"}],
         }
     )
-    service = FakeService(engine)
+    service = FakeService(engine, project_root=Path("/tmp/project_root"))
 
     out = load_lowfreq_report_backtest_payload(
         service=service,
@@ -90,14 +97,16 @@ def test_load_lowfreq_report_backtest_payload_applies_engine_overrides_and_wraps
     assert service.calls == 1
     assert engine.MAX_POSITIONS == 9
     assert engine.EXEC_BLOCK_ONLY_ONE_PRICE_LIMIT is True
-    assert engine.calls == [
-        {
-            "start_date": date(2024, 12, 18),
-            "end_date": date(2026, 6, 18),
-            "initial_capital": 1000000.0,
-            "include_trades": True,
-        }
-    ]
+    assert len(engine.calls) == 1
+    call = engine.calls[0]
+    assert call["start_date"] == date(2024, 12, 18)
+    assert call["end_date"] == date(2026, 6, 18)
+    assert call["initial_capital"] == 1000000.0
+    assert call["include_trades"] is True
+    assert call["project_root"] == Path("/tmp/project_root")
+    assert isinstance(call["run_id"], str)
+    assert call["run_id"] == call["source_run_id"]
+    assert call["run_id"].startswith("lowfreq_v16_2024-12-18_2026-06-18__")
     assert out["_meta"] == {
         "status": "ok",
         "requested_by": "script",
@@ -112,8 +121,8 @@ def test_load_lowfreq_report_backtest_payload_applies_engine_overrides_and_wraps
     assert "trades" not in out["summary"]
 
 
-def test_load_lowfreq_report_backtest_payload_normalizes_non_dict_metrics() -> None:
-    service = FakeService(FakeEngine(metrics=None))
+def test_load_lowfreq_report_backtest_payload_normalizes_non_dict_metrics(tmp_path: Path) -> None:
+    service = FakeService(FakeEngine(metrics=None), project_root=tmp_path)
 
     out = load_lowfreq_report_backtest_payload(
         service=service,
