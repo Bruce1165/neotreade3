@@ -566,6 +566,7 @@ class LabRuntimeAdapter:
 
         # Get lab candidates and generate signals
         all_signals: list[dict[str, Any]] = []
+        input_candidate_codes: set[str] = set()
 
         # Try to get cup_handle_lab candidates
         cup_handle_result = LabRuntimeAdapter._run_cup_handle_lab(
@@ -577,6 +578,14 @@ class LabRuntimeAdapter:
         )
         if cup_handle_result.get("status") == "ok":
             candidates = cup_handle_result.get("candidates", [])
+            if isinstance(candidates, list):
+                for item in candidates:
+                    if isinstance(item, dict):
+                        code = str(item.get("stock_code") or item.get("code") or "").strip()
+                    else:
+                        code = str(item or "").strip()
+                    if code:
+                        input_candidate_codes.add(code)
             for c in candidates:
                 c["source"] = "cup_handle_lab"
             signals = engine.generate_signals_from_candidates(candidates)
@@ -590,6 +599,14 @@ class LabRuntimeAdapter:
         )
         if quant_result.get("status") == "ok":
             candidates = quant_result.get("candidates", [])
+            if isinstance(candidates, list):
+                for item in candidates:
+                    if isinstance(item, dict):
+                        code = str(item.get("stock_code") or item.get("code") or "").strip()
+                    else:
+                        code = str(item or "").strip()
+                    if code:
+                        input_candidate_codes.add(code)
             for c in candidates:
                 c["source"] = "quant_trading_lab"
                 c["resonance_score"] = c.get("certainty", 0)
@@ -628,6 +645,7 @@ class LabRuntimeAdapter:
             "message": f"模拟交易完成：{len(entry_trades)} 笔买入，{len(exit_trades)} 笔卖出，当前持仓 {len(open_positions)} 只",
             "target_date": target_date,
             "strategy_id": strategy_id,
+            "candidates": sorted(input_candidate_codes),
             "trades": {
                 "entry_count": len(entry_trades),
                 "exit_count": len(exit_trades),

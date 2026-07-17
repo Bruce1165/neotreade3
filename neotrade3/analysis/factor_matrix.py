@@ -530,7 +530,7 @@ class FactorMatrixBuilder:
         if isinstance(artifacts, dict):
             for _key, value in artifacts.items():
                 if isinstance(value, dict):
-                    for sub_key in ("pool", "hits", "stocks", "candidates"):
+                    for sub_key in ("pool", "hits", "stocks", "candidates", "positions"):
                         if sub_key in value and isinstance(value[sub_key], list):
                             codes = value[sub_key]
                             return [
@@ -542,9 +542,23 @@ class FactorMatrixBuilder:
                                 for c in codes
                                 if c
                             ]
+                    trades = value.get("trades")
+                    if isinstance(trades, dict):
+                        for trade_key in ("entry_trades", "exit_trades"):
+                            trade_items = trades.get(trade_key)
+                            if isinstance(trade_items, list):
+                                return [
+                                    {
+                                        "code": str(c) if isinstance(c, (str, int)) else str(c.get("code", "")),
+                                        "lab_name": lab_name,
+                                        "lab_id": lab_id,
+                                    }
+                                    for c in trade_items
+                                    if c
+                                ]
 
         # 直接在顶层查找
-        for key in ("pool", "hits", "stocks", "candidates"):
+        for key in ("pool", "hits", "stocks", "candidates", "positions"):
             if key in data and isinstance(data[key], list):
                 codes = data[key]
                 return [
@@ -556,6 +570,20 @@ class FactorMatrixBuilder:
                     for c in codes
                     if c
                 ]
+        trades = data.get("trades")
+        if isinstance(trades, dict):
+            for trade_key in ("entry_trades", "exit_trades"):
+                trade_items = trades.get(trade_key)
+                if isinstance(trade_items, list):
+                    return [
+                        {
+                            "code": str(c) if isinstance(c, (str, int)) else str(c.get("code", "")),
+                            "lab_name": lab_name,
+                            "lab_id": lab_id,
+                        }
+                        for c in trade_items
+                        if c
+                    ]
         return []
 
     # ------------------------------------------------------------------

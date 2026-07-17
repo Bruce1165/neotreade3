@@ -94,6 +94,11 @@ def build_lab_runtime_artifacts_payload(
             "status": run_status,
             "message": str(runtime_result.get("message", "")),
             "strategy_id": str(runtime_result.get("strategy_id", "")),
+            "candidates": (
+                runtime_result.get("candidates", [])
+                if isinstance(runtime_result.get("candidates", []), list)
+                else []
+            ),
             "cash_yuan": float(portfolio.get("cash", 0.0) or 0.0)
             if isinstance(portfolio, dict)
             else 0.0,
