@@ -35,6 +35,8 @@ def test_to_payload_fail_closed_when_mapping_fields_are_invalid() -> None:
     obj = IdentifyState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run_1",
+        source_run_id="source_run_1",
         status="ok",
         reason="x",
         evidence_ref=None,  # type: ignore[arg-type]
@@ -49,6 +51,8 @@ def test_to_payload_fail_closed_when_list_fields_are_invalid() -> None:
     obj = EntryState(
         stock_code="600000",
         trade_date="2026-07-07",
+        run_id="run_1",
+        source_run_id="source_run_1",
         status="ok",
         decision="buy",
         actionable=True,
@@ -65,6 +69,8 @@ def test_decision_lifecycle_log_to_payload_emits_event_payloads() -> None:
     event = DecisionLifecycleEvent(
         stock_code="300001",
         trade_date="2026-06-18",
+        run_id="run_1",
+        source_run_id="source_run_1",
         event="market_exit_watch_started",
         source_layer="sell",
         stage="hold_confirmed",
@@ -74,7 +80,11 @@ def test_decision_lifecycle_log_to_payload_emits_event_payloads() -> None:
         position_contract_snapshot={},
         evidence_ref={},
     )
-    log = DecisionLifecycleLog(stock_code="300001", events=[event])
+    log = DecisionLifecycleLog(
+        stock_code="300001",
+        run_id="run_1",
+        source_run_id="source_run_1",
+        events=[event],
+    )
     payload = log.to_payload()
     assert payload["events"][0]["object_type"] == "decision_lifecycle_event"
-
