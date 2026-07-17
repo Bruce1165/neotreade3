@@ -547,8 +547,22 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_run_id(
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_offset(
     tmp_path: Path,
 ) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-19",
+        written_at="2026-06-19T00:00:00Z",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-2026-06-20",
+        written_at="2026-06-20T00:00:00Z",
+    )
     service = BootstrapApiService(project_root=tmp_path)
     router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?limit=1")
+    assert status == HTTPStatus.OK
+    cursor = payload["_meta"]["next_cursor"]
 
     with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m3/lifecycle-logs?offset=-1")
@@ -564,6 +578,18 @@ def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_offset(
 
     with pytest.raises(ApiError) as exc:
         router.dispatch("/api/m3/lifecycle-logs?run_id=2026-06-20&offset=abc")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_offset"
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch(f"/api/m3/lifecycle-logs?run_id=..&offset=-1&cursor={cursor}")
+
+    assert exc.value.status_code == HTTPStatus.BAD_REQUEST
+    assert exc.value.code == "invalid_offset"
+
+    with pytest.raises(ApiError) as exc:
+        router.dispatch("/api/m3/lifecycle-logs?run_id=..&offset=-1&cursor=abc")
 
     assert exc.value.status_code == HTTPStatus.BAD_REQUEST
     assert exc.value.code == "invalid_offset"
