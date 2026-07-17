@@ -347,6 +347,81 @@ def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id(tmp_path: Path) -> No
     assert [item["record_id"] for item in payload["lifecycle_logs"]] == ["300002-run_a"]
 
 
+def test_m3_lifecycle_logs_list_endpoint_filters_by_run_id_cursor_does_not_replay_last_item(
+    tmp_path: Path,
+) -> None:
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-old",
+        written_at="2026-06-19T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-a",
+        written_at="2026-06-20T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_a-b",
+        written_at="2026-06-20T00:00:00Z",
+        stock_code="300001",
+        run_id="run_a",
+    )
+    _write_lifecycle_log_fixtures(
+        project_root=tmp_path,
+        record_id="300001-run_b-newer",
+        written_at="2026-06-21T00:00:00Z",
+        stock_code="300001",
+        run_id="run_b",
+    )
+
+    service = BootstrapApiService(project_root=tmp_path)
+    router = BootstrapApiRouter(service)
+
+    status, payload = router.dispatch("/api/m3/lifecycle-logs?run_id=run_a&limit=1")
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["has_more"] is True
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a-b"
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+    cursor = payload["_meta"]["next_cursor"]
+
+    status, payload = router.dispatch(
+        f"/api/m3/lifecycle-logs?run_id=run_a&limit=1&cursor={cursor}"
+    )
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["cursor"] == cursor
+    assert payload["_meta"]["has_more"] is True
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a-a"
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+    cursor = payload["_meta"]["next_cursor"]
+
+    status, payload = router.dispatch(
+        f"/api/m3/lifecycle-logs?run_id=run_a&limit=1&cursor={cursor}"
+    )
+    assert status == HTTPStatus.OK
+    assert payload["_meta"]["run_id"] == "run_a"
+    assert payload["_meta"]["cursor"] == cursor
+    assert payload["_meta"]["has_more"] is False
+    assert "next_cursor" not in payload["_meta"]
+    assert [item["record_id"] for item in payload["lifecycle_logs"]] == [
+        "300001-run_a-old"
+    ]
+    for item in payload["lifecycle_logs"]:
+        assert item["run_id"] == "run_a"
+
+
 def test_m3_lifecycle_logs_list_endpoint_returns_400_for_invalid_run_id(
     tmp_path: Path,
 ) -> None:
