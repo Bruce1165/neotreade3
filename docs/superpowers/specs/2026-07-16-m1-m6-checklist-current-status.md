@@ -79,20 +79,24 @@ Last_reviewed: 2026-07-16
 
 ### 4.1 Checklist
 
-- [ ] 决策对象契约已冻结（信号、理由、约束、版本、run_id/source_run_id）
-  - 证据：存在形式化对象 skeleton（IdentifyState/EntryState 等）：[contracts.py:L1-L120](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L1-L120)
-  - 证据：front_context 顶层契约已收敛为“显式版本 + 未知字段拒绝”（fail-closed）：[front_context_store.py:L57-L111](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L57-L111)
-  - 证据：单测覆盖（缺 object_type/object_version、未知字段均拒绝）：[test_m3_front_context_store.py:L170-L309](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L309)
-  - 证据：Identify/Tracking/Entry/Hold/Exit 顶层契约冻结（显式 object_type/object_version + 未知字段拒绝 + 字段类型/必填校验）：[contracts.py:L37-L470](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L470)
-  - 证据：state 合同 fail-closed 单测（header 缺失/未知字段/list 非法等）：[test_m3_decision_state_contracts.py:L1-L167](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_state_contracts.py#L1-L167)
-  - 证据：DecisionLifecycleEvent/Log 顶层契约冻结（from_dict + unknown-fields + events 策略）：[contracts.py:L37-L600](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L600)
-  - 证据：DecisionLifecycleEvent/Log 合同单测：[test_m3_decision_lifecycle_contracts.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_lifecycle_contracts.py#L1-L81)
-  - 证据：contracts 内部 `_copy_*` 族统一 fail-closed（拒绝非 dict/list 的静默降级）：[test_m3_contract_copy_helpers_fail_closed.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_contract_copy_helpers_fail_closed.py#L1-L81)
-  - 证据：assembler/hold_exit_bridge 内部 `_copy_*` 同口径 fail-closed（去除静默 {} / []）：
-    - [assembler.py:L33-L63](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/assembler.py#L33-L63)
-    - [hold_exit_bridge.py:L17-L34](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/hold_exit_bridge.py#L17-L34)
-    - [test_m3_assembler_copy_helpers_fail_closed.py:L1-L43](file:///Users/mac/NeoTrade3/tests/unit/test_m3_assembler_copy_helpers_fail_closed.py#L1-L43)
-    - [test_m3_hold_exit_bridge.py:L1-L114](file:///Users/mac/NeoTrade3/tests/unit/test_m3_hold_exit_bridge.py#L1-L114)
+- [ ] 决策对象契约已冻结（聚合项：run_id/source_run_id 尚未纳入）
+  - [x] front_context 契约冻结（显式版本 + 未知字段拒绝，fail-closed）
+    - 证据：front_context 顶层契约已收敛为“显式版本 + 未知字段拒绝”（fail-closed）：[front_context_store.py:L57-L111](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L57-L111)
+    - 证据：单测覆盖（缺 object_type/object_version、未知字段均拒绝）：[test_m3_front_context_store.py:L170-L309](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L170-L309)
+  - [x] state 契约冻结（Identify/Tracking/Entry/Hold/Exit）
+    - 证据：存在形式化对象 skeleton（IdentifyState/EntryState 等）：[contracts.py:L1-L120](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L1-L120)
+    - 证据：Identify/Tracking/Entry/Hold/Exit 顶层契约冻结（显式 object_type/object_version + 未知字段拒绝 + 字段类型/必填校验）：[contracts.py:L37-L470](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L470)
+    - 证据：state 合同 fail-closed 单测（header 缺失/未知字段/list 非法等）：[test_m3_decision_state_contracts.py:L1-L167](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_state_contracts.py#L1-L167)
+  - [x] lifecycle 契约冻结（DecisionLifecycleEvent/Log）
+    - 证据：DecisionLifecycleEvent/Log 顶层契约冻结（from_dict + unknown-fields + events 策略）：[contracts.py:L37-L600](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/contracts.py#L37-L600)
+    - 证据：DecisionLifecycleEvent/Log 合同单测：[test_m3_decision_lifecycle_contracts.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_decision_lifecycle_contracts.py#L1-L81)
+  - [x] copy helpers 契约冻结（contracts + assembler/hold_exit_bridge；去除静默 {} / []）
+    - 证据：contracts 内部 `_copy_*` 族统一 fail-closed（拒绝非 dict/list 的静默降级）：[test_m3_contract_copy_helpers_fail_closed.py:L1-L81](file:///Users/mac/NeoTrade3/tests/unit/test_m3_contract_copy_helpers_fail_closed.py#L1-L81)
+    - 证据：assembler/hold_exit_bridge 内部 `_copy_*` 同口径 fail-closed（去除静默 {} / []）：
+      - [assembler.py:L33-L63](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/assembler.py#L33-L63)
+      - [hold_exit_bridge.py:L17-L34](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/hold_exit_bridge.py#L17-L34)
+      - [test_m3_assembler_copy_helpers_fail_closed.py:L1-L43](file:///Users/mac/NeoTrade3/tests/unit/test_m3_assembler_copy_helpers_fail_closed.py#L1-L43)
+      - [test_m3_hold_exit_bridge.py:L1-L114](file:///Users/mac/NeoTrade3/tests/unit/test_m3_hold_exit_bridge.py#L1-L114)
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
   - 证据：未在当前切片内定位到“决策引擎独立运行入口”的可复现执行方式。
 - [x] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）

@@ -94,7 +94,11 @@ Last_reviewed: 2026-07-16
 
 ### 5.2 Checklist
 
-- [ ] 决策对象契约已冻结（信号、理由、约束、版本、run_id/source_run_id）
+- [ ] 决策对象契约已冻结（聚合项）
+  - [ ] front_context 契约冻结
+  - [ ] state 契约冻结（Identify/Tracking/Entry/Hold/Exit）
+  - [ ] lifecycle 契约冻结（DecisionLifecycleEvent/Log）
+  - [ ] copy helpers 契约冻结（contracts + assembler/hold_exit_bridge）
 - [ ] 决策生成入口可复现（运行参数、依赖输入、输出落点明确）
 - [ ] 决策结果具备 readback/list/download 能力（对外 API 或内部入口）
 - [ ] 决策失败语义明确（输入缺失/契约不满足 fail-closed；展示可降级 degraded）
