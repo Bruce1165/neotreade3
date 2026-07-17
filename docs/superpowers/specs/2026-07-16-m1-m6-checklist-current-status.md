@@ -115,6 +115,8 @@ Last_reviewed: 2026-07-16
 - [x] 决策可审计（至少包含输入引用与关键派生/中间状态的定位线索）
   - 证据：m3_front_context ledger 写入审计索引字段（状态摘要 + 输入引用摘要）并包含 artifact_sha256：[front_context_store.py:L296-L425](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/front_context_store.py#L296-L425)
   - 证据：单测覆盖（ledger 字段齐全 + sha256 可比对）：[test_m3_front_context_store.py:L131-L183](file:///Users/mac/NeoTrade3/tests/unit/test_m3_front_context_store.py#L131-L183)
+  - 证据：m3_lifecycle_log store（artifact+ledger 双写 + 审计摘要 + artifact_sha256）：[lifecycle_log_store.py:L1-L332](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/lifecycle_log_store.py#L1-L332)
+  - 证据：lifecycle log API（list/read/download/download-ledger）与 fail-closed 单测：[test_m3_lifecycle_log_api_readback.py:L1-L213](file:///Users/mac/NeoTrade3/tests/unit/test_m3_lifecycle_log_api_readback.py#L1-L213)
 
 ## 5. M4 基准评估层（Benchmark Layer）
 

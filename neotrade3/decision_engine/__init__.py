@@ -49,6 +49,18 @@ from .front_context_store import (
     write_decision_m3_front_context_artifact,
     write_decision_m3_front_context_ledger,
 )
+from .lifecycle_log_store import (
+    DecisionM3LifecycleLogArtifactRecord,
+    DecisionM3LifecycleLogLedgerRecord,
+    build_decision_m3_lifecycle_log_record_id,
+    list_decision_m3_lifecycle_log_ledgers,
+    materialize_decision_m3_lifecycle_log,
+    read_decision_m3_lifecycle_log,
+    read_decision_m3_lifecycle_log_artifact,
+    read_decision_m3_lifecycle_log_ledger,
+    write_decision_m3_lifecycle_log_artifact,
+    write_decision_m3_lifecycle_log_ledger,
+)
 from .hold_exit_bridge import build_m3_hold_exit_bridge
 from .projections import project_lowfreq_formal_front
 
@@ -94,6 +106,16 @@ __all__ = [
     "read_decision_m3_front_context",
     "read_decision_m3_front_context_artifact",
     "read_decision_m3_front_context_ledger",
+    "read_decision_m3_lifecycle_log",
+    "read_decision_m3_lifecycle_log_artifact",
+    "read_decision_m3_lifecycle_log_ledger",
     "write_decision_m3_front_context_artifact",
     "write_decision_m3_front_context_ledger",
+    "write_decision_m3_lifecycle_log_artifact",
+    "write_decision_m3_lifecycle_log_ledger",
+    "materialize_decision_m3_lifecycle_log",
+    "list_decision_m3_lifecycle_log_ledgers",
+    "build_decision_m3_lifecycle_log_record_id",
+    "DecisionM3LifecycleLogArtifactRecord",
+    "DecisionM3LifecycleLogLedgerRecord",
 ]

@@ -75,10 +75,14 @@ from neotrade3.orchestration.daily_master_orchestrator import DailyMasterOrchest
 from neotrade3.orchestration.models import DailyRunRequest, RunStatus
 from neotrade3.decision_engine import (
     list_decision_m3_front_context_ledgers,
+    list_decision_m3_lifecycle_log_ledgers,
     project_lowfreq_formal_front,
     read_decision_m3_front_context,
     read_decision_m3_front_context_artifact,
     read_decision_m3_front_context_ledger,
+    read_decision_m3_lifecycle_log,
+    read_decision_m3_lifecycle_log_artifact,
+    read_decision_m3_lifecycle_log_ledger,
 )
 from neotrade3.decision_engine.buy_signal_audit_contract import (
     normalize_execution_block_reason,
@@ -3284,6 +3288,238 @@ class BootstrapApiService:
                 status_code=HTTPStatus.NOT_FOUND,
                 code="m3_front_context_ledger_not_found",
                 message="m3 front context ledger not found",
+                details={"record_id": normalized_record_id},
+            )
+        filename = ledger_path.name
+        return ApiBinaryResponse(
+            body=ledger_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def _normalize_m3_lifecycle_log_record_id(self, value: str, *, error_code: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code=error_code,
+                message="record_id must be a non-empty string",
+                details={"record_id": value},
+            )
+        parsed = Path(normalized)
+        if parsed.is_absolute() or len(parsed.parts) != 1 or parsed.name != normalized or normalized in {".", ".."}:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code=error_code,
+                message="invalid record_id",
+                details={"record_id": value},
+            )
+        return normalized
+
+    def _resolve_m3_lifecycle_log_file_under_root(
+        self,
+        *,
+        root_dir: Path,
+        relative_path: Path,
+    ) -> Path:
+        root_resolved = root_dir.resolve()
+        resolved = (root_dir / relative_path).resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_download_path_escape",
+                message="invalid m3 lifecycle log download path",
+                details={"root": str(root_dir), "path": str(resolved)},
+            ) from exc
+        return resolved
+
+    def decision_m3_lifecycle_logs_view(self, *, limit: int = 20) -> dict[str, Any]:
+        if limit <= 0:
+            raise ApiError(
+                status_code=HTTPStatus.BAD_REQUEST,
+                code="invalid_limit",
+                message="limit must be a positive integer",
+                details={"limit": limit},
+            )
+        try:
+            records = list_decision_m3_lifecycle_log_ledgers(
+                project_root=self.project_root,
+                limit=limit,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_ledger_invalid",
+                message="invalid m3 lifecycle log ledger",
+                details={"reason": str(exc)},
+            ) from exc
+        items = [
+            {
+                **record.__dict__,
+                "url": f"/api/m3/lifecycle-logs/{record.record_id}",
+                "download_url": f"/api/m3/lifecycle-logs/{record.record_id}/download",
+                "download_ledger_url": f"/api/m3/lifecycle-logs/{record.record_id}/download-ledger",
+            }
+            for record in records
+        ]
+        return {"_meta": {"returned_count": len(items)}, "lifecycle_logs": items}
+
+    def decision_m3_lifecycle_log_view(self, *, record_id: str) -> dict[str, Any]:
+        normalized_record_id = self._normalize_m3_lifecycle_log_record_id(
+            record_id,
+            error_code="invalid_record_id",
+        )
+        try:
+            record = read_decision_m3_lifecycle_log_ledger(
+                project_root=self.project_root,
+                record_id=normalized_record_id,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_ledger_invalid",
+                message="invalid m3 lifecycle log ledger",
+                details={"record_id": normalized_record_id, "reason": str(exc)},
+            ) from exc
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_not_found",
+                message="m3 lifecycle log ledger not found",
+                details={"record_id": normalized_record_id},
+            )
+        try:
+            payload = read_decision_m3_lifecycle_log_artifact(
+                project_root=self.project_root,
+                record_id=normalized_record_id,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_artifact_invalid",
+                message="invalid m3 lifecycle log artifact",
+                details={"record_id": normalized_record_id, "reason": str(exc)},
+            ) from exc
+        if payload is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_artifact_not_found",
+                message="m3 lifecycle log artifact not found",
+                details={"record_id": normalized_record_id},
+            )
+        try:
+            lifecycle_log = read_decision_m3_lifecycle_log(
+                project_root=self.project_root,
+                record_id=normalized_record_id,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_contract_invalid",
+                message="invalid m3 lifecycle log contract",
+                details={"record_id": normalized_record_id, "reason": str(exc)},
+            ) from exc
+        if lifecycle_log is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_artifact_not_found",
+                message="m3 lifecycle log artifact not found",
+                details={"record_id": normalized_record_id},
+            )
+        return {
+            "_meta": {"status": "ok"},
+            "lifecycle_log": record.__dict__,
+            "lifecycle_log_payload": lifecycle_log.to_payload(),
+            "lifecycle_log_artifact": payload,
+        }
+
+    def decision_m3_lifecycle_log_download_view(self, *, record_id: str) -> ApiBinaryResponse:
+        normalized_record_id = self._normalize_m3_lifecycle_log_record_id(
+            record_id,
+            error_code="invalid_record_id",
+        )
+        try:
+            record = read_decision_m3_lifecycle_log_ledger(
+                project_root=self.project_root,
+                record_id=normalized_record_id,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_ledger_invalid",
+                message="invalid m3 lifecycle log ledger",
+                details={"record_id": normalized_record_id, "reason": str(exc)},
+            ) from exc
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_not_found",
+                message="m3 lifecycle log ledger not found",
+                details={"record_id": normalized_record_id},
+            )
+        domain_root = self.project_root / "var/artifacts/m3_lifecycle_logs"
+        artifact_filename = Path(str(record.artifact_path or "")).name.strip()
+        if not artifact_filename:
+            artifact_filename = "lifecycle_log.json"
+        artifact_path = self._resolve_m3_lifecycle_log_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_record_id) / artifact_filename,
+        )
+        if not artifact_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_artifact_not_found",
+                message="m3 lifecycle log artifact not found",
+                details={"record_id": normalized_record_id},
+            )
+        filename = artifact_path.name
+        return ApiBinaryResponse(
+            body=artifact_path.read_bytes(),
+            content_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    def decision_m3_lifecycle_log_ledger_download_view(
+        self, *, record_id: str
+    ) -> ApiBinaryResponse:
+        normalized_record_id = self._normalize_m3_lifecycle_log_record_id(
+            record_id,
+            error_code="invalid_record_id",
+        )
+        try:
+            record = read_decision_m3_lifecycle_log_ledger(
+                project_root=self.project_root,
+                record_id=normalized_record_id,
+            )
+        except Exception as exc:
+            raise ApiError(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                code="m3_lifecycle_log_ledger_invalid",
+                message="invalid m3 lifecycle log ledger",
+                details={"record_id": normalized_record_id, "reason": str(exc)},
+            ) from exc
+        if record is None:
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_not_found",
+                message="m3 lifecycle log ledger not found",
+                details={"record_id": normalized_record_id},
+            )
+        domain_root = self.project_root / "var/ledgers/m3_lifecycle_logs"
+        ledger_filename = Path(str(record.ledger_path or "")).name.strip()
+        if not ledger_filename:
+            ledger_filename = "lifecycle_log.json"
+        ledger_path = self._resolve_m3_lifecycle_log_file_under_root(
+            root_dir=domain_root,
+            relative_path=Path(normalized_record_id) / ledger_filename,
+        )
+        if not ledger_path.exists():
+            raise ApiError(
+                status_code=HTTPStatus.NOT_FOUND,
+                code="m3_lifecycle_log_ledger_not_found",
+                message="m3 lifecycle log ledger not found",
                 details={"record_id": normalized_record_id},
             )
         filename = ledger_path.name

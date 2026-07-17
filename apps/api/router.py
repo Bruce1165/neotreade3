@@ -25,6 +25,12 @@ class BootstrapApiRouter:
     _EXPECTED_M3_FRONT_CONTEXTS_DOWNLOAD = (
         "expected /api/m3/front-contexts/<record_id>/(download|download-ledger)"
     )
+    _EXPECTED_M3_LIFECYCLE_LOGS_BASE = (
+        "expected /api/m3/lifecycle-logs/<record_id>[/download|/download-ledger]"
+    )
+    _EXPECTED_M3_LIFECYCLE_LOGS_DOWNLOAD = (
+        "expected /api/m3/lifecycle-logs/<record_id>/(download|download-ledger)"
+    )
     _EXPECTED_GOVERNANCE_FINAL_VALIDATIONS_BASE = (
         "expected /api/governance/final-validations/<source_run_id>[/download|/download-ledger]"
     )
@@ -179,6 +185,10 @@ class BootstrapApiRouter:
                         "/api/m3/front-contexts/<record_id> — M3 决策前台上下文详情",
                         "/api/m3/front-contexts/<record_id>/download — 下载 M3 决策前台上下文 artifact",
                         "/api/m3/front-contexts/<record_id>/download-ledger — 下载 M3 决策前台上下文 ledger",
+                        "/api/m3/lifecycle-logs?limit=... — M3 决策 lifecycle log 列表",
+                        "/api/m3/lifecycle-logs/<record_id> — M3 决策 lifecycle log 详情",
+                        "/api/m3/lifecycle-logs/<record_id>/download — 下载 M3 决策 lifecycle log artifact",
+                        "/api/m3/lifecycle-logs/<record_id>/download-ledger — 下载 M3 决策 lifecycle log ledger",
                         "/api/data-control — 数据控制状态",
                         "/api/data-control/m1/d1/daily-price-facts?date=YYYY-MM-DD — M1 D1 正式对象投影",
                         "/api/data-control/m1/d7/security-master?codes=xxx — M1 D7 证券主数据投影",
@@ -1727,6 +1737,47 @@ class BootstrapApiRouter:
                     record_id=record_id
                 )
             return HTTPStatus.OK, self.service.decision_m3_front_context_view(record_id=record_id)
+
+        if parsed.path == "/api/m3/lifecycle-logs" or parsed.path == "/api/v1/m3/lifecycle-logs":
+            raw_limit = query.get("limit", [None])[0]
+            limit = self._parse_positive_limit(raw_limit, default=20, max_limit=200)
+            return HTTPStatus.OK, self.service.decision_m3_lifecycle_logs_view(limit=limit)
+
+        if parsed.path.startswith("/api/m3/lifecycle-logs/") or parsed.path.startswith(
+            "/api/v1/m3/lifecycle-logs/"
+        ):
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) not in {4, 5}:
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_path",
+                    message=self._EXPECTED_M3_LIFECYCLE_LOGS_BASE,
+                    details={"path": parsed.path},
+                )
+            _, _, _, record_id, *rest = parts
+            if not record_id.strip():
+                raise ApiError(
+                    status_code=HTTPStatus.BAD_REQUEST,
+                    code="invalid_record_id",
+                    message="record_id must be a non-empty string",
+                    details={"record_id": record_id},
+                )
+            if rest:
+                if rest[0] == "download-ledger":
+                    return HTTPStatus.OK, self.service.decision_m3_lifecycle_log_ledger_download_view(
+                        record_id=record_id
+                    )
+                if rest[0] != "download":
+                    raise ApiError(
+                        status_code=HTTPStatus.BAD_REQUEST,
+                        code="invalid_path",
+                        message=self._EXPECTED_M3_LIFECYCLE_LOGS_DOWNLOAD,
+                        details={"path": parsed.path},
+                    )
+                return HTTPStatus.OK, self.service.decision_m3_lifecycle_log_download_view(
+                    record_id=record_id
+                )
+            return HTTPStatus.OK, self.service.decision_m3_lifecycle_log_view(record_id=record_id)
 
         if parsed.path == "/api/strategies" or parsed.path == "/api/v1/strategies":
             raw_limit = query.get("limit", [None])[0]
