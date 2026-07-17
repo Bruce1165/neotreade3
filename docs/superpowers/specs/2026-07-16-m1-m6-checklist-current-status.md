@@ -148,8 +148,9 @@ Last_reviewed: 2026-07-16
 
 ### 5.1 Checklist
 
-- [ ] Benchmark 对象契约已冻结（评分、对比基准、时间窗口、版本、证据引用）
-  - 证据：存在形式化对象定义（BenchmarkSample/AssessmentSummary 等）：[contracts.py:L64-L120](file:///Users/mac/NeoTrade3/neotrade3/benchmark/contracts.py#L64-L120)
+- [x] Benchmark 对象契约已冻结（评分、对比基准、时间窗口、版本、证据引用）
+  - 证据：M4 Benchmark 对象契约单一真相源（对象清单 + 版本/命名 + 落盘形态 + 运行入口锚点）：[2026-07-17-m4-benchmark-objects-ssot.md:L1-L131](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m4-benchmark-objects-ssot.md#L1-L131)
+  - 证据：形式化对象定义（BenchmarkSample/AssessmentSummary/BenchmarkAssessmentResult 等）：[contracts.py:L64-L502](file:///Users/mac/NeoTrade3/neotrade3/benchmark/contracts.py#L64-L502)
 - [x] Benchmark 生成入口可复现（输入范围、时间窗口、输出落点）
   - 证据：Worker BENCHMARK executor 调用 `run_benchmark_for_manifest(...)` 并返回 ledger/artifact refs：[main.py:L304-L338](file:///Users/mac/NeoTrade3/apps/worker/main.py#L304-L338)
   - 证据：Daily orchestrator phases 显式包含 BENCHMARK 阶段：[main.py:L758-L769](file:///Users/mac/NeoTrade3/apps/worker/main.py#L758-L769)
