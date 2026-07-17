@@ -9,7 +9,7 @@ from apps.api.router import BootstrapApiRouter
 from neotrade3.decision_engine.contracts import DecisionLifecycleLog
 from neotrade3.decision_engine.decision_lifecycle_log import build_decision_lifecycle_logs
 from neotrade3.decision_engine.lifecycle_log_store import (
-    build_decision_m3_lifecycle_log_record_id,
+    build_decision_m3_lifecycle_log_record_id_from_report_id,
     materialize_decision_m3_lifecycle_log,
 )
 from neotrade3.orchestration.report_runner_backtest_source import (
@@ -85,9 +85,9 @@ def test_report_id_can_be_used_to_readback_m3_lifecycle_log_via_api(
     )
     lifecycle_log = DecisionLifecycleLog.from_dict(lifecycle_payloads[0])
 
-    record_id = build_decision_m3_lifecycle_log_record_id(
+    record_id = build_decision_m3_lifecycle_log_record_id_from_report_id(
         stock_code=stock_code,
-        run_id=report_id,
+        report_id=report_id,
     )
     materialize_decision_m3_lifecycle_log(
         project_root=tmp_path,
@@ -102,4 +102,3 @@ def test_report_id_can_be_used_to_readback_m3_lifecycle_log_via_api(
     assert status == HTTPStatus.OK
     assert payload["lifecycle_log"]["record_id"] == record_id
     assert payload["lifecycle_log_payload"]["run_id"] == report_id
-

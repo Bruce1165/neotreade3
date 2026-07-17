@@ -122,6 +122,9 @@ Last_reviewed: 2026-07-16
   - 证据：report runner backtest 路径生成 report_id，传入 project_root/run_id/source_run_id 并回写到返回 _meta.report_id：[report_runner_backtest_source.py:L17-L62](file:///Users/mac/NeoTrade3/neotrade3/orchestration/report_runner_backtest_source.py#L17-L62)
   - 证据：单测覆盖（_meta.report_id == run_id，report_id 前缀稳定 + project_root 透传）：[test_lowfreq_report_runner_backtest_source.py:L76-L145](file:///Users/mac/NeoTrade3/tests/unit/test_lowfreq_report_runner_backtest_source.py#L76-L145)
   - 证据：串联证据（从 report payload 取 report_id → 生成 record_id → lifecycle log API 读回并断言 run_id 一致）：[test_m3_report_id_lifecycle_log_readback_chain.py:L1-L104](file:///Users/mac/NeoTrade3/tests/unit/test_m3_report_id_lifecycle_log_readback_chain.py#L1-L104)
+  - 证据：report_id→record_id helper（唯一入口，复用 fail-closed 与路径安全校验）：[lifecycle_log_store.py:L27-L46](file:///Users/mac/NeoTrade3/neotrade3/decision_engine/lifecycle_log_store.py#L27-L46)
+  - 证据：helper 单测（正常映射 + fail-closed 边界）：[test_m3_report_id_record_id_helper.py:L1-L33](file:///Users/mac/NeoTrade3/tests/unit/test_m3_report_id_record_id_helper.py#L1-L33)
+  - 证据：映射规则文档（必须携带 stock_code，API 用法）：[2026-07-17-m3-report-id-to-lifecycle-record-id-mapping.md:L1-L52](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-17-m3-report-id-to-lifecycle-record-id-mapping.md#L1-L52)
 
 ## 5. M4 基准评估层（Benchmark Layer）
 

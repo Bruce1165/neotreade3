@@ -38,6 +38,14 @@ def build_decision_m3_lifecycle_log_record_id(*, stock_code: str, run_id: str) -
     return record_id
 
 
+def build_decision_m3_lifecycle_log_record_id_from_report_id(
+    *,
+    stock_code: str,
+    report_id: str,
+) -> str:
+    return build_decision_m3_lifecycle_log_record_id(stock_code=stock_code, run_id=report_id)
+
+
 @dataclass(frozen=True)
 class DecisionM3LifecycleLogArtifactRecord:
     record_id: str
@@ -328,4 +336,3 @@ def list_decision_m3_lifecycle_log_ledgers(
     if len(records) > limit:
         records = records[:limit]
     return records
-
