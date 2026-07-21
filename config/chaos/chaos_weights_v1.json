@@ -1,0 +1,10 @@
+{
+  "version": "chaos_weights_v1",
+  "generated_at": "2026-07-20",
+  "notes": [
+    "v1 基线权重：默认不覆盖 registry 的 default_weight。",
+    "如需调参，生成新版本 chaos_weights_v1_*.json，并在 build_chaos_daily_snapshot 中指定 --weights-version。"
+  ],
+  "weights": {}
+}
+

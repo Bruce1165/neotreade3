@@ -50,9 +50,11 @@ from neotrade3.analysis.attribution_signal_snapshot import build_attribution_sig
 from neotrade3.decision_engine.cross_sector_wave_policy import (
     is_cross_sector_wave_mismatch,
 )
+from neotrade3.cycle_intelligence.sector_heat import score_sector_heat
 from neotrade3.orchestration.report_runner_status import (
     build_analysis_ready_report_status,
     build_backtest_ready_report_status,
+    build_done_report_status,
     build_initializing_report_status,
     build_ranking_ready_report_status,
 )
@@ -76,6 +78,11 @@ from neotrade3.orchestration.report_runner_backtest_source import (
 )
 from neotrade3.orchestration.report_runner_status_writer import (
     write_lowfreq_report_status,
+)
+from neotrade3.analysis.step8_artifact_writer import write_step8_quality_report_artifact
+from neotrade3.governance.step8_artifact_writer import (
+    write_step8_adjustment_proposal_artifact,
+    write_step8_governance_decision_log_artifact,
 )
 
 
@@ -243,17 +250,77 @@ def _signal_layer_snapshot(raw: Any) -> dict[str, Any]:
     return build_attribution_signal_snapshot(raw)
 
 
+def _buy_signal_audit_pick_priority(entry: dict[str, Any]) -> int:
+    event = str(entry.get("event") or "").strip()
+    funnel_stage = str(entry.get("funnel_stage") or "").strip()
+    execution_status = str(entry.get("execution_status") or "").strip()
+    if execution_status == "executed" or event in {"buy_executed", "reservation_released_into_buy"}:
+        return 100
+    if execution_status == "reserved" or event == "reservation_created":
+        return 90
+    if funnel_stage == "entry_ready" or event == "tracking_promoted_to_entry":
+        return 80
+    if execution_status == "blocked" or event in {
+        "execution_signal_gate_blocked",
+        "chase_entry_blocked",
+        "trade_discipline_guard_blocked",
+    }:
+        return 70
+    if event == "tracking_started":
+        return 60
+    if event == "tracking_dropped":
+        return 50
+    return 10
+
+
+def _build_buy_signal_audit_index_by_code_date(
+    entries: list[dict[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        code = str(entry.get("code") or "").strip()
+        d = str(entry.get("date") or "").strip()
+        if not code or not d:
+            continue
+        k = (code, d)
+        prev = out.get(k)
+        if prev is None:
+            out[k] = dict(entry)
+            continue
+        if _buy_signal_audit_pick_priority(entry) >= _buy_signal_audit_pick_priority(prev):
+            out[k] = dict(entry)
+    return out
+
+
 class AuditContext:
-    def __init__(self, *, engine: LowFreqTradingEngineV16, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        *,
+        engine: LowFreqTradingEngineV16,
+        conn: sqlite3.Connection,
+        buy_signal_audit_entries: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.engine = engine
         self.conn = conn
         self.hot_sectors_cache: dict[str, list[str]] = {}
         self.signal_layers_cache: dict[str, dict[str, Any]] = {}
         self.global_seed_cache: dict[str, set[str]] = {}
+        self.global_seed_rows_cache: dict[str, list[tuple[str, str]]] = {}
         self.global_candidate_cache: dict[str, dict[str, StockCandidate]] = {}
+        self.global_candidate_by_code_date_cache: dict[tuple[str, str], StockCandidate | None] = {}
         self.sector_seed_cache: dict[tuple[str, str], set[str]] = {}
         self.sector_candidate_cache: dict[tuple[str, str], dict[str, StockCandidate]] = {}
         self.market_filter_cache: dict[str, dict[str, Any]] = {}
+        self.buy_signal_audit_index_by_code_date: dict[tuple[str, str], dict[str, Any]] = (
+            _build_buy_signal_audit_index_by_code_date(list(buy_signal_audit_entries or []))
+        )
+
+    def buy_signal_audit_entry(self, *, code: str, target_date: date) -> dict[str, Any] | None:
+        key = (str(code or "").strip(), target_date.isoformat())
+        out = self.buy_signal_audit_index_by_code_date.get(key)
+        return dict(out) if isinstance(out, dict) else None
 
     def market_filter_state(self, target_date: date) -> dict[str, Any]:
         key = target_date.isoformat()
@@ -274,10 +341,77 @@ class AuditContext:
         cached = self.hot_sectors_cache.get(key)
         if cached is not None:
             return list(cached)
-        sectors = self.engine.get_hot_sectors(target_date, self.engine.HOT_SECTOR_COUNT)
+        sectors = self.engine.get_hot_sectors(
+            target_date,
+            self.engine.HOT_SECTOR_COUNT,
+            cursor=self.conn.cursor(),
+        )
         out = [str(x.sector) for x in sectors]
         self.hot_sectors_cache[key] = list(out)
         return out
+
+    def preload_hot_sectors(self, *, start_date: date, end_date: date) -> None:
+        if bool(getattr(self.engine, "SECTOR_ACCEL_BONUS_ENABLED", False)):
+            return
+        start_key = start_date.isoformat()
+        end_key = end_date.isoformat()
+        top_n = int(getattr(self.engine, "HOT_SECTOR_COUNT", 0) or 0)
+        if top_n <= 0:
+            return
+        rows = self.conn.execute(
+            """
+            SELECT dp.trade_date, s.sector_lv1,
+                   COUNT(*) as stock_count,
+                   AVG(dp.pct_change) as avg_change
+            FROM stocks s
+            JOIN daily_prices dp ON s.code = dp.code
+            WHERE dp.trade_date BETWEEN ? AND ?
+              AND s.total_market_cap >= ? AND s.total_market_cap <= ?
+              AND (s.is_delisted IS NULL OR s.is_delisted = 0)
+            GROUP BY dp.trade_date, s.sector_lv1
+            HAVING COUNT(*) >= 3
+            """,
+            (
+                start_key,
+                end_key,
+                float(getattr(self.engine, "MARKET_CAP_MIN", 0.0) or 0.0),
+                float(getattr(self.engine, "MARKET_CAP_MAX", 0.0) or 0.0),
+            ),
+        ).fetchall()
+        if not rows:
+            return
+        by_date: dict[str, list[tuple[str, float, int]]] = {}
+        for trade_date, sector_lv1, stock_count, avg_change in rows:
+            d_key = str(trade_date or "").strip()
+            sec = str(sector_lv1 or "").strip()
+            if not d_key or not sec:
+                continue
+            by_date.setdefault(d_key, []).append(
+                (sec, float(avg_change or 0.0), int(stock_count or 0)),
+            )
+        for d_key, items in by_date.items():
+            if d_key in self.hot_sectors_cache:
+                continue
+            candidates = sorted(items, key=lambda x: float(x[1]), reverse=True)[: max(1, top_n * 2)]
+            scored: list[tuple[float, str]] = []
+            d_obj = date.fromisoformat(d_key)
+            for sec, avg_change, _count in candidates:
+                cooldown_info = dict(self.engine.detect_sector_cooldown(sec, d_obj, cursor=self.conn.cursor()) or {})
+                if bool(cooldown_info.get("cooldown_detected")) and float(
+                    cooldown_info.get("follower_weakness") or 0.0
+                ) > 0.7:
+                    continue
+                heat_score = score_sector_heat(
+                    avg_change=float(avg_change or 0.0),
+                    avg_change_recent=0.0,
+                    trend_state=str(cooldown_info.get("trend_state") or "unknown"),
+                    sector_accel_bonus_enabled=False,
+                    sector_accel_bonus_high=float(getattr(self.engine, "SECTOR_ACCEL_BONUS_HIGH", 0.0) or 0.0),
+                    sector_accel_bonus_low=float(getattr(self.engine, "SECTOR_ACCEL_BONUS_LOW", 0.0) or 0.0),
+                )
+                scored.append((float(heat_score), str(sec)))
+            scored.sort(key=lambda x: float(x[0]), reverse=True)
+            self.hot_sectors_cache[d_key] = [sec for _score, sec in scored[:top_n]]
 
     def signal_snapshot(self, target_date: date) -> dict[str, Any]:
         key = target_date.isoformat()
@@ -286,6 +420,11 @@ class AuditContext:
             return {
                 "candidate_signals": {k: dict(v) for k, v in cached.get("candidate_signals", {}).items()},
                 "entry_signals": {k: dict(v) for k, v in cached.get("entry_signals", {}).items()},
+                "tracking_pool_candidates": {
+                    k: dict(v) for k, v in cached.get("tracking_pool_candidates", {}).items()
+                },
+                "tracking_pool_candidate_order": list(cached.get("tracking_pool_candidate_order", [])),
+                "tracking_pool_candidate_fields": dict(cached.get("tracking_pool_candidate_fields", {})),
                 "signal_summary": dict(cached.get("signal_summary", {})),
             }
         raw = self.engine.generate_buy_signals(target_date)
@@ -293,6 +432,9 @@ class AuditContext:
         self.signal_layers_cache[key] = {
             "candidate_signals": {k: dict(v) for k, v in snapshot["candidate_signals"].items()},
             "entry_signals": {k: dict(v) for k, v in snapshot["entry_signals"].items()},
+            "tracking_pool_candidates": {k: dict(v) for k, v in snapshot["tracking_pool_candidates"].items()},
+            "tracking_pool_candidate_order": list(snapshot.get("tracking_pool_candidate_order", [])),
+            "tracking_pool_candidate_fields": dict(snapshot.get("tracking_pool_candidate_fields", {})),
             "signal_summary": dict(snapshot["signal_summary"]),
         }
         return snapshot
@@ -346,17 +488,13 @@ class AuditContext:
         cached = self.sector_candidate_cache.get(key)
         if cached is not None:
             return dict(cached)
-        conn = self.engine._conn()
-        try:
-            cursor = conn.cursor()
-            items = self.engine.get_sector_candidates(
-                str(sector),
-                target_date,
-                top_n=20,
-                cursor=cursor,
-            )
-        finally:
-            conn.close()
+        cursor = self.conn.cursor()
+        items = self.engine.get_sector_candidates(
+            str(sector),
+            target_date,
+            top_n=20,
+            cursor=cursor,
+        )
         out = {str(c.code): c for c in items}
         self.sector_candidate_cache[key] = dict(out)
         return out
@@ -367,6 +505,16 @@ class AuditContext:
         if cached is not None:
             return set(cached)
         hot_sector_set = set(self.hot_sectors(target_date))
+        rows = self.global_seed_rows(target_date)
+        codes = {code for code, sec in rows if code and sec not in hot_sector_set}
+        self.global_seed_cache[key] = set(codes)
+        return codes
+
+    def global_seed_rows(self, target_date: date) -> list[tuple[str, str]]:
+        key = target_date.isoformat()
+        cached = self.global_seed_rows_cache.get(key)
+        if cached is not None:
+            return list(cached)
         rows = self.conn.execute(
             """
             SELECT s.code, s.sector_lv1
@@ -386,13 +534,45 @@ class AuditContext:
                 int(self.engine.CROSS_SECTOR_SCAN_LIMIT),
             ),
         ).fetchall()
-        codes = {
-            str(r[0])
-            for r in rows
-            if r and r[0] and str(r[1] or "").strip() not in hot_sector_set
-        }
-        self.global_seed_cache[key] = set(codes)
-        return codes
+        out: list[tuple[str, str]] = []
+        for r in rows:
+            if not r or len(r) < 2:
+                continue
+            code = str(r[0] or "").strip()
+            sec = str(r[1] or "").strip()
+            if code:
+                out.append((code, sec))
+        self.global_seed_rows_cache[key] = list(out)
+        return out
+
+    def global_candidate_for_code(self, *, code: str, target_date: date) -> StockCandidate | None:
+        k = (str(code or "").strip(), target_date.isoformat())
+        cached = self.global_candidate_by_code_date_cache.get(k)
+        if k in self.global_candidate_by_code_date_cache:
+            return cached
+        code_s = str(code or "").strip()
+        if not code_s:
+            self.global_candidate_by_code_date_cache[k] = None
+            return None
+        hot_sector_set = set(self.hot_sectors(target_date))
+        seed_rows = self.global_seed_rows(target_date)
+        seed_codes = {c for c, sec in seed_rows if c and sec not in hot_sector_set}
+        if code_s not in seed_codes:
+            self.global_candidate_by_code_date_cache[k] = None
+            return None
+        exclude_codes = set(seed_codes)
+        exclude_codes.discard(code_s)
+        items = self.engine.get_global_candidates(
+            target_date,
+            top_n=1,
+            exclude_sectors=hot_sector_set,
+            exclude_codes=exclude_codes,
+            audit_watch_codes={code_s},
+            audit_by_code_out={},
+        )
+        cand = items[0] if items else None
+        self.global_candidate_by_code_date_cache[k] = cand
+        return cand
 
     def global_candidates(self, target_date: date) -> dict[str, StockCandidate]:
         key = target_date.isoformat()
@@ -419,7 +599,9 @@ def _audit_daily_reason(
     name: str,
     sector: str,
     target_date: date,
+    analysis_mode: str = "seed_only",
 ) -> dict[str, Any]:
+    audit_hit = ctx.buy_signal_audit_entry(code=str(code), target_date=target_date)
     market_state = ctx.market_filter_state(target_date)
     if market_state["filtered"]:
         return build_simple_stage_audit(
@@ -428,15 +610,53 @@ def _audit_daily_reason(
             reason=f"市场情绪过滤（{market_state['sentiment']} {market_state['score']:.0f}分）",
         )
 
-    entry_signals = ctx.entry_signals(target_date)
-    if str(code) in entry_signals:
-        sig = entry_signals[str(code)]
-        return build_entry_signal_selected_audit(audit_date=target_date.isoformat(), signal=sig)
+    if isinstance(audit_hit, dict):
+        stage = ""
+        funnel_stage = str(audit_hit.get("funnel_stage") or "").strip()
+        execution_status = str(audit_hit.get("execution_status") or "").strip()
+        event = str(audit_hit.get("event") or "").strip()
+        if event == "tracking_started" or funnel_stage == "candidate_detected":
+            stage = "candidate_signal_selected"
+        elif funnel_stage == "entry_ready" or event == "tracking_promoted_to_entry":
+            stage = "entry_signal_selected"
+        elif execution_status in {"reserved", "executed"}:
+            stage = "entry_signal_selected"
+        elif execution_status == "tracking" and event in {"tracking_dropped"}:
+            stage = "candidate_signal_selected"
+        elif execution_status == "blocked":
+            stage = "entry_signal_selected"
+        signal = {
+            "buy_score": float(audit_hit.get("buy_score") or 0.0),
+            "role": str(audit_hit.get("role") or ""),
+            "wave_phase": str(audit_hit.get("wave_phase") or ""),
+            "candidate_tier": str(audit_hit.get("candidate_tier") or ""),
+            "entry_ready": bool(audit_hit.get("tracking_ready")),
+            "reasons": list(
+                audit_hit.get("tracking_evidence_bundle")
+                or audit_hit.get("evidence_bundle")
+                or []
+            ),
+        }
+        if stage == "entry_signal_selected":
+            return build_entry_signal_selected_audit(audit_date=target_date.isoformat(), signal=signal)
+        if stage == "candidate_signal_selected":
+            return build_candidate_signal_selected_audit(audit_date=target_date.isoformat(), signal=signal)
 
-    candidate_signals = ctx.candidate_signals(target_date)
-    if str(code) in candidate_signals:
-        sig = candidate_signals[str(code)]
-        return build_candidate_signal_selected_audit(audit_date=target_date.isoformat(), signal=sig)
+    if not bool(getattr(ctx, "global_seed_codes", None)):
+        entry_signals = ctx.entry_signals(target_date) if bool(getattr(ctx, "entry_signals", None)) else {}
+        entry_hit = entry_signals.get(str(code)) if isinstance(entry_signals, dict) else None
+        if isinstance(entry_hit, dict):
+            return build_entry_signal_selected_audit(
+                audit_date=target_date.isoformat(),
+                signal=entry_hit,
+            )
+        candidate_signals = ctx.candidate_signals(target_date) if bool(getattr(ctx, "candidate_signals", None)) else {}
+        candidate_hit = candidate_signals.get(str(code)) if isinstance(candidate_signals, dict) else None
+        if isinstance(candidate_hit, dict):
+            return build_candidate_signal_selected_audit(
+                audit_date=target_date.isoformat(),
+                signal=candidate_hit,
+            )
 
     hot_sectors = set(ctx.hot_sectors(target_date))
     sector_str = str(sector or "").strip()
@@ -448,6 +668,14 @@ def _audit_daily_reason(
                 stage="sector_seed_miss",
                 reason="所属热点板块内未进入当日涨幅前20种子",
             )
+        if str(analysis_mode or "").strip().lower() == "seed_only":
+            out = build_simple_stage_audit(
+                audit_date=target_date.isoformat(),
+                stage="sector_seed_hit",
+                reason="所属热点板块内命中当日涨幅前20种子（seed_only：不复算候选阶段）",
+            )
+            out["analysis_mode"] = "seed_only"
+            return out
         candidates = ctx.sector_candidates(sector_str, target_date)
         cand = candidates.get(str(code))
         if cand is None:
@@ -491,8 +719,19 @@ def _audit_daily_reason(
             stage="global_seed_miss",
             reason="所属板块未进热点，且个股未进入跨板块扫描种子",
         )
-    candidates = ctx.global_candidates(target_date)
-    cand = candidates.get(str(code))
+    if str(analysis_mode or "").strip().lower() == "seed_only":
+        out = build_simple_stage_audit(
+            audit_date=target_date.isoformat(),
+            stage="global_seed_hit",
+            reason="所属板块未进热点但命中跨板块扫描种子（seed_only：不复算候选阶段）",
+        )
+        out["analysis_mode"] = "seed_only"
+        return out
+    if bool(getattr(ctx, "global_candidate_for_code", None)):
+        cand = ctx.global_candidate_for_code(code=str(code), target_date=target_date)
+    else:
+        candidates = ctx.global_candidates(target_date) if bool(getattr(ctx, "global_candidates", None)) else {}
+        cand = candidates.get(str(code)) if isinstance(candidates, dict) else None
     if cand is None:
         return build_simple_stage_audit(
             audit_date=target_date.isoformat(),
@@ -613,32 +852,12 @@ def _extract_execution_reason(
         and first_signal in positions_timeline
         and len(positions_timeline[first_signal]) >= int(max_positions)
     )
-    chase_blocked = False
-    if (
-        not all_limit_up
-        and not positions_full
-    ):
-        signal_map = ctx.signals(date.fromisoformat(str(first_signal)))
-        sig = signal_map.get(str(code))
-        if isinstance(sig, dict):
-            row = conn.execute(
-                """
-                SELECT close
-                FROM daily_prices
-                WHERE code = ? AND trade_date = ?
-                LIMIT 1
-                """,
-                (str(code), str(first_signal)),
-            ).fetchone()
-            ref_price = float(row[0]) if row and row[0] is not None else None
-            if ref_price is not None and ref_price > 0:
-                snapshot = engine._chase_entry_snapshot(
-                    conn.cursor(),
-                    code=str(code),
-                    target_date=date.fromisoformat(str(first_signal)),
-                    ref_price=float(ref_price),
-                )
-                chase_blocked = isinstance(snapshot, dict) and bool(snapshot.get("blocked"))
+    chase_blocked = any(
+        str(x.get("date") or "") == str(first_signal)
+        and str(x.get("event") or "") == "chase_entry_blocked"
+        for x in list(buy_signal_audits or [])
+        if isinstance(x, dict)
+    )
     return resolve_execution_fallback_reason(
         all_limit_up=all_limit_up,
         positions_full=positions_full,
@@ -654,6 +873,7 @@ def _analyze_topk(
     backtest_payload: dict[str, Any],
     year: int,
     execution_one_price_limit_only: bool = False,
+    analysis_mode: str = "seed_only",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     segments: list[dict[str, Any]] = []
     report_rows: list[dict[str, Any]] = []
@@ -667,19 +887,36 @@ def _analyze_topk(
     buy_signal_audit_by_code = _build_buy_signal_audit_index(
         list(summary.get("buy_signal_audit") or []) if isinstance(summary, dict) else []
     )
-    min_start = date(year, 1, 1)
-    max_top = date(year, 12, 31)
+    min_start: date | None = None
+    max_top: date | None = None
     for item in ranking:
         segment = _compute_wave_segment(conn, code=str(item["code"]), year=year)
         if segment.get("status") == "ok":
-            min_start = min(min_start, date.fromisoformat(str(segment["start_date"])))
-            max_top = max(max_top, date.fromisoformat(str(segment["top_date"])))
+            seg_start = date.fromisoformat(str(segment["start_date"]))
+            seg_top = date.fromisoformat(str(segment["top_date"]))
+            if min_start is None or seg_start < min_start:
+                min_start = seg_start
+            if max_top is None or seg_top > max_top:
+                max_top = seg_top
         segments.append(segment)
+
+    if min_start is None:
+        min_start = date(year, 1, 1)
+    if max_top is None:
+        max_top = date(year, 12, 31)
 
     trading_dates = _load_trading_dates(conn, start_date=min_start, end_date=max_top)
     date_to_idx = {d: i for i, d in enumerate(trading_dates)}
     positions_timeline = _build_positions_timeline(list(backtest_payload.get("trades") or []), trading_dates)
-    ctx = AuditContext(engine=engine, conn=conn)
+    ctx = AuditContext(
+        engine=engine,
+        conn=conn,
+        buy_signal_audit_entries=list(summary.get("buy_signal_audit") or []) if isinstance(summary, dict) else [],
+    )
+    try:
+        ctx.preload_hot_sectors(start_date=min_start, end_date=max_top)
+    except Exception:
+        pass
     trades_by_code: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for trade in list(backtest_payload.get("trades") or []):
         code = str(trade.get("code") or "").strip()
@@ -718,6 +955,7 @@ def _analyze_topk(
                 name=name,
                 sector=sector,
                 target_date=date.fromisoformat(d_key),
+                analysis_mode=str(analysis_mode or "seed_only"),
             )
             daily_audits.append(audit)
         signal_pick_summary = build_attribution_signal_pick_summary(daily_audits)
@@ -820,6 +1058,7 @@ def main() -> int:
     parser.add_argument("--max-positions-override", type=int, default=None)
     parser.add_argument("--execution-one-price-limit-only", action="store_true")
     parser.add_argument("--report-id", type=str, default="")
+    parser.add_argument("--analysis-mode", type=str, default="seed_only", choices=["seed_only", "full"])
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -862,13 +1101,103 @@ def main() -> int:
             generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
         summary = backtest_payload.get("summary") if isinstance(backtest_payload, dict) else {}
+        backtest_input_evidence_ready = False
+        backtest_input_evidence_reason = None
+        backtest_payload_path = None
+        backtest_summary_path = None
+        step8_upstream_evidence_paths: list[str] = []
+        if isinstance(backtest_payload, dict):
+            backtest_input_evidence_ready = True
+            backtest_payload_path = "backtest_payload.json"
+            backtest_summary_path = "backtest_summary.json"
+            (output_dir / backtest_payload_path).write_text(
+                json.dumps(backtest_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / backtest_summary_path).write_text(
+                json.dumps(summary if isinstance(summary, dict) else {}, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            try:
+                step8_upstream_evidence_paths.append(
+                    str((output_dir / backtest_payload_path).relative_to(PROJECT_ROOT))
+                )
+                step8_upstream_evidence_paths.append(
+                    str((output_dir / backtest_summary_path).relative_to(PROJECT_ROOT))
+                )
+            except Exception:
+                pass
+        else:
+            backtest_input_evidence_ready = False
+            backtest_input_evidence_reason = "missing_backtest_payload"
+        backtest_meta = backtest_payload.get("_meta") if isinstance(backtest_payload, dict) else {}
+        backtest_report_id = (
+            str(backtest_meta.get("report_id") or "").strip() if isinstance(backtest_meta, dict) else ""
+        ) or None
+        step8_source_run_id = str(report_id).strip()
+        step8_asof_date = date.fromisoformat(str(args.backtest_end)).isoformat()
+        step8_quality_record = write_step8_quality_report_artifact(
+            project_root=PROJECT_ROOT,
+            asof_date=step8_asof_date,
+            source_run_id=step8_source_run_id,
+            backtest_result=summary if isinstance(summary, dict) else {},
+            upstream_evidence_paths=step8_upstream_evidence_paths,
+            backtest_report_id=backtest_report_id,
+        )
+        step8_proposal_record = None
+        step8_decision_record = None
+        if (
+            str(step8_quality_record.outputs_ready or "").strip() == "ready"
+            and str(step8_quality_record.quality_verdict or "").strip() == "pass"
+        ):
+            step8_proposal_record = write_step8_adjustment_proposal_artifact(
+                project_root=PROJECT_ROOT,
+                asof_date=step8_asof_date,
+                source_report_id=step8_quality_record.report_id,
+                rb_ids_touched=[],
+                proposed_changes=[],
+                risk_notes="v0: awaiting_human_input",
+                upstream_evidence_paths=[step8_quality_record.artifact_path],
+            )
+            step8_decision_record = write_step8_governance_decision_log_artifact(
+                project_root=PROJECT_ROOT,
+                asof_date=step8_asof_date,
+                source_proposal_id=step8_proposal_record.proposal_id,
+                decision="defer",
+                rationale="v0: awaiting_human_input",
+                application_record_id=None,
+                upstream_evidence_paths=[step8_quality_record.artifact_path],
+            )
+        backtest_ready_status = build_backtest_ready_report_status(
+            ranking_count=len(ranking),
+            total_return_pct=(summary.get("total_return_pct") if isinstance(summary, dict) else None),
+            total_trades=(summary.get("total_trades") if isinstance(summary, dict) else None),
+        )
+        step8_status_fields = {
+            "step8_quality_report_path": step8_quality_record.artifact_path,
+            "step8_report_id": step8_quality_record.report_id,
+            "step8_outputs_ready": step8_quality_record.outputs_ready,
+            "step8_quality_verdict": step8_quality_record.quality_verdict,
+            "step8_quality_fail_reason_codes": list(step8_quality_record.quality_fail_reason_codes),
+            "step8_quality_written_at": step8_quality_record.written_at,
+            "backtest_report_id": backtest_report_id,
+            "step8_proposal_path": (step8_proposal_record.artifact_path if step8_proposal_record else None),
+            "step8_proposal_id": (step8_proposal_record.proposal_id if step8_proposal_record else None),
+            "step8_proposal_written_at": (step8_proposal_record.written_at if step8_proposal_record else None),
+            "step8_decision_log_path": (step8_decision_record.artifact_path if step8_decision_record else None),
+            "step8_decision_log_id": (step8_decision_record.log_id if step8_decision_record else None),
+            "step8_decision": (step8_decision_record.decision if step8_decision_record else None),
+            "step8_decision_written_at": (step8_decision_record.written_at if step8_decision_record else None),
+            "backtest_input_evidence_ready": bool(backtest_input_evidence_ready),
+            "backtest_input_evidence_reason": backtest_input_evidence_reason,
+            "backtest_payload_path": backtest_payload_path,
+            "backtest_summary_path": backtest_summary_path,
+        }
+        backtest_ready_status.update(step8_status_fields)
         write_lowfreq_report_status(
             output_dir,
-            **build_backtest_ready_report_status(
-                ranking_count=len(ranking),
-                total_return_pct=(summary.get("total_return_pct") if isinstance(summary, dict) else None),
-                total_trades=(summary.get("total_trades") if isinstance(summary, dict) else None),
-            ),
+            **backtest_ready_status,
         )
         engine = prepare_lowfreq_report_analysis_engine(
             service=service,
@@ -881,14 +1210,15 @@ def main() -> int:
             backtest_payload=backtest_payload,
             year=int(args.year),
             execution_one_price_limit_only=bool(args.execution_one_price_limit_only),
+            analysis_mode=str(args.analysis_mode or "seed_only"),
         )
-        write_lowfreq_report_status(
-            output_dir,
-            **build_analysis_ready_report_status(
-                ranking_count=len(ranking),
-                aggregate=aggregate,
-            ),
+        analysis_ready_status = build_analysis_ready_report_status(
+            ranking_count=len(ranking),
+            aggregate=aggregate,
         )
+        analysis_ready_status["analysis_mode"] = str(args.analysis_mode or "seed_only")
+        analysis_ready_status.update(step8_status_fields)
+        write_lowfreq_report_status(output_dir, **analysis_ready_status)
     finally:
         conn.close()
 
@@ -908,6 +1238,7 @@ def main() -> int:
         report_id=report_id,
         year=int(args.year),
         limit=int(args.limit),
+        analysis_mode=str(args.analysis_mode or "seed_only"),
         ranking_path=ranking_path,
         segments_path=segments_path,
         attribution_path=attribution_path,
@@ -919,6 +1250,19 @@ def main() -> int:
         backtest_payload=backtest_payload,
         generated_at=generated_at,
     )
+    done_status = build_done_report_status(
+        report_id=report_id,
+        ranking_path=str(ranking_path),
+        segments_path=str(segments_path),
+        attribution_path=str(attribution_path),
+        report_path=str(report_path),
+    )
+    done_status["analysis_mode"] = str(args.analysis_mode or "seed_only")
+    try:
+        done_status.update(step8_status_fields)
+    except Exception:
+        pass
+    write_lowfreq_report_status(output_dir, **done_status)
 
     print(
         json.dumps(

@@ -113,6 +113,36 @@ def test_compare_installed_document_detects_weekday_drift(tmp_path: Path) -> Non
     assert errors == ["Weekday 必须为 [1, 2, 3, 4, 5]"]
 
 
+def test_render_launch_agents_can_filter_labels_without_dashboard_password(tmp_path: Path) -> None:
+    rendered_agents = render_launch_agents(
+        project_root=PROJECT_ROOT,
+        home_dir=tmp_path / "home",
+        target_dir=tmp_path / "LaunchAgents",
+        python_bin="/tmp/neotrade3-venv/bin/python",
+        node_bin="/opt/homebrew/bin/node",
+        labels=["com.neotrade3.scheduler"],
+    )
+
+    assert [agent.spec.label for agent in rendered_agents] == ["com.neotrade3.scheduler"]
+    assert rendered_agents[0].dashboard_password == ""
+    assert "UserName" not in rendered_agents[0].document
+
+
+def test_render_launch_agents_can_write_daemon_user(tmp_path: Path) -> None:
+    rendered_agents = render_launch_agents(
+        project_root=PROJECT_ROOT,
+        home_dir=tmp_path / "home",
+        target_dir=tmp_path / "LaunchDaemons",
+        python_bin="/tmp/neotrade3-venv/bin/python",
+        node_bin="/opt/homebrew/bin/node",
+        labels=["com.neotrade3.scheduler"],
+        daemon_user="mac",
+    )
+
+    assert [agent.spec.label for agent in rendered_agents] == ["com.neotrade3.scheduler"]
+    assert rendered_agents[0].document.get("UserName") == "mac"
+
+
 def test_validate_launchctl_state_rejects_non_weekday_schedule() -> None:
     spec = build_launch_agent_specs(PROJECT_ROOT)[0]
     state = LaunchctlState(

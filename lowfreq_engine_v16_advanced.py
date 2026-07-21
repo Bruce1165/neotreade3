@@ -69,6 +69,11 @@ from neotrade3.decision_engine.chase_entry import (
 from neotrade3.decision_engine.trade_block_reason import (
     resolve_trade_block_reason,
 )
+from neotrade3.decision_engine.trade_discipline import (
+    build_discipline_audit_event,
+    build_discipline_guard_verdict,
+    build_trade_discipline_metrics,
+)
 from neotrade3.decision_engine.system_exit_application import (
     plan_system_exit_application,
 )
@@ -85,6 +90,8 @@ from neotrade3.decision_engine.signal_payload import build_signal_structure_payl
 from neotrade3.decision_engine.position_contract_snapshot import (
     build_position_contract_snapshot,
 )
+from neotrade3.decision_engine.chaos_model_v0 import build_chaos_snapshot_v0
+from neotrade3.decision_engine.hazard_predictor_v0 import build_hazard_snapshot_v0_t2
 from neotrade3.decision_engine.buy_signal_audit_contract import (
     normalize_execution_block_reason,
     resolve_buy_signal_audit_funnel_stage,
@@ -241,6 +248,9 @@ class StockCandidate:
     buy_score: float = 0.0
     buy_reasons: list = field(default_factory=list)
     wave_phase: str = ""
+    wave_phase_confidence: float = 0.0
+    evidence_bundle: list = field(default_factory=list)
+    pattern_evidence: list = field(default_factory=list)
     # 技术指标
     ret_5d: float = 0.0
     ret_20d: float = 0.0
@@ -716,7 +726,10 @@ class LowFreqTradingEngineV16:
             "MARKET_EXIT_CONFIRM_WINDOW",
             "MARKET_EXIT_CONFIRM_HITS",
             "MARKET_EXIT_MIN_DRAWDOWN_PCT",
+            "CROSS_SECTOR_SCAN_ENABLED",
+            "CROSS_SECTOR_SCAN_LIMIT",
             "CROSS_SECTOR_CANDIDATE_TOP_N",
+            "CROSS_SECTOR_WAVE3_ONLY",
             "STOP_LOSS_CONFIRM_DAYS",
             "SECTOR_COOLDOWN_CONFIRM_WINDOW",
             "SECTOR_COOLDOWN_CONFIRM_HITS",
@@ -769,17 +782,51 @@ class LowFreqTradingEngineV16:
         sell: Optional[SellSignal],
     ) -> dict[str, Any]:
         current_price = self._get_price(trade.code, current_date)
-        market_snapshot = self._market_exit_snapshot(
-            trade,
-            current_date,
-            market_key=self._resolve_market_proxy(trade.code),
-        )
-        sector_snapshot = self._sector_exit_snapshot(trade, current_date)
-        trend_snapshot = (
-            self._trend_exhaustion_snapshot(trade, current_date, current_price=float(current_price))
-            if current_price
-            else None
-        )
+        hazard_snapshot: Optional[dict[str, Any]] = None
+        chaos_snapshot: Optional[dict[str, Any]] = None
+        if bool(getattr(self, "db_path", None)):
+            conn = self._conn()
+            try:
+                cursor = conn.cursor()
+                hazard_snapshot = build_hazard_snapshot_v0_t2(
+                    cursor,
+                    code=str(trade.code),
+                    target_date=current_date,
+                )
+                market_snapshot = self._market_exit_snapshot(
+                    trade,
+                    current_date,
+                    market_key=self._resolve_market_proxy(trade.code),
+                )
+                sector_snapshot = self._sector_exit_snapshot(trade, current_date)
+                trend_snapshot = (
+                    self._trend_exhaustion_snapshot(trade, current_date, current_price=float(current_price))
+                    if current_price
+                    else None
+                )
+                chaos_snapshot = build_chaos_snapshot_v0(
+                    cursor,
+                    code=str(trade.code),
+                    target_date=current_date,
+                    market_snapshot=market_snapshot if isinstance(market_snapshot, dict) else None,
+                    sector_snapshot=sector_snapshot if isinstance(sector_snapshot, dict) else None,
+                    trend_snapshot=trend_snapshot if isinstance(trend_snapshot, dict) else None,
+                    hazard_snapshot=hazard_snapshot if isinstance(hazard_snapshot, dict) else None,
+                )
+            finally:
+                conn.close()
+        else:
+            market_snapshot = self._market_exit_snapshot(
+                trade,
+                current_date,
+                market_key=self._resolve_market_proxy(trade.code),
+            )
+            sector_snapshot = self._sector_exit_snapshot(trade, current_date)
+            trend_snapshot = (
+                self._trend_exhaustion_snapshot(trade, current_date, current_price=float(current_price))
+                if current_price
+                else None
+            )
         sell_payload: Optional[dict[str, Any]] = None
         if sell is not None:
             sell_payload = {
@@ -800,6 +847,8 @@ class LowFreqTradingEngineV16:
             sector_snapshot=sector_snapshot if isinstance(sector_snapshot, dict) else None,
             trend_snapshot=trend_snapshot if isinstance(trend_snapshot, dict) else None,
             sell_payload=sell_payload,
+            hazard_snapshot=hazard_snapshot if isinstance(hazard_snapshot, dict) else None,
+            chaos_snapshot=chaos_snapshot if isinstance(chaos_snapshot, dict) else None,
             current_date_key=current_date.isoformat(),
             market_last_hit_date=str(getattr(trade, "market_exit_last_hit_date", "") or "").strip(),
             sector_last_hit_date=str(getattr(trade, "sector_exit_last_hit_date", "") or "").strip(),
@@ -1392,12 +1441,30 @@ class LowFreqTradingEngineV16:
                 watch_day = self._count_trading_days(date.fromisoformat(trade.market_top_watch_start_date), current_date)
             except Exception:
                 watch_day = 0
+        risk_action = "sell" if str(event_type) in {"market_top_confirmed", "sector_top_confirmed", "trend_exhausted"} else "hold"
+        exit_signal: Optional[dict[str, Any]] = None
+        hold_noise_filter_state: Optional[dict[str, Any]] = None
+        if isinstance(position_contract_snapshot, dict):
+            snap_action = str(position_contract_snapshot.get("risk_action") or "").strip()
+            if snap_action:
+                risk_action = snap_action
+            snap_exit_signal = position_contract_snapshot.get("exit_signal")
+            if isinstance(snap_exit_signal, dict):
+                exit_signal = dict(snap_exit_signal)
+            snap_hold_noise_filter_state = position_contract_snapshot.get("hold_noise_filter_state")
+            if isinstance(snap_hold_noise_filter_state, dict):
+                hold_noise_filter_state = dict(snap_hold_noise_filter_state)
         audit_log.append(
             {
                 "date": current_date.isoformat(),
                 "event": str(event_type),
                 "code": str(trade.code),
                 "source_layer": "exit",
+                "risk_action": str(risk_action),
+                "exit_signal": dict(exit_signal) if isinstance(exit_signal, dict) else None,
+                "hold_noise_filter_state": (
+                    dict(hold_noise_filter_state) if isinstance(hold_noise_filter_state, dict) else None
+                ),
                 "current_stage": (
                     "exit_ready"
                     if str(event_type) in {"market_top_confirmed", "sector_top_confirmed", "trend_exhausted"}
@@ -1961,6 +2028,8 @@ class LowFreqTradingEngineV16:
         *,
         exclude_sectors: Optional[set[str]] = None,
         exclude_codes: Optional[set[str]] = None,
+        audit_watch_codes: Optional[set[str]] = None,
+        audit_by_code_out: Optional[dict[str, str]] = None,
     ) -> list[StockCandidate]:
         """跨板块机会扫描：从全市场（同一市值范围）筛选高分候选，不依赖热门板块列表。"""
         conn = self._conn()
@@ -1975,6 +2044,8 @@ class LowFreqTradingEngineV16:
                 cross_sector_scan_limit=int(self.CROSS_SECTOR_SCAN_LIMIT),
                 exclude_sectors=set(exclude_sectors or set()),
                 exclude_codes=set(exclude_codes or set()),
+                audit_watch_codes=set(audit_watch_codes or set()),
+                audit_by_code_out=audit_by_code_out,
                 cup_handle_enabled=bool(self.CUP_HANDLE_ENABLED),
                 cup_handle_bonus=float(self.CUP_HANDLE_SCORE_BONUS),
                 relative_strength_bonus_cap=float(self.RELATIVE_STRENGTH_BONUS_CAP),
@@ -2021,6 +2092,139 @@ class LowFreqTradingEngineV16:
             signal_payload,
             formal_payload=formal_payload,
         )
+
+    def _confidence_score_bucket(self, raw_score: Optional[float]) -> str:
+        if raw_score is None:
+            return "score_na"
+        try:
+            s = float(raw_score)
+        except Exception:
+            return "score_na"
+        b = int(max(0.0, min(200.0, s)) // 10) * 10
+        return f"score_{b:03d}_{b+9:03d}"
+
+    def _confidence_bucket_key(
+        self,
+        *,
+        raw_score: Optional[float],
+        role: str,
+        risk_level: str,
+        market_regime: str,
+    ) -> str:
+        role = str(role or "未知").strip() or "未知"
+        risk_level = str(risk_level or "ok").strip() or "ok"
+        market_regime = str(market_regime or "unknown").strip() or "unknown"
+        score_bucket = self._confidence_score_bucket(raw_score)
+        return f"{score_bucket}|role:{role}|risk:{risk_level}|regime:{market_regime}"
+
+    def _load_confidence_calibration_map(self, *, as_of_date: str) -> dict[str, dict[str, Any]]:
+        conn = self._conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS confidence_calibration_buckets_100d (
+                  as_of_date TEXT NOT NULL,
+                  bucket_key TEXT NOT NULL,
+                  n INTEGER NOT NULL,
+                  hits INTEGER NOT NULL,
+                  confidence_prob REAL NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY (as_of_date, bucket_key)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_confidence_calibration_buckets_100d_date_prob
+                ON confidence_calibration_buckets_100d (as_of_date, confidence_prob)
+                """
+            )
+            cursor.execute(
+                """
+                SELECT bucket_key, n, hits, confidence_prob
+                FROM confidence_calibration_buckets_100d
+                WHERE as_of_date = ?
+                """,
+                (str(as_of_date),),
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for bucket_key, n, hits, prob in cursor.fetchall():
+                key = str(bucket_key or "").strip()
+                if not key:
+                    continue
+                out[key] = {
+                    "bucket_key": key,
+                    "n": int(n or 0),
+                    "hits": int(hits or 0),
+                    "confidence_prob": float(prob or 0.0),
+                }
+            return out
+        except Exception:
+            return {}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _attach_certainty_contracts(self, *, signal_payload: dict[str, Any], target_date: date) -> None:
+        if not isinstance(signal_payload, dict):
+            return
+        as_of_date = str(target_date.isoformat())
+        calibration_map = self._load_confidence_calibration_map(as_of_date=as_of_date)
+        tracking_pool = signal_payload.get("tracking_pool_candidates")
+        tracking_order = signal_payload.get("tracking_pool_candidate_order")
+        pool_by_code: dict[str, dict[str, Any]] = {}
+        if isinstance(tracking_pool, dict):
+            pool_by_code = {str(k): v for k, v in tracking_pool.items() if isinstance(v, dict)}
+
+        def _attach(item: dict[str, Any]) -> dict[str, Any]:
+            updated = dict(item)
+            raw_score = updated.get("buy_score")
+            buy_score = float(raw_score) if isinstance(raw_score, (int, float)) else None
+            bucket_key = self._confidence_bucket_key(
+                raw_score=buy_score,
+                role=str(updated.get("role") or ""),
+                risk_level="ok",
+                market_regime="unknown",
+            )
+            bucket = calibration_map.get(bucket_key)
+            confidence_prob = float(bucket.get("confidence_prob")) if isinstance(bucket, dict) else None
+            confidence_samples = int(bucket.get("n")) if isinstance(bucket, dict) else 0
+            updated["certainty_prob"] = confidence_prob
+            updated["certainty_samples"] = int(confidence_samples)
+            updated["certainty_bucket_key"] = bucket_key
+            updated["certainty_horizon_days_max"] = 100
+            updated["certainty_target_return_pct"] = 50
+            updated["certainty_score"] = (
+                round(float(confidence_prob) * 100.0, 1) if isinstance(confidence_prob, (int, float)) else None
+            )
+            return updated
+
+        if pool_by_code:
+            updated_pool = {code: _attach(payload) for code, payload in pool_by_code.items()}
+            signal_payload["tracking_pool_candidates"] = updated_pool
+
+        candidate_signals = signal_payload.get("candidate_signals")
+        if isinstance(candidate_signals, list):
+            signal_payload["candidate_signals"] = [
+                _attach(sig) if isinstance(sig, dict) else sig for sig in candidate_signals
+            ]
+
+        if isinstance(tracking_order, list) and pool_by_code:
+            rebuilt = []
+            updated_pool = signal_payload.get("tracking_pool_candidates")
+            if isinstance(updated_pool, dict):
+                for code in tracking_order:
+                    code_s = str(code or "").strip()
+                    if not code_s:
+                        continue
+                    item = updated_pool.get(code_s)
+                    if isinstance(item, dict):
+                        rebuilt.append(dict(item))
+            if rebuilt:
+                signal_payload["candidate_signals"] = rebuilt
 
     def _build_formal_front_payload(
         self,
@@ -2089,6 +2293,7 @@ class LowFreqTradingEngineV16:
                 logger.info(str(market_filter_state["log_message"]))
         
         raw_signals: list[dict[str, Any]] = []
+        global_candidate_audit_by_code: dict[str, str] = {}
         hot_sectors = []
         conn = self._conn()
         cursor = conn.cursor()
@@ -2122,12 +2327,36 @@ class LowFreqTradingEngineV16:
             try:
                 hot_sector_set = {str(s.sector) for s in hot_sectors}
                 existing_codes = {str(s.get("code") or "") for s in raw_signals if isinstance(s, dict)}
-                global_candidates = self.get_global_candidates(
-                    target_date,
-                    top_n=int(getattr(self, "CROSS_SECTOR_CANDIDATE_TOP_N", 120) or 120),
-                    exclude_sectors=hot_sector_set,
-                    exclude_codes=existing_codes,
-                )
+                tracking_runtime_state = getattr(self, "_tracking_runtime_state_current_run", None)
+                watch_cross_sector_codes: set[str] = set()
+                if isinstance(tracking_runtime_state, dict):
+                    for code, prev in tracking_runtime_state.items():
+                        if not isinstance(prev, dict):
+                            continue
+                        sig = prev.get("sig")
+                        if not isinstance(sig, dict):
+                            continue
+                        if str(sig.get("signal_source") or "").strip() != "cross_sector":
+                            continue
+                        code_s = str(code or "").strip()
+                        if code_s:
+                            watch_cross_sector_codes.add(code_s)
+                try:
+                    global_candidates = self.get_global_candidates(
+                        target_date,
+                        top_n=int(getattr(self, "CROSS_SECTOR_CANDIDATE_TOP_N", 120) or 120),
+                        exclude_sectors=hot_sector_set,
+                        exclude_codes=existing_codes,
+                        audit_watch_codes=watch_cross_sector_codes,
+                        audit_by_code_out=global_candidate_audit_by_code,
+                    )
+                except TypeError:
+                    global_candidates = self.get_global_candidates(
+                        target_date,
+                        top_n=int(getattr(self, "CROSS_SECTOR_CANDIDATE_TOP_N", 120) or 120),
+                        exclude_sectors=hot_sector_set,
+                        exclude_codes=existing_codes,
+                    )
                 allowed_waves = build_cross_sector_allowed_waves(
                     allow_wave1=bool(getattr(self, "CROSS_SECTOR_ALLOW_WAVE1", True))
                 )
@@ -2151,14 +2380,30 @@ class LowFreqTradingEngineV16:
             target_date=target_date,
             market_filter_note=market_filter_note,
         )
+        signal_payload["hot_sectors"] = [str(s.sector) for s in hot_sectors]
+        signal_payload["cross_sector_scan_enabled"] = bool(self.CROSS_SECTOR_SCAN_ENABLED)
+        signal_payload["global_candidate_audit_by_code"] = global_candidate_audit_by_code
+        tracking_pool = signal_payload.get("tracking_pool_candidates")
+        tracking_order = signal_payload.get("tracking_pool_candidate_order")
+        if isinstance(tracking_pool, dict) and isinstance(tracking_order, list):
+            formal_candidates = [
+                dict(item)
+                for code in tracking_order
+                for item in [tracking_pool.get(str(code).strip())]
+                if isinstance(item, dict)
+            ]
+        else:
+            formal_candidates = signal_payload.get("candidate_signals") or []
         formal_payload = self._build_formal_front_payload(
             target_date=target_date,
-            candidate_signals=signal_payload.get("candidate_signals") or [],
+            candidate_signals=formal_candidates if isinstance(formal_candidates, list) else [],
         )
-        return self._finalize_formal_front_payload(
+        finalized = self._finalize_formal_front_payload(
             signal_payload=signal_payload,
             formal_payload=formal_payload,
         )
+        self._attach_certainty_contracts(signal_payload=finalized, target_date=target_date)
+        return finalized
 
     def _system_exit_attr_names(self, scope: str) -> dict[str, str]:
         base = "market_exit" if str(scope) == "market" else "sector_exit"
@@ -2277,6 +2522,19 @@ class LowFreqTradingEngineV16:
         if not isinstance(audit_log, list):
             return
         snap = snapshot if isinstance(snapshot, dict) else {}
+        risk_action = "blocked" if str(event_type) == "system_exit_downgraded" else "sell"
+        exit_signal: Optional[dict[str, Any]] = None
+        hold_noise_filter_state: Optional[dict[str, Any]] = None
+        if isinstance(position_contract_snapshot, dict):
+            snap_action = str(position_contract_snapshot.get("risk_action") or "").strip()
+            if snap_action:
+                risk_action = snap_action
+            snap_exit_signal = position_contract_snapshot.get("exit_signal")
+            if isinstance(snap_exit_signal, dict):
+                exit_signal = dict(snap_exit_signal)
+            snap_hold_noise_filter_state = position_contract_snapshot.get("hold_noise_filter_state")
+            if isinstance(snap_hold_noise_filter_state, dict):
+                hold_noise_filter_state = dict(snap_hold_noise_filter_state)
         audit_log.append(
             {
                 "date": current_date.isoformat(),
@@ -2284,6 +2542,11 @@ class LowFreqTradingEngineV16:
                 "scope": str(scope),
                 "code": str(trade.code),
                 "sector": str(getattr(trade, "sector", "") or ""),
+                "risk_action": str(risk_action),
+                "exit_signal": dict(exit_signal) if isinstance(exit_signal, dict) else None,
+                "hold_noise_filter_state": (
+                    dict(hold_noise_filter_state) if isinstance(hold_noise_filter_state, dict) else None
+                ),
                 "grace_used": bool(getattr(trade, "system_exit_grace_used", False)),
                 "grace_scope": str(getattr(trade, "system_exit_grace_scope", "") or ""),
                 "grace_date": str(getattr(trade, "system_exit_grace_date", "") or ""),
@@ -2385,6 +2648,19 @@ class LowFreqTradingEngineV16:
                 watch_day = self._count_trading_days(date.fromisoformat(start_value), current_date)
             except Exception:
                 watch_day = 0
+        risk_action = "sell" if str(event_type).endswith("_confirmed") else "hold"
+        exit_signal: Optional[dict[str, Any]] = None
+        hold_noise_filter_state: Optional[dict[str, Any]] = None
+        if isinstance(position_contract_snapshot, dict):
+            snap_action = str(position_contract_snapshot.get("risk_action") or "").strip()
+            if snap_action:
+                risk_action = snap_action
+            snap_exit_signal = position_contract_snapshot.get("exit_signal")
+            if isinstance(snap_exit_signal, dict):
+                exit_signal = dict(snap_exit_signal)
+            snap_hold_noise_filter_state = position_contract_snapshot.get("hold_noise_filter_state")
+            if isinstance(snap_hold_noise_filter_state, dict):
+                hold_noise_filter_state = dict(snap_hold_noise_filter_state)
         audit_log.append(
             {
                 "date": current_date.isoformat(),
@@ -2392,6 +2668,11 @@ class LowFreqTradingEngineV16:
                 "scope": str(scope),
                 "code": str(trade.code),
                 "sector": str(getattr(trade, "sector", "") or ""),
+                "risk_action": str(risk_action),
+                "exit_signal": dict(exit_signal) if isinstance(exit_signal, dict) else None,
+                "hold_noise_filter_state": (
+                    dict(hold_noise_filter_state) if isinstance(hold_noise_filter_state, dict) else None
+                ),
                 "state": str(getattr(trade, attrs["state"], "") or ""),
                 "watch_day": int(watch_day),
                 "watch_hits": int(getattr(trade, attrs["hits"], 0) or 0),
@@ -2787,6 +3068,13 @@ class LowFreqTradingEngineV16:
         event = str(event_type or "").strip()
         tracking_event = event in {"tracking_started", "tracking_promoted_to_entry", "tracking_dropped"}
         action_fields = self._execution_action_fields(event_type=str(event_type), snapshot=snap)
+        drop_reason = ""
+        if event == "tracking_dropped":
+            drop_reason = str(
+                snap.get("drop_reason")
+                or snap.get("tracking_transition_reason")
+                or "unknown"
+            ).strip() or "unknown"
         audit_log.append(
             {
                 "date": current_date.isoformat(),
@@ -2811,6 +3099,7 @@ class LowFreqTradingEngineV16:
                         )
                     )
                 ),
+                "drop_reason": drop_reason,
                 "queue_name": str(snap.get("queue_name") or ""),
                 "position_delta": int(snap.get("position_delta") or 0),
                 "near_high_flag": bool(snap.get("near_high_flag")),
@@ -2840,15 +3129,38 @@ class LowFreqTradingEngineV16:
         positions: Optional[dict[str, TradeRecord]] = None,
     ) -> list[dict[str, Any]]:
         signal_payload = signals if isinstance(signals, dict) else {}
-        candidate_signals = signal_payload.get("candidate_signals")
-        if not isinstance(candidate_signals, list):
+        tracking_pool = signal_payload.get("tracking_pool_candidates")
+        tracking_order = signal_payload.get("tracking_pool_candidate_order")
+        if isinstance(tracking_pool, dict) and isinstance(tracking_order, list):
+            candidate_items = [
+                dict(item)
+                for code in tracking_order
+                for item in [tracking_pool.get(str(code).strip())]
+                if isinstance(item, dict)
+            ]
+        else:
+            candidate_items = signal_payload.get("candidate_signals")
+
+        if not isinstance(candidate_items, list):
             raw_buy_signals = signal_payload.get("buy_signals")
             return [dict(sig) for sig in raw_buy_signals] if isinstance(raw_buy_signals, list) else []
+        hot_sector_set = {
+            str(x).strip()
+            for x in list(signal_payload.get("hot_sectors") or [])
+            if str(x).strip()
+        }
+        cross_sector_enabled = bool(signal_payload.get("cross_sector_scan_enabled"))
+        global_candidate_audit_by_code = signal_payload.get("global_candidate_audit_by_code")
+        audit_by_code = (
+            dict(global_candidate_audit_by_code)
+            if isinstance(global_candidate_audit_by_code, dict)
+            else {}
+        )
         active_positions = positions if isinstance(positions, dict) else {}
         current_tracking_codes: set[str] = set()
         promoted_entry_signals: list[dict[str, Any]] = []
         tracking_min_days = max(int(getattr(self, "TRACKING_MIN_DAYS", 2) or 0), 1)
-        for raw_sig in candidate_signals:
+        for raw_sig in candidate_items:
             if not isinstance(raw_sig, dict):
                 continue
             sig = dict(raw_sig)
@@ -2954,6 +3266,26 @@ class LowFreqTradingEngineV16:
                 continue
             sig = dict(prev.get("sig") or {})
             tracking_days = int(prev.get("tracking_days") or 0)
+            prev_sector = str(sig.get("sector") or "").strip()
+            prev_source = str(sig.get("signal_source") or "").strip()
+            current_hot = bool(prev_sector) and prev_sector in hot_sector_set
+            drop_reason = "candidate_missing_from_current_tracking_set"
+            if prev_source == "hot_sector":
+                drop_reason = "hot_sector_candidate_missing" if current_hot else "sector_not_hot"
+            elif prev_source == "cross_sector":
+                if current_hot:
+                    drop_reason = "cross_sector_excluded_due_to_sector_hot"
+                else:
+                    audit_reason = str(audit_by_code.get(str(code)) or "").strip()
+                    if audit_reason:
+                        drop_reason = audit_reason
+                    else:
+                        drop_reason = "cross_sector_candidate_missing"
+            else:
+                if current_hot:
+                    drop_reason = "hot_sector_candidate_missing"
+                elif cross_sector_enabled:
+                    drop_reason = "cross_sector_candidate_missing"
             self._record_buy_signal_audit_event(
                 event_type="tracking_dropped",
                 current_date=current_date,
@@ -2966,6 +3298,7 @@ class LowFreqTradingEngineV16:
                 snapshot={
                     "tracking_state": "tracking_dropped",
                     "tracking_days": tracking_days,
+                    "drop_reason": drop_reason,
                     "tracking_transition_reason": "candidate_missing_from_current_tracking_set",
                     "tracking_ready": False,
                     "tracking_evidence_bundle": list(sig.get("tracking_evidence_bundle") or sig.get("reasons") or []),
@@ -3332,6 +3665,7 @@ class LowFreqTradingEngineV16:
         pending_reserved_attempts: dict[str, dict[str, Any]] = {}
         tracking_runtime_state: dict[str, dict[str, Any]] = {}
         rotation_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        recent_trade_counts: list[int] = []
         peak_gross = float(initial_capital)
         peak_net = float(initial_capital)
         max_dd_gross = 0.0
@@ -3369,6 +3703,7 @@ class LowFreqTradingEngineV16:
             "buy_insufficient_cash": 0,
             "buy_chase_entry_blocked": 0,
             "buy_execution_signal_gate_blocked": 0,
+            "buy_trade_discipline_guard_blocked": 0,
             "buy_reserved_due_to_full_book": 0,
             "buy_reserved_expired": 0,
             "buy_reserved_released_into_buy": 0,
@@ -3377,8 +3712,10 @@ class LowFreqTradingEngineV16:
         }
         sell_signal_audit: list[dict[str, Any]] = []
         buy_signal_audit: list[dict[str, Any]] = []
+        trade_discipline_audit: list[dict[str, Any]] = []
         self._sell_signal_audit_current_run = sell_signal_audit
         self._buy_signal_audit_current_run = buy_signal_audit
+        self._trade_discipline_audit_current_run = trade_discipline_audit
 
         conn = self._conn()
         try:
@@ -3386,6 +3723,8 @@ class LowFreqTradingEngineV16:
             buy_signal_memory_days = max(int(getattr(self, "BUY_SIGNAL_MEMORY_DAYS", 5) or 0), 0)
             for i, current_date in enumerate(trading_dates):
                 rotation_cache.clear()
+                executed_sells_today = 0
+                executed_buys_today = 0
                 # 检查持仓卖出信号
                 closed_codes = []
                 for code, trade in list(positions.items()):
@@ -3415,6 +3754,7 @@ class LowFreqTradingEngineV16:
                         elif reason == "missing_price_bar":
                             trade_blocks["sell_missing_price_bar"] += 1
                         continue
+                    executed_sells_today += 1
                     fee = self._calc_trade_fee(trade_value=trade_value, side="sell")
                     gross_proceeds = float(ref_price) * int(shares_to_sell)
                     net_proceeds = float(trade_value) - float(fee)
@@ -3491,6 +3831,43 @@ class LowFreqTradingEngineV16:
                     ),
                     reverse=True,
                 )
+                discipline_enabled = bool(getattr(self, "DISCIPLINE_ENABLED", False))
+                discipline_window_days = max(
+                    int(getattr(self, "DISCIPLINE_WINDOW_DAYS", 20) or 20),
+                    1,
+                )
+                discipline_max_trades_window = int(getattr(self, "DISCIPLINE_MAX_TRADES_WINDOW", 0) or 0)
+                discipline_executed_window = sum(recent_trade_counts[-discipline_window_days:]) + int(
+                    executed_sells_today
+                )
+                discipline_metrics = build_trade_discipline_metrics(
+                    asof_date=current_date.isoformat(),
+                    window_days=int(discipline_window_days),
+                    open_positions=len(positions),
+                    planned_entries_today=int(len(ranked_reserved_attempts) + len(ranked_pending_attempts)),
+                    planned_exits_today=int(executed_sells_today),
+                    executed_trades_window=int(discipline_executed_window),
+                )
+                discipline_verdict = build_discipline_guard_verdict(
+                    enabled=bool(discipline_enabled),
+                    asof_date=current_date.isoformat(),
+                    policy_id="step7_trade_discipline_v0",
+                    metrics=discipline_metrics,
+                    max_trades_window=int(discipline_max_trades_window),
+                )
+                trade_discipline_audit.append(
+                    build_discipline_audit_event(
+                        asof_date=current_date.isoformat(),
+                        policy_id=str(discipline_verdict.get("policy_id") or "step7_trade_discipline_v0"),
+                        guard_verdict=discipline_verdict,
+                        metrics=discipline_metrics,
+                    )
+                )
+                discipline_blocked = (
+                    bool(discipline_enabled)
+                    and isinstance(discipline_verdict, dict)
+                    and str(discipline_verdict.get("status") or "") == "block"
+                )
                 for queue_name, queue_items in (
                     ("reserved", ranked_reserved_attempts),
                     ("pending", ranked_pending_attempts),
@@ -3521,6 +3898,22 @@ class LowFreqTradingEngineV16:
                             continue
 
                         sig = payload.get("sig") if isinstance(payload.get("sig"), dict) else {}
+                        if discipline_blocked:
+                            trade_blocks["buy_trade_discipline_guard_blocked"] += 1
+                            self._record_buy_signal_audit_event(
+                                event_type="trade_discipline_guard_blocked",
+                                current_date=current_date,
+                                code=str(code),
+                                sig=sig,
+                                payload=payload,
+                                snapshot={
+                                    "blocked": True,
+                                    "blocked_reason": "trade_discipline_guard_blocked",
+                                    "queue_name": queue_name,
+                                    "details": str(discipline_verdict.get("block_reason") or ""),
+                                },
+                            )
+                            continue
                         execution_gate = self._execution_signal_gate_snapshot(sig=sig)
                         if isinstance(execution_gate, dict) and bool(execution_gate.get("blocked")):
                             trade_blocks["buy_execution_signal_gate_blocked"] += 1
@@ -3644,6 +4037,7 @@ class LowFreqTradingEngineV16:
                             buy_fee=float(fee),
                             status="open",
                         )
+                        executed_buys_today += 1
                         active_queue.pop(code, None)
                         if queue_name == "reserved":
                             trade_blocks["buy_reserved_released_into_buy"] += 1
@@ -3684,6 +4078,7 @@ class LowFreqTradingEngineV16:
                 # 每日记录正式买入信号到短窗口记忆，在后续交易日继续尝试。
                 if buy_signal_memory_days > 0:
                     try:
+                        setattr(self, "_tracking_runtime_state_current_run", tracking_runtime_state)
                         signals = self.generate_buy_signals(current_date)
                         effective_entry_signals = self._record_tracking_candidate_events(
                             current_date=current_date,
@@ -3746,6 +4141,7 @@ class LowFreqTradingEngineV16:
                         logger.warning(f"信号生成失败 {current_date}: {e}")
                 elif i % self.REBALANCE_DAYS == 0 and (unbounded_mode or len(positions) < self.MAX_POSITIONS):
                     try:
+                        setattr(self, "_tracking_runtime_state_current_run", tracking_runtime_state)
                         signals = self.generate_buy_signals(current_date)
                         effective_entry_signals = self._record_tracking_candidate_events(
                             current_date=current_date,
@@ -3806,6 +4202,8 @@ class LowFreqTradingEngineV16:
                             pending_buy_attempts[code] = payload
                     except Exception as e:
                         logger.warning(f"信号生成失败 {current_date}: {e}")
+
+                recent_trade_counts.append(int(executed_sells_today) + int(executed_buys_today))
 
                 # 计算总资产
                 pos_value = 0.0
@@ -3876,10 +4274,30 @@ class LowFreqTradingEngineV16:
             conn2 = self._conn()
             try:
                 cursor2 = conn2.cursor()
+                missing_end_flat_positions: list[dict[str, Any]] = []
                 for code, trade in list(positions.items()):
                     bar = self._get_bar(cursor2, code=str(code), d=last_day)
                     ref_price = bar.get("close") if isinstance(bar, dict) else None
                     if not ref_price:
+                        last_known = cursor2.execute(
+                            """
+                            SELECT trade_date, close
+                            FROM daily_prices
+                            WHERE code = ? AND trade_date <= ? AND close IS NOT NULL
+                            ORDER BY trade_date DESC
+                            LIMIT 1
+                            """,
+                            (str(code), last_day.isoformat()),
+                        ).fetchone()
+                        missing_end_flat_positions.append(
+                            {
+                                "code": str(code),
+                                "buy_date": str(getattr(trade, "buy_date", "") or ""),
+                                "last_known_trade_date": str(last_known[0]) if last_known else None,
+                                "last_known_close": float(last_known[1]) if last_known and last_known[1] is not None else None,
+                                "end_date": last_day.isoformat(),
+                            }
+                        )
                         continue
                     exec_price = self._slippage_adjust_price(price=float(ref_price), side="sell")
                     trade_value = float(exec_price) * int(trade.shares)
@@ -3922,6 +4340,10 @@ class LowFreqTradingEngineV16:
                             ),
                         )
                     all_trades.append(trade)
+                if missing_end_flat_positions:
+                    raise RuntimeError(
+                        f"backtest_end_flat_missing_price: {missing_end_flat_positions}"
+                    )
                 positions.clear()
             finally:
                 conn2.close()
@@ -4029,6 +4451,7 @@ class LowFreqTradingEngineV16:
         }
         gross_metrics["sell_signal_audit"] = sell_signal_audit
         gross_metrics["buy_signal_audit"] = buy_signal_audit
+        gross_metrics["trade_discipline_audit"] = trade_discipline_audit
         normalized_run_id = str(run_id or "").strip()
         normalized_source_run_id = str(source_run_id or "").strip()
         if project_root is not None and normalized_run_id and normalized_source_run_id:
@@ -4047,6 +4470,7 @@ class LowFreqTradingEngineV16:
             gross_metrics["trades"] = [asdict(t) for t in all_trades]
         self._sell_signal_audit_current_run = None
         self._buy_signal_audit_current_run = None
+        self._trade_discipline_audit_current_run = None
         return gross_metrics
 
 

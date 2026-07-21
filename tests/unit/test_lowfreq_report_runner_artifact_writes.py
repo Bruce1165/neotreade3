@@ -45,6 +45,7 @@ def test_write_lowfreq_report_artifacts_preserves_current_writes_and_status(tmp_
             report_id="top200_2025_r1",
             year=2025,
             limit=200,
+            analysis_mode="seed_only",
             ranking_path=ranking_path,
             segments_path=segments_path,
             attribution_path=attribution_path,
@@ -71,6 +72,7 @@ def test_write_lowfreq_report_artifacts_preserves_current_writes_and_status(tmp_
     attribution_payload = json.loads(attribution_path.read_text(encoding="utf-8"))
     assert attribution_payload["_meta"]["generated_at"] == "2026-07-12T12:00:00Z"
     assert attribution_payload["_meta"]["report_id"] == "top200_2025_r1"
+    assert attribution_payload["_meta"]["analysis_mode"] == "seed_only"
     assert report_path.read_text(encoding="utf-8")
 
     status_payload = json.loads((output_dir / "status.json").read_text(encoding="utf-8"))

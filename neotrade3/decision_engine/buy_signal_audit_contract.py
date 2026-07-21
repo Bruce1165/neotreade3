@@ -22,6 +22,7 @@ def normalize_execution_block_reason(raw_reason: str | None) -> str:
         "execution_signal_gate_blocked",
         "chase_entry_blocked",
         "elite_execution_candidate_rejected",
+        "trade_discipline_guard_blocked",
         "limit_up",
         "limit_down",
         "min_amount",
@@ -74,6 +75,13 @@ def resolve_execution_action_fields(
             "order_action": "block",
             "reserve_action": "expire",
             "execution_status": "expired",
+        }
+    if event == "trade_discipline_guard_blocked":
+        return {
+            "action_type": "",
+            "order_action": "block",
+            "reserve_action": "",
+            "execution_status": "blocked",
         }
     return {
         "action_type": "block",

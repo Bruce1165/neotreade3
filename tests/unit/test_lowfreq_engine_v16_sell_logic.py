@@ -160,8 +160,17 @@ def test_trend_exhausted_triggers_for_profitable_trade_after_peak_drawdown() -> 
     events = [entry["event"] for entry in engine._sell_signal_audit_current_run]
     assert "trend_exhausted" in events
     trend_event = engine._sell_signal_audit_current_run[-1]
+    assert trend_event["risk_action"] == "exit"
+    assert isinstance(trend_event["exit_signal"], dict)
+    assert trend_event["exit_signal"]["reason_type"] == "trend_exhausted"
+    assert trend_event["exit_signal"]["exit_scope"] == "position_only"
+    assert trend_event["hold_noise_filter_state"] is None
     position_snapshot = trend_event["position_contract_snapshot"]
     assert isinstance(position_snapshot, dict)
+    assert position_snapshot["risk_action"] == "exit"
+    assert isinstance(position_snapshot["exit_signal"], dict)
+    assert position_snapshot["exit_signal"]["reason_type"] == "trend_exhausted"
+    assert position_snapshot["hold_noise_filter_state"] is None
     assert position_snapshot["hold_state"] == "exit_ready"
     assert position_snapshot["exit_ready"] is True
     assert position_snapshot["exit_scope"] == "position_only"

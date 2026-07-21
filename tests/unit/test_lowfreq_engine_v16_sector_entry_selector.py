@@ -266,8 +266,10 @@ def test_build_sector_candidates_supports_stock_candidate_like_factory_and_top_n
         "buy_score",
         "code",
         "cup_handle_ok",
+        "evidence_bundle",
         "market_cap_yi",
         "name",
+        "pattern_evidence",
         "pe_ttm",
         "price_position",
         "profit_growth",
@@ -281,4 +283,5 @@ def test_build_sector_candidates_supports_stock_candidate_like_factory_and_top_n
         "soft_flags",
         "vol_ratio",
         "wave_phase",
+        "wave_phase_confidence",
     ]

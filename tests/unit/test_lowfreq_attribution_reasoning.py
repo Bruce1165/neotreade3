@@ -36,6 +36,9 @@ def test_sell_reason_bucket_uses_engine_canonical_exit_taxonomy() -> None:
 
 def test_audit_daily_reason_distinguishes_entry_from_candidate() -> None:
     class _Ctx:
+        def buy_signal_audit_entry(self, *, code: str, target_date: date):
+            return None
+
         def market_filter_state(self, _target_date):
             return {"filtered": False, "sentiment": "normal", "score": 72.0}
 
@@ -92,6 +95,9 @@ def test_audit_daily_reason_distinguishes_entry_from_candidate() -> None:
 
 def test_audit_daily_reason_keeps_formal_tracking_in_candidate_bucket() -> None:
     class _Ctx:
+        def buy_signal_audit_entry(self, *, code: str, target_date: date):
+            return None
+
         def market_filter_state(self, _target_date):
             return {"filtered": False, "sentiment": "normal", "score": 72.0}
 
@@ -145,6 +151,9 @@ def test_audit_daily_reason_keeps_formal_tracking_in_candidate_bucket() -> None:
 
 def test_audit_daily_reason_marks_cross_sector_wave_filter_stage() -> None:
     class _Ctx:
+        def buy_signal_audit_entry(self, *, code: str, target_date: date):
+            return None
+
         def market_filter_state(self, _target_date):
             return {"filtered": False, "sentiment": "normal", "score": 72.0}
 
@@ -186,6 +195,7 @@ def test_audit_daily_reason_marks_cross_sector_wave_filter_stage() -> None:
         name="中际旭创",
         sector="光模块",
         target_date=date(2025, 6, 18),
+        analysis_mode="full",
     )
 
     assert audit["stage"] == "global_wave_filtered"
@@ -221,7 +231,7 @@ def test_analyze_topk_aggregates_candidate_without_entry(monkeypatch) -> None:
     )
 
     class _DummyCtx:
-        def __init__(self, *, engine, conn) -> None:
+        def __init__(self, *, engine, conn, buy_signal_audit_entries=None) -> None:
             self.engine = engine
             self.conn = conn
 

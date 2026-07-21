@@ -1,0 +1,315 @@
+{
+  "version": "chaos_registry_v1",
+  "generated_at": "2026-07-20",
+  "notes": [
+    "v1 目标：把技术/资金人气/综合三层可获取信息纳入混沌因子注册表，并冻结每个因子的阴阳属性与初始权重。",
+    "本文件只声明因子元数据，不代表已在 chaos_daily_snapshot.raw_factors_json 中实现落盘。",
+    "yin_or_yang 取值：yang=记到阳；yin=记到阴；signed=按数值正负拆分到阴阳；neutral=不直接记阴阳（通常作为放大器/诊断项）。"
+  ],
+  "factors": [
+    {
+      "factor_id": "pct_change",
+      "yin_or_yang": "signed",
+      "category": "technical",
+      "normalization": "raw",
+      "default_weight": 1.0,
+      "data_source": "daily_prices.pct_change"
+    },
+    {
+      "factor_id": "resonance_score",
+      "yin_or_yang": "yang",
+      "category": "technical",
+      "normalization": "score_0_100",
+      "default_weight": 1.0,
+      "data_source": "resonance_scorer.calculate_technical_score()"
+    },
+    {
+      "factor_id": "sector_rps_120",
+      "yin_or_yang": "yang",
+      "category": "technical",
+      "normalization": "score_0_100",
+      "default_weight": 0.8,
+      "data_source": "sector_rotation.analyze() → rps_120"
+    },
+    {
+      "factor_id": "tier_leadership_score",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "score_0_100",
+      "default_weight": 0.6,
+      "data_source": "stock_tiering.analyze() → leadership_score"
+    },
+    {
+      "factor_id": "screener_hit_count",
+      "yin_or_yang": "yang",
+      "category": "technical",
+      "normalization": "count",
+      "default_weight": 0.4,
+      "data_source": "screener_runs artifacts / factor_matrix internal_formula_hits"
+    },
+    {
+      "factor_id": "lab_hit_count",
+      "yin_or_yang": "yang",
+      "category": "technical",
+      "normalization": "count",
+      "default_weight": 0.3,
+      "data_source": "lab_runs artifacts / factor_matrix lab_hits"
+    },
+    {
+      "factor_id": "amount",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "rank_percentile",
+      "default_weight": 1.0,
+      "data_source": "daily_prices.amount"
+    },
+    {
+      "factor_id": "amount_rank",
+      "yin_or_yang": "yin",
+      "category": "capital",
+      "normalization": "rank_percentile",
+      "default_weight": 0.4,
+      "data_source": "daily_prices.amount（排序后计算）"
+    },
+    {
+      "factor_id": "turnover",
+      "yin_or_yang": "neutral",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.3,
+      "data_source": "daily_prices.turnover"
+    },
+    {
+      "factor_id": "volume",
+      "yin_or_yang": "neutral",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.2,
+      "data_source": "daily_prices.volume"
+    },
+    {
+      "factor_id": "avg_volume_20d",
+      "yin_or_yang": "neutral",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.2,
+      "data_source": "daily_prices.volume（20d 均值）"
+    },
+    {
+      "factor_id": "volume_ratio_20d",
+      "yin_or_yang": "neutral",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.6,
+      "data_source": "volume / avg_volume_20d"
+    },
+    {
+      "factor_id": "sector_total_amount_today",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "rank_percentile",
+      "default_weight": 0.6,
+      "data_source": "sector_prosperity artifact evidence.capital_proxy.amount_today"
+    },
+    {
+      "factor_id": "sector_amount_ratio_today_over_avg20",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.6,
+      "data_source": "sector_prosperity artifact evidence.capital_proxy.ratio_today_over_avg20"
+    },
+    {
+      "factor_id": "sector_avg_pct_today",
+      "yin_or_yang": "signed",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.5,
+      "data_source": "sector_prosperity artifact evidence.market_proxy.sector_avg_pct_today"
+    },
+    {
+      "factor_id": "sector_avg_pct_20d",
+      "yin_or_yang": "signed",
+      "category": "capital",
+      "normalization": "raw",
+      "default_weight": 0.4,
+      "data_source": "sector_prosperity artifact evidence.market_proxy.sector_avg_pct_20d"
+    },
+    {
+      "factor_id": "pe_ratio",
+      "yin_or_yang": "yin",
+      "category": "composite",
+      "normalization": "log1p",
+      "default_weight": 0.5,
+      "data_source": "stocks.pe_ratio"
+    },
+    {
+      "factor_id": "pb_ratio",
+      "yin_or_yang": "yin",
+      "category": "composite",
+      "normalization": "log1p",
+      "default_weight": 0.3,
+      "data_source": "stocks.pb_ratio"
+    },
+    {
+      "factor_id": "roe",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "raw",
+      "default_weight": 0.2,
+      "data_source": "stocks.roe"
+    },
+    {
+      "factor_id": "market_cap",
+      "yin_or_yang": "neutral",
+      "category": "composite",
+      "normalization": "log1p",
+      "default_weight": 0.1,
+      "data_source": "stocks.total_market_cap"
+    },
+    {
+      "factor_id": "holder_etf_count",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "count",
+      "default_weight": 0.4,
+      "data_source": "market_focus_snapshot.holder_etf_count"
+    },
+    {
+      "factor_id": "holder_fund_count",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "count",
+      "default_weight": 0.3,
+      "data_source": "market_focus_snapshot.holder_fund_count"
+    },
+    {
+      "factor_id": "index_count",
+      "yin_or_yang": "yang",
+      "category": "capital",
+      "normalization": "count",
+      "default_weight": 0.3,
+      "data_source": "market_focus_snapshot.index_count"
+    },
+    {
+      "factor_id": "config_score",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "score_0_5",
+      "default_weight": 0.4,
+      "data_source": "market_focus_snapshot.config_score"
+    },
+    {
+      "factor_id": "attention_score",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "score_0_4",
+      "default_weight": 0.4,
+      "data_source": "market_focus_snapshot.attention_score"
+    },
+    {
+      "factor_id": "research_inst",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "count",
+      "default_weight": 0.2,
+      "data_source": "market_focus_snapshot.research_inst"
+    },
+    {
+      "factor_id": "consensus_orgs",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "count",
+      "default_weight": 0.2,
+      "data_source": "market_focus_snapshot.consensus_orgs"
+    },
+    {
+      "factor_id": "survey_orgs",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "count",
+      "default_weight": 0.2,
+      "data_source": "market_focus_snapshot.survey_orgs"
+    },
+    {
+      "factor_id": "survey_count",
+      "yin_or_yang": "yang",
+      "category": "composite",
+      "normalization": "count",
+      "default_weight": 0.2,
+      "data_source": "market_focus_snapshot.survey_count"
+    },
+    {
+      "factor_id": "market_breadth_weak",
+      "yin_or_yang": "yin",
+      "category": "composite",
+      "normalization": "binary",
+      "default_weight": 0.8,
+      "data_source": "market proxy: market_down_ratio > 0.6"
+    },
+    {
+      "factor_id": "market_price_trend_weak",
+      "yin_or_yang": "yin",
+      "category": "composite",
+      "normalization": "binary",
+      "default_weight": 0.8,
+      "data_source": "market proxy: market_avg_pct_20d < 0 and market_avg_pct_today < 0"
+    },
+    {
+      "factor_id": "market_drawdown_weak",
+      "yin_or_yang": "yin",
+      "category": "composite",
+      "normalization": "binary",
+      "default_weight": 0.6,
+      "data_source": "market proxy: market_down_ratio > 0.75 and market_avg_pct_today < -1.0"
+    },
+    {
+      "factor_id": "sector_cooldown_detected",
+      "yin_or_yang": "yin",
+      "category": "capital",
+      "normalization": "binary",
+      "default_weight": 0.9,
+      "data_source": "sector proxy: sector_amount_ratio_today_over_avg20 < 0.8 and sector_avg_pct_today < 0"
+    },
+    {
+      "factor_id": "sector_trend_deteriorating",
+      "yin_or_yang": "yin",
+      "category": "capital",
+      "normalization": "binary",
+      "default_weight": 0.7,
+      "data_source": "sector proxy: sector_avg_pct_20d < 0"
+    },
+    {
+      "factor_id": "sector_leader_rollover",
+      "yin_or_yang": "yin",
+      "category": "capital",
+      "normalization": "binary",
+      "default_weight": 0.8,
+      "data_source": "sector proxy: sector_rps_120 < 40 and sector_avg_pct_today < 0"
+    },
+    {
+      "factor_id": "trend_exhaustion_triggered",
+      "yin_or_yang": "yin",
+      "category": "technical",
+      "normalization": "binary",
+      "default_weight": 0.0,
+      "data_source": "chaos_model_v0 trend_snapshot.drawdown_from_peak_triggered"
+    },
+    {
+      "factor_id": "trend_exhaustion_armed",
+      "yin_or_yang": "yin",
+      "category": "technical",
+      "normalization": "binary",
+      "default_weight": 0.0,
+      "data_source": "chaos_model_v0 trend_snapshot.armed"
+    },
+    {
+      "factor_id": "hazard_score_5d_high",
+      "yin_or_yang": "yin",
+      "category": "technical",
+      "normalization": "binary",
+      "default_weight": 0.6,
+      "data_source": "chaos_model_v0 hazard_snapshot.stock_top_risk_5d >= 70"
+    }
+  ]
+}

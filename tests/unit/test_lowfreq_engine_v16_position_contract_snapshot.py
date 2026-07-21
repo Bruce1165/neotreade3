@@ -57,6 +57,12 @@ def test_build_position_contract_snapshot_keeps_partial_weakness_in_hold_layer()
         layer_contract_builder=_layer_contract_builder,
     )
 
+    assert snapshot["risk_action"] == "hold"
+    assert snapshot["exit_signal"] is None
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["status"] == "active"
+    assert snapshot["hold_noise_filter_state"]["stage"] == "noise_watch"
+    assert snapshot["hold_noise_filter_state"]["level"] == 1
     assert snapshot["hold_state"] == "noise_watch"
     assert snapshot["hold_attribution_bucket"] == "hold_noise_watch"
     assert snapshot["exit_attribution_bucket"] == ""
@@ -85,6 +91,11 @@ def test_build_position_contract_snapshot_maps_grace_hold_bucket_and_note() -> N
         layer_contract_builder=_layer_contract_builder,
     )
 
+    assert snapshot["risk_action"] == "hold"
+    assert snapshot["exit_signal"] is None
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["status"] == "inactive"
+    assert snapshot["hold_noise_filter_state"]["level"] == 0
     assert snapshot["hold_state"] == "grace_hold"
     assert snapshot["hold_attribution_bucket"] == "hold_grace"
     assert "system_exit_grace_used" in snapshot["warning_flags"]
@@ -117,6 +128,11 @@ def test_build_position_contract_snapshot_maps_trend_exhausted_exit_bucket() -> 
         layer_contract_builder=_layer_contract_builder,
     )
 
+    assert snapshot["risk_action"] == "exit"
+    assert isinstance(snapshot["exit_signal"], dict)
+    assert snapshot["exit_signal"]["reason_type"] == "trend_exhausted"
+    assert snapshot["exit_signal"]["exit_scope"] == "position_only"
+    assert snapshot["hold_noise_filter_state"] is None
     assert snapshot["hold_state"] == "exit_ready"
     assert snapshot["exit_ready"] is True
     assert snapshot["exit_reason_type"] == "trend_exhausted"
@@ -149,6 +165,10 @@ def test_build_position_contract_snapshot_falls_back_to_exit_other_for_unknown_e
         layer_contract_builder=_layer_contract_builder,
     )
 
+    assert snapshot["risk_action"] == "exit"
+    assert isinstance(snapshot["exit_signal"], dict)
+    assert snapshot["exit_signal"]["reason_type"] == "other_reason"
+    assert snapshot["hold_noise_filter_state"] is None
     assert snapshot["exit_attribution_bucket"] == "exit_other"
     assert snapshot["exit_reason_type"] == "other_reason"
 
@@ -165,6 +185,7 @@ def test_build_position_contract_snapshot_uses_latest_transition_date() -> None:
         sector_snapshot=None,
         trend_snapshot=None,
         sell_payload=None,
+        hazard_snapshot={"risk_status": "ready", "stock_top_risk_5d": 75, "stock_top_risk_20d": 55, "evidence": []},
         current_date_key="2026-06-18",
         market_last_hit_date="2026-06-15",
         sector_last_hit_date="2026-06-17",
@@ -172,5 +193,115 @@ def test_build_position_contract_snapshot_uses_latest_transition_date() -> None:
         layer_contract_builder=_layer_contract_builder,
     )
 
+    assert snapshot["risk_action"] == "hold"
+    assert snapshot["exit_signal"] is None
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["status"] == "active"
+    assert snapshot["hold_noise_filter_state"]["stage"] == "review_watch"
+    assert snapshot["hold_noise_filter_state"]["level"] == 3
     assert snapshot["hold_state"] == "review_watch"
     assert snapshot["last_transition"] == "2026-06-17"
+
+
+def test_build_position_contract_snapshot_escalates_hold_watch_level_by_hazard_score() -> None:
+    snapshot = build_position_contract_snapshot(
+        market_state="",
+        sector_state="",
+        market_reason="",
+        sector_reason="",
+        grace_used=False,
+        grace_reason="",
+        market_snapshot=None,
+        sector_snapshot=None,
+        trend_snapshot=None,
+        sell_payload=None,
+        hazard_snapshot={
+            "risk_status": "ready",
+            "stock_top_risk_5d": 75,
+            "stock_top_risk_20d": 60,
+            "hazard_state": "accel_only",
+            "first_event_date": "2026-06-17",
+            "evidence": ["accel_15d_ret=0.31", "break_pct=-8.00"],
+        },
+        current_date_key="2026-06-18",
+        market_last_hit_date="",
+        sector_last_hit_date="",
+        grace_date="",
+        layer_contract_builder=_layer_contract_builder,
+    )
+
+    assert snapshot["risk_action"] == "hold"
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["status"] == "active"
+    assert snapshot["hold_noise_filter_state"]["stage"] == "observe_watch"
+    assert snapshot["hold_noise_filter_state"]["level"] == 2
+    assert isinstance(snapshot.get("hazard_snapshot"), dict)
+    assert "hazard_watch_level:2" in snapshot["warning_flags"]
+
+
+def test_build_position_contract_snapshot_escalates_hold_watch_level_by_hazard_state_break_armed() -> None:
+    snapshot = build_position_contract_snapshot(
+        market_state="",
+        sector_state="",
+        market_reason="",
+        sector_reason="",
+        grace_used=False,
+        grace_reason="",
+        market_snapshot=None,
+        sector_snapshot=None,
+        trend_snapshot=None,
+        sell_payload=None,
+        hazard_snapshot={
+            "risk_status": "ready",
+            "hazard_state": "break_armed",
+            "stock_top_risk_5d": 0,
+            "stock_top_risk_20d": 0,
+            "first_event_date": "2026-06-17",
+            "evidence": [],
+        },
+        current_date_key="2026-06-18",
+        market_last_hit_date="",
+        sector_last_hit_date="",
+        grace_date="",
+        layer_contract_builder=_layer_contract_builder,
+    )
+
+    assert snapshot["risk_action"] == "hold"
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["status"] == "active"
+    assert snapshot["hold_noise_filter_state"]["stage"] == "observe_watch"
+    assert snapshot["hold_noise_filter_state"]["level"] == 2
+    assert "hazard_watch_level:2" in snapshot["warning_flags"]
+
+
+def test_build_position_contract_snapshot_does_not_escalate_when_hazard_pending() -> None:
+    snapshot = build_position_contract_snapshot(
+        market_state="",
+        sector_state="",
+        market_reason="",
+        sector_reason="",
+        grace_used=False,
+        grace_reason="",
+        market_snapshot=None,
+        sector_snapshot=None,
+        trend_snapshot=None,
+        sell_payload=None,
+        hazard_snapshot={
+            "risk_status": "pending",
+            "hazard_state": "not_ready",
+            "stock_top_risk_5d": 100,
+            "stock_top_risk_20d": 100,
+            "evidence": [],
+        },
+        current_date_key="2026-06-18",
+        market_last_hit_date="",
+        sector_last_hit_date="",
+        grace_date="",
+        layer_contract_builder=_layer_contract_builder,
+    )
+
+    assert snapshot["risk_action"] == "hold"
+    assert snapshot["exit_signal"] is None
+    assert isinstance(snapshot["hold_noise_filter_state"], dict)
+    assert snapshot["hold_noise_filter_state"]["level"] == 0
+    assert snapshot["hold_state"] == "holding"

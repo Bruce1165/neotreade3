@@ -85,6 +85,21 @@ def build_sector_candidates(
         stock_name = str(name or "")
         cup_ok = code_s in cup_picks
         soft_flags: list[str] = []
+        mkt_cap_value = float(mkt_cap or 0.0)
+        mkt_cap_min = float(market_cap_min)
+        mkt_cap_max = float(market_cap_max)
+        if mkt_cap_value <= 0:
+            soft_flags.append("market_cap_missing")
+            base_score -= 8.0
+            reasons.append("capture-first: 市值缺失，降权保留")
+        elif mkt_cap_value < mkt_cap_min:
+            soft_flags.append("market_cap_low")
+            base_score -= 8.0
+            reasons.append(f"capture-first: 市值低于{mkt_cap_min/1e8:.0f}亿，降权保留")
+        elif mkt_cap_value > mkt_cap_max:
+            soft_flags.append("market_cap_high")
+            base_score -= 8.0
+            reasons.append(f"capture-first: 市值高于{mkt_cap_max/1e8:.0f}亿，降权保留")
 
         fundamentals = fundamentals_by_code.get(code_s) or {
             "pe_ttm": 0,
@@ -130,11 +145,14 @@ def build_sector_candidates(
             reasons.extend([f"soft:{r}" for r in list(structure.get("reasons") or [])])
         else:
             reasons.extend(list(structure.get("reasons") or []))
+        pattern_evidence = list(structure.get("reasons") or [])
 
         if cup_ok:
             base_score += float(cup_handle_bonus)
             if "杯柄确认（cup_handle_v4）" not in reasons:
                 reasons.append("杯柄确认（cup_handle_v4）")
+            if "杯柄确认（cup_handle_v4）" not in pattern_evidence:
+                pattern_evidence.append("杯柄确认（cup_handle_v4）")
 
         history = history_by_code.get(code_s) or []
         ensure_no_lookahead_guard(
@@ -163,7 +181,7 @@ def build_sector_candidates(
             elif 40 <= price_position < 60:
                 base_score += 12
 
-        wave_phase, _wave_confidence = wave_phase_by_code.get(code_s) or ("未知", 0.0)
+        wave_phase, wave_confidence = wave_phase_by_code.get(code_s) or ("未知", 0.0)
         if wave_phase == "3浪":
             base_score += 20
             reasons.append("3浪主升浪")
@@ -239,13 +257,14 @@ def build_sector_candidates(
             {
                 "code": code_s,
                 "name": stock_name,
-                "mkt_cap": float(mkt_cap or 0.0),
+                "mkt_cap": mkt_cap_value,
                 "close": float(close or 0.0),
                 "pct_chg": float(pct_chg or 0.0),
                 "fundamentals": fundamentals,
                 "base_score": float(base_score),
                 "reasons": reasons,
                 "wave_phase": wave_phase,
+                "wave_confidence": float(wave_confidence or 0.0),
                 "ret_5d": float(ret_5d),
                 "vol_ratio": float(vol_ratio),
                 "price_position": float(price_position),
@@ -253,6 +272,7 @@ def build_sector_candidates(
                 "strength_score": float(strength_score),
                 "cup_ok": bool(cup_ok),
                 "soft_flags": soft_flags,
+                "pattern_evidence": pattern_evidence,
             }
         )
 
@@ -323,6 +343,9 @@ def build_sector_candidates(
                 buy_score=float(score),
                 buy_reasons=reasons,
                 wave_phase=str(item.get("wave_phase") or ""),
+                wave_phase_confidence=round(float(item.get("wave_confidence") or 0.0), 4),
+                evidence_bundle=reasons,
+                pattern_evidence=list(item.get("pattern_evidence") or []),
                 ret_5d=round(float(item.get("ret_5d") or 0.0), 2),
                 vol_ratio=round(float(item.get("vol_ratio") or 0.0), 2),
                 price_position=round(float(item.get("price_position") or 0.0), 1),
@@ -479,13 +502,12 @@ def load_sector_top_rows(
         FROM stocks s
         JOIN daily_prices dp ON s.code = dp.code
         WHERE s.sector_lv1 = ? AND dp.trade_date = ?
-          AND s.total_market_cap >= ? AND s.total_market_cap <= ?
           AND (s.is_delisted IS NULL OR s.is_delisted = 0)
           AND dp.close > 0
         ORDER BY dp.pct_change DESC
         LIMIT 80
         """,
-        (sector, target_date.isoformat(), market_cap_min, market_cap_max),
+        (sector, target_date.isoformat()),
     )
     return list(cursor.fetchall() or [])
 

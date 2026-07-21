@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
+from datetime import date
 from pathlib import Path
 
 
@@ -24,6 +26,7 @@ ATTR_MODULE = _load_script_module(
 def test_signal_layer_snapshot_preserves_candidate_entry_split() -> None:
     snapshot = ATTR_MODULE._signal_layer_snapshot(
         {
+            "tracking_pool_candidate_order": ["600460", "300308"],
             "candidate_signals": [
                 {"code": "300308", "candidate_tier": "soft_retained", "buy_score": 91.0},
                 {"code": "600460", "candidate_tier": "entry_ready", "buy_score": 95.0},
@@ -37,6 +40,9 @@ def test_signal_layer_snapshot_preserves_candidate_entry_split() -> None:
 
     assert sorted(snapshot["candidate_signals"].keys()) == ["300308", "600460"]
     assert sorted(snapshot["entry_signals"].keys()) == ["600460"]
+    assert sorted(snapshot["tracking_pool_candidates"].keys()) == ["300308", "600460"]
+    assert isinstance(snapshot["tracking_pool_candidate_fields"], dict)
+    assert snapshot["tracking_pool_candidate_order"] == ["600460", "300308"]
     assert snapshot["signal_summary"]["candidate_count"] == 2
     assert snapshot["signal_summary"]["entry_count"] == 1
     assert snapshot["signal_summary"]["soft_retained_count"] == 1
@@ -98,3 +104,33 @@ def test_signal_layer_snapshot_ignores_legacy_buy_signals_without_entry_signals(
     assert snapshot["entry_signals"] == {}
     assert snapshot["signal_summary"]["candidate_count"] == 0
     assert snapshot["signal_summary"]["entry_count"] == 0
+
+
+def test_audit_context_signal_snapshot_cache_preserves_tracking_pool() -> None:
+    class DummyEngine:
+        def generate_buy_signals(self, target_date: date):
+            return {
+                "tracking_pool_candidates": {
+                    "300308": {"code": "300308", "candidate_tier": "soft_retained", "buy_score": 91.0},
+                    "600460": {"code": "600460", "candidate_tier": "entry_ready", "buy_score": 95.0},
+                },
+                "tracking_pool_candidate_order": ["600460", "300308"],
+                "entry_signals": [
+                    {"code": "600460", "candidate_tier": "entry_ready", "buy_score": 95.0},
+                ],
+                "signal_summary": {"candidate_count": 2, "entry_count": 1, "soft_retained_count": 1},
+            }
+
+    engine = DummyEngine()
+    conn = sqlite3.connect(":memory:")
+    try:
+        ctx = ATTR_MODULE.AuditContext(engine=engine, conn=conn)
+        target = date(2026, 7, 10)
+        first = ctx.signal_snapshot(target)
+        second = ctx.signal_snapshot(target)
+        assert sorted(first["tracking_pool_candidates"].keys()) == ["300308", "600460"]
+        assert sorted(second["tracking_pool_candidates"].keys()) == ["300308", "600460"]
+        assert second["tracking_pool_candidate_order"] == ["600460", "300308"]
+        assert isinstance(second["tracking_pool_candidate_fields"], dict)
+    finally:
+        conn.close()

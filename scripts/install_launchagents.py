@@ -45,6 +45,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_NODE_BIN),
         help=f"Node executable path written into ProgramArguments. Default: {DEFAULT_NODE_BIN}",
     )
+    render_parser.add_argument(
+        "--home-dir",
+        default=str(Path.home()),
+        help="Home directory used to render {{HOME}} token. Default: current user's home",
+    )
+    render_parser.add_argument(
+        "--labels",
+        default="",
+        help="Comma-separated labels to render (empty means all). Example: com.neotrade3.scheduler",
+    )
+    render_parser.add_argument(
+        "--daemon-user",
+        default="",
+        help="When rendering LaunchDaemons, write UserName into plist. Empty means omit.",
+    )
 
     check_parser = subparsers.add_parser(
         "check",
@@ -61,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also inspect current launchctl state for the managed labels.",
     )
     check_parser.add_argument(
+        "--domain",
+        default="gui",
+        choices=("gui", "system"),
+        help="launchctl domain to inspect (gui or system). Default: gui",
+    )
+    check_parser.add_argument(
         "--python-bin",
         default=str(DEFAULT_PROJECT_PYTHON),
         help=(
@@ -73,6 +94,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_NODE_BIN),
         help=f"Node executable path expected in ProgramArguments. Default: {DEFAULT_NODE_BIN}",
     )
+    check_parser.add_argument(
+        "--home-dir",
+        default=str(Path.home()),
+        help="Home directory used to render {{HOME}} token. Default: current user's home",
+    )
+    check_parser.add_argument(
+        "--labels",
+        default="",
+        help="Comma-separated labels to check (empty means all). Example: com.neotrade3.scheduler",
+    )
+    check_parser.add_argument(
+        "--daemon-user",
+        default="",
+        help="When checking LaunchDaemons, render with the same UserName. Empty means omit.",
+    )
 
     install_parser = subparsers.add_parser(
         "install",
@@ -82,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--target-dir",
         default=str(DEFAULT_TARGET_DIR),
         help=f"LaunchAgents target directory. Default: {DEFAULT_TARGET_DIR}",
+    )
+    install_parser.add_argument(
+        "--domain",
+        default="gui",
+        choices=("gui", "system"),
+        help="launchctl domain to bootstrap (gui or system). Default: gui",
     )
     install_parser.add_argument(
         "--python-bin",
@@ -96,16 +138,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_NODE_BIN),
         help=f"Node executable path written into ProgramArguments. Default: {DEFAULT_NODE_BIN}",
     )
+    install_parser.add_argument(
+        "--home-dir",
+        default=str(Path.home()),
+        help="Home directory used to render {{HOME}} token. Default: current user's home",
+    )
+    install_parser.add_argument(
+        "--labels",
+        default="",
+        help="Comma-separated labels to install (empty means all). Example: com.neotrade3.scheduler",
+    )
+    install_parser.add_argument(
+        "--daemon-user",
+        default="",
+        help="When installing LaunchDaemons, write UserName into plist. Required for --domain system.",
+    )
 
     return parser
 
 
-def cmd_render(output_dir: Path, *, python_bin: str, node_bin: str) -> int:
+def cmd_render(
+    output_dir: Path,
+    *,
+    home_dir: Path,
+    labels: list[str] | None,
+    daemon_user: str | None,
+    python_bin: str,
+    node_bin: str,
+) -> int:
     rendered_agents = render_launch_agents(
         project_root=PROJECT_ROOT,
+        home_dir=home_dir,
         target_dir=output_dir,
         python_bin=python_bin,
         node_bin=node_bin,
+        labels=labels,
+        daemon_user=daemon_user,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     for rendered in rendered_agents:
@@ -115,12 +183,25 @@ def cmd_render(output_dir: Path, *, python_bin: str, node_bin: str) -> int:
     return 0
 
 
-def cmd_check(target_dir: Path, *, inspect_launchctl: bool, python_bin: str, node_bin: str) -> int:
+def cmd_check(
+    target_dir: Path,
+    *,
+    inspect_launchctl: bool,
+    domain: str,
+    home_dir: Path,
+    labels: list[str] | None,
+    daemon_user: str | None,
+    python_bin: str,
+    node_bin: str,
+) -> int:
     rendered_agents = render_launch_agents(
         project_root=PROJECT_ROOT,
+        home_dir=home_dir,
         target_dir=target_dir,
         python_bin=python_bin,
         node_bin=node_bin,
+        labels=labels,
+        daemon_user=daemon_user,
     )
     report = format_check_report(
         rendered_agents,
@@ -136,7 +217,7 @@ def cmd_check(target_dir: Path, *, inspect_launchctl: bool, python_bin: str, nod
     if inspect_launchctl:
         for rendered in rendered_agents:
             try:
-                state = inspect_launchctl_state(rendered.spec.label)
+                state = inspect_launchctl_state(rendered.spec.label, domain=domain)
             except RuntimeError as exc:
                 print(f"[launchctl] {rendered.spec.label}: {exc}")
                 has_error = True
@@ -151,14 +232,26 @@ def cmd_check(target_dir: Path, *, inspect_launchctl: bool, python_bin: str, nod
     return 1 if has_error else 0
 
 
-def cmd_install(target_dir: Path, *, python_bin: str, node_bin: str) -> int:
+def cmd_install(
+    target_dir: Path,
+    *,
+    domain: str,
+    home_dir: Path,
+    labels: list[str] | None,
+    daemon_user: str | None,
+    python_bin: str,
+    node_bin: str,
+) -> int:
     rendered_agents = render_launch_agents(
         project_root=PROJECT_ROOT,
+        home_dir=home_dir,
         target_dir=target_dir,
         python_bin=python_bin,
         node_bin=node_bin,
+        labels=labels,
+        daemon_user=daemon_user,
     )
-    states = install_launch_agents(rendered_agents)
+    states = install_launch_agents(rendered_agents, domain=domain)
     for state in states:
         print(
             f"[installed] {state.label}: weekdays={list(state.weekdays)} "
@@ -170,9 +263,16 @@ def cmd_install(target_dir: Path, *, python_bin: str, node_bin: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    labels = None
+    if str(getattr(args, "labels", "") or "").strip():
+        labels = [item.strip() for item in str(args.labels).split(",") if item.strip()]
+    daemon_user = str(getattr(args, "daemon_user", "") or "").strip() or None
     if args.command == "render":
         return cmd_render(
             Path(args.output_dir).expanduser(),
+            home_dir=Path(args.home_dir).expanduser(),
+            labels=labels,
+            daemon_user=daemon_user,
             python_bin=str(args.python_bin),
             node_bin=str(args.node_bin),
         )
@@ -180,12 +280,25 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check(
             Path(args.target_dir).expanduser(),
             inspect_launchctl=bool(args.launchctl),
+            domain=str(args.domain),
+            home_dir=Path(args.home_dir).expanduser(),
+            labels=labels,
+            daemon_user=daemon_user,
             python_bin=str(args.python_bin),
             node_bin=str(args.node_bin),
         )
     if args.command == "install":
+        if str(args.domain) == "system":
+            if Path(args.home_dir).expanduser() == Path("/var/root"):
+                raise SystemExit("--domain system 必须显式指定 --home-dir=/Users/<your_user>")
+            if not daemon_user:
+                raise SystemExit("--domain system 必须显式指定 --daemon-user=<your_user>")
         return cmd_install(
             Path(args.target_dir).expanduser(),
+            domain=str(args.domain),
+            home_dir=Path(args.home_dir).expanduser(),
+            labels=labels,
+            daemon_user=daemon_user,
             python_bin=str(args.python_bin),
             node_bin=str(args.node_bin),
         )

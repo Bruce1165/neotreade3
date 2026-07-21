@@ -15,7 +15,9 @@ PROJECT_ROOT_TOKEN = "{{PROJECT_ROOT}}"
 PYTHON_BIN_TOKEN = "{{PYTHON_BIN}}"
 NODE_BIN_TOKEN = "{{NODE_BIN}}"
 DASHBOARD_PASSWORD_TOKEN = "{{DASHBOARD_PASSWORD}}"
-DEFAULT_TARGET_DIR = Path.home() / "Library" / "LaunchAgents"
+DEFAULT_AGENT_TARGET_DIR = Path.home() / "Library" / "LaunchAgents"
+DEFAULT_DAEMON_TARGET_DIR = Path("/Library/LaunchDaemons")
+DEFAULT_TARGET_DIR = DEFAULT_AGENT_TARGET_DIR
 EXPECTED_WEEKDAYS = (1, 2, 3, 4, 5)
 
 _WEEKDAY_RE = re.compile(r'"Weekday"\s*=>\s*(\d+)')
@@ -238,13 +240,17 @@ def render_launch_agent(
     python_bin: str | Path | None = None,
     node_bin: str | Path | None = None,
     dashboard_password: str | None = None,
+    daemon_user: str | None = None,
 ) -> RenderedLaunchAgent:
     home = (home_dir or Path.home()).expanduser()
     target_root = target_dir or DEFAULT_TARGET_DIR
     resolved_python_bin = resolve_python_bin(python_bin)
     resolved_node_bin = resolve_node_bin(node_bin)
-    resolved_dashboard_password = resolve_dashboard_password(dashboard_password)
     text = spec.template_path.read_text(encoding="utf-8")
+    if DASHBOARD_PASSWORD_TOKEN in text:
+        resolved_dashboard_password = resolve_dashboard_password(dashboard_password)
+    else:
+        resolved_dashboard_password = dashboard_password or ""
     rendered_text = (
         text.replace(HOME_TOKEN, str(home))
         .replace(PROJECT_ROOT_TOKEN, str(project_root))
@@ -253,6 +259,8 @@ def render_launch_agent(
         .replace(DASHBOARD_PASSWORD_TOKEN, resolved_dashboard_password)
     )
     document = plistlib.loads(rendered_text.encode("utf-8"))
+    if daemon_user:
+        document["UserName"] = str(daemon_user)
     errors = validate_launch_agent_document(
         document,
         spec=spec,
@@ -290,7 +298,20 @@ def render_launch_agents(
     python_bin: str | Path | None = None,
     node_bin: str | Path | None = None,
     dashboard_password: str | None = None,
+    labels: Optional[Sequence[str]] = None,
+    daemon_user: str | None = None,
 ) -> list[RenderedLaunchAgent]:
+    specs = build_launch_agent_specs(project_root)
+    if labels is not None:
+        normalized = [str(item).strip() for item in labels if str(item).strip()]
+        if not normalized:
+            raise ValueError("labels 不能为空")
+        available = {spec.label for spec in specs}
+        unknown = [label for label in normalized if label not in available]
+        if unknown:
+            raise ValueError(f"未知 label: {unknown}")
+        selected = set(normalized)
+        specs = [spec for spec in specs if spec.label in selected]
     return [
         render_launch_agent(
             spec,
@@ -300,8 +321,9 @@ def render_launch_agents(
             python_bin=python_bin,
             node_bin=node_bin,
             dashboard_password=dashboard_password,
+            daemon_user=daemon_user,
         )
-        for spec in build_launch_agent_specs(project_root)
+        for spec in specs
     ]
 
 
@@ -448,13 +470,23 @@ def install_launch_agents(
     rendered_agents: Sequence[RenderedLaunchAgent],
     *,
     uid: Optional[int] = None,
+    domain: str = "gui",
     run_command: RunCommand = default_run_command,
 ) -> list[LaunchctlState]:
     launchd_uid = int(uid if uid is not None else os.getuid())
     states: list[LaunchctlState] = []
+    if domain not in {"gui", "system"}:
+        raise ValueError(f"unsupported launchctl domain: {domain}")
     for rendered in rendered_agents:
         write_rendered_launch_agent(rendered)
-        service_target = f"gui/{launchd_uid}/{rendered.spec.label}"
+        if domain == "system":
+            service_target = f"system/{rendered.spec.label}"
+            bootstrap_domain = "system"
+            inspect_uid: int | None = None
+        else:
+            service_target = f"gui/{launchd_uid}/{rendered.spec.label}"
+            bootstrap_domain = f"gui/{launchd_uid}"
+            inspect_uid = launchd_uid
         print_result = run_command(["launchctl", "print", service_target])
         if print_result.returncode == 0:
             bootout_result = run_command(["launchctl", "bootout", service_target])
@@ -463,13 +495,18 @@ def install_launch_agents(
                     f"{rendered.spec.label} bootout 失败: {bootout_result.stderr.strip() or bootout_result.stdout.strip()}"
                 )
         bootstrap_result = run_command(
-            ["launchctl", "bootstrap", f"gui/{launchd_uid}", str(rendered.target_path)]
+            ["launchctl", "bootstrap", bootstrap_domain, str(rendered.target_path)]
         )
         if bootstrap_result.returncode != 0:
             raise RuntimeError(
                 f"{rendered.spec.label} bootstrap 失败: {bootstrap_result.stderr.strip() or bootstrap_result.stdout.strip()}"
             )
-        state = inspect_launchctl_state(rendered.spec.label, uid=launchd_uid, run_command=run_command)
+        state = inspect_launchctl_state(
+            rendered.spec.label,
+            uid=inspect_uid,
+            domain=domain,
+            run_command=run_command,
+        )
         validate_launchctl_state(state, rendered.spec, rendered=rendered)
         states.append(state)
     return states
@@ -479,10 +516,17 @@ def inspect_launchctl_state(
     label: str,
     *,
     uid: Optional[int] = None,
+    domain: str = "gui",
     run_command: RunCommand = default_run_command,
 ) -> LaunchctlState:
     launchd_uid = int(uid if uid is not None else os.getuid())
-    result = run_command(["launchctl", "print", f"gui/{launchd_uid}/{label}"])
+    if domain not in {"gui", "system"}:
+        raise ValueError(f"unsupported launchctl domain: {domain}")
+    if domain == "system":
+        target = f"system/{label}"
+    else:
+        target = f"gui/{launchd_uid}/{label}"
+    result = run_command(["launchctl", "print", target])
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} launchctl print 失败: {result.stderr.strip() or result.stdout.strip()}"

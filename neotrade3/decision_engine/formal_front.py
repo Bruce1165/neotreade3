@@ -49,14 +49,29 @@ def finalize_lowfreq_formal_front_payload(
     formal_payload: dict[str, Any],
 ) -> dict[str, Any]:
     finalized = dict(signal_payload)
+    formal_by_code = dict(formal_payload.get("items_by_code") or {})
     candidate_signals = attach_lowfreq_formal_front_payloads(
         list(finalized.get("candidate_signals") or []),
-        formal_by_code=dict(formal_payload.get("items_by_code") or {}),
+        formal_by_code=formal_by_code,
     )
     entry_signals = [dict(sig) for sig in candidate_signals if bool(sig.get("entry_ready"))]
     finalized["candidate_signals"] = candidate_signals
     finalized["entry_signals"] = entry_signals
     finalized["buy_signals"] = list(entry_signals)
+    tracking_pool = finalized.get("tracking_pool_candidates")
+    if isinstance(tracking_pool, dict):
+        updated_pool: dict[str, dict[str, Any]] = {}
+        for key, payload in tracking_pool.items():
+            if not isinstance(payload, dict):
+                continue
+            code = str(payload.get("code") or key or "").strip()
+            if not code:
+                continue
+            item = dict(payload)
+            item["formal"] = dict(formal_by_code.get(code) or {"status": "unavailable"})
+            updated_pool[code] = item
+        if updated_pool:
+            finalized["tracking_pool_candidates"] = updated_pool
     finalized["formal"] = formal_payload
     return finalized
 

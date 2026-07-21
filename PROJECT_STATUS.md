@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-15
+**Last Updated**: 2026-07-21
 
 ---
 
@@ -72,6 +72,10 @@
 - `M5 governance reject execution` 与 `status transition` 当前已消费 persisted `candidate validation outcome` truth，不再依赖 handoff payload 直接承载最终 validation 结论。
 - snapshot 根字段 `publish_succeeded` 表示本次运行的实际 publish 结果；`requested_publish_succeeded` 保留请求侧传入的 planning hint。
 - `apps/dashboard/main.py` 已退役，当前会返回 `410 Gone`；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
+- `com.neotrade3.scheduler` 已迁移为 system 域 LaunchDaemon（仅迁移 scheduler，不动 `api/frontend_gateway/trade_execution_rt`）
+  - `launchctl print system/com.neotrade3.scheduler` 为真相源
+  - stdout/stderr 已从 `var/log` 切到系统盘：`~/Library/Logs/NeoTrade3/neotrade3_scheduler.{out,err}.log`
+  - 根因闭环：当 stdout/stderr 指向外置盘 `var/log`（exFAT + `noowners`）时，launchd 可能触发 `EX_CONFIG (78)` 导致漏跑；迁移到系统盘日志落点后恢复
 
 ## Code-Wiki（以代码事实为准）
 

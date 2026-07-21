@@ -15,6 +15,8 @@ def build_position_contract_snapshot(
     sector_snapshot: dict[str, Any] | None,
     trend_snapshot: dict[str, Any] | None,
     sell_payload: dict[str, Any] | None,
+    hazard_snapshot: dict[str, Any] | None = None,
+    chaos_snapshot: dict[str, Any] | None = None,
     current_date_key: str,
     market_last_hit_date: str,
     sector_last_hit_date: str,
@@ -90,6 +92,13 @@ def build_position_contract_snapshot(
         source_layer = str(sell_payload.get("source_layer") or "exit")
         exit_reason_type = str(sell_payload.get("reason") or "")
         exit_detail = str(sell_payload.get("details") or sell_payload.get("reason") or "")
+        exit_signal = {
+            "reason_type": exit_reason_type,
+            "exit_scope": exit_scope,
+            "details": exit_detail,
+            "confidence": float(sell_payload.get("confidence") or 0.0),
+            "source_layer": source_layer,
+        }
         exit_contract = layer_contract_builder(
             current_stage="exit_ready",
             decision="exit",
@@ -102,7 +111,12 @@ def build_position_contract_snapshot(
             last_transition=last_transition or str(current_date_key or ""),
         )
         return {
+            "risk_action": "exit",
+            "exit_signal": dict(exit_signal),
+            "hold_noise_filter_state": None,
             "hold_state": "exit_ready",
+            "hazard_snapshot": dict(hazard_snapshot) if isinstance(hazard_snapshot, dict) else None,
+            "chaos_snapshot": dict(chaos_snapshot) if isinstance(chaos_snapshot, dict) else None,
             "noise_evidence": [],
             "not_exit_reasons": [],
             "warning_flags": list(flags),
@@ -146,6 +160,49 @@ def build_position_contract_snapshot(
     elif bool(grace_used):
         hold_state = "grace_hold"
 
+    hazard_level = 0
+    hazard_stage = ""
+    hazard_evidence: list[str] = []
+    if hold_state != "grace_hold" and isinstance(hazard_snapshot, dict):
+        risk_status = str(hazard_snapshot.get("risk_status") or "").strip()
+        if risk_status == "ready":
+            hazard_state = str(hazard_snapshot.get("hazard_state") or "").strip()
+            try:
+                score_5d = int(hazard_snapshot.get("stock_top_risk_5d") or 0)
+            except Exception:
+                score_5d = 0
+            if hazard_state:
+                hazard_evidence.append(f"hazard_state:{hazard_state}")
+            hazard_evidence.append(f"hazard_score_5d:{score_5d}")
+
+            if hazard_state == "stale_break":
+                hazard_level = 3
+                hazard_stage = "review_watch"
+            elif hazard_state == "break_armed":
+                hazard_level = 2
+                hazard_stage = "observe_watch"
+            elif hazard_state == "recovering":
+                hazard_level = 1
+                hazard_stage = "noise_watch"
+            elif hazard_state in {"neutral", "accel_only"}:
+                if score_5d >= 90:
+                    hazard_level = 3
+                    hazard_stage = "review_watch"
+                elif score_5d >= 70:
+                    hazard_level = 2
+                    hazard_stage = "observe_watch"
+                elif score_5d >= 40:
+                    hazard_level = 1
+                    hazard_stage = "noise_watch"
+            if hazard_level > 0:
+                flags.append(f"hazard_watch_level:{hazard_level}")
+                ev = hazard_snapshot.get("evidence")
+                if isinstance(ev, list):
+                    for x in ev:
+                        xs = str(x or "").strip()
+                        if xs:
+                            hazard_evidence.append(xs)
+
     not_exit_reasons: list[str] = []
     if normalized_market_state or normalized_sector_state:
         not_exit_reasons.append("系统退出证据尚未达到正式确认门槛")
@@ -160,6 +217,19 @@ def build_position_contract_snapshot(
     if bool(grace_used):
         not_exit_reasons.append("系统退出宽限仍有效，继续持有观察")
 
+    level = (
+        3
+        if hold_state == "review_watch"
+        else (2 if hold_state == "observe_watch" else (1 if hold_state == "noise_watch" else 0))
+    )
+    if hazard_level > int(level):
+        hold_state = str(hazard_stage)
+        level = int(hazard_level)
+        not_exit_reasons.append("hazard 提示见顶窗口紧迫程度上升，进入观察")
+        for x in hazard_evidence:
+            if x and x not in evidence:
+                evidence.append(str(x))
+
     hold_contract = layer_contract_builder(
         current_stage="hold_confirmed",
         decision="hold",
@@ -170,8 +240,26 @@ def build_position_contract_snapshot(
         next_action="hold",
         last_transition=last_transition,
     )
+    risk_action = "hold"
+    hold_noise_filter_state = (
+        {
+            "status": "active",
+            "stage": str(hold_state),
+            "level": int(level),
+            "reasons": list(not_exit_reasons),
+            "evidence": list(evidence),
+            "warning_flags": list(flags),
+        }
+        if int(level) > 0
+        else {"status": "inactive", "stage": "", "level": 0, "reasons": [], "evidence": [], "warning_flags": []}
+    )
     return {
+        "risk_action": risk_action,
+        "exit_signal": None,
+        "hold_noise_filter_state": dict(hold_noise_filter_state),
         "hold_state": str(hold_state),
+        "hazard_snapshot": dict(hazard_snapshot) if isinstance(hazard_snapshot, dict) else None,
+        "chaos_snapshot": dict(chaos_snapshot) if isinstance(chaos_snapshot, dict) else None,
         "noise_evidence": list(evidence),
         "not_exit_reasons": list(not_exit_reasons),
         "warning_flags": list(flags),

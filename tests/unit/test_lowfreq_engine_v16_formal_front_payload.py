@@ -8,7 +8,12 @@ def test_finalize_lowfreq_formal_front_payload_attaches_formal_items_by_code() -
         "candidate_signals": [
             {"code": "AAA", "entry_ready": True},
             {"code": "BBB", "entry_ready": False},
-        ]
+        ],
+        "tracking_pool_candidates": {
+            "AAA": {"code": "AAA", "entry_ready": True},
+            "BBB": {"code": "BBB", "entry_ready": False},
+        },
+        "tracking_pool_candidate_order": ["AAA", "BBB"],
     }
     formal_payload = {
         "status": "partial",
@@ -25,6 +30,8 @@ def test_finalize_lowfreq_formal_front_payload_attaches_formal_items_by_code() -
 
     assert out["candidate_signals"][0]["formal"] == {"status": "ok", "entry_state": {"status": "ready"}}
     assert out["candidate_signals"][1]["formal"] == {"status": "unavailable"}
+    assert out["tracking_pool_candidates"]["AAA"]["formal"] == {"status": "ok", "entry_state": {"status": "ready"}}
+    assert out["tracking_pool_candidates"]["BBB"]["formal"] == {"status": "unavailable"}
     assert out["formal"] is formal_payload
 
 

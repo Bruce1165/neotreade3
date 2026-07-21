@@ -24,6 +24,7 @@ def write_lowfreq_report_artifacts(
     report_id: str,
     year: int,
     limit: int,
+    analysis_mode: str | None = None,
     ranking_path: Path,
     segments_path: Path,
     attribution_path: Path,
@@ -48,6 +49,7 @@ def write_lowfreq_report_artifacts(
         generated_at=generated_at,
         year=int(year),
         limit=int(limit),
+        analysis_mode=analysis_mode,
         aggregate=aggregate,
         items=attribution_rows,
     )

@@ -57,6 +57,12 @@ def test_lowfreq_formal_front_projection_returns_compact_ok_payload() -> None:
             "actionable": True,
             "blocking_reasons": [],
         },
+        "entry_window": {
+            "status": "ready",
+            "decision": "enter",
+            "actionable": True,
+            "blocking_reasons": [],
+        },
         "m1_constraints": {
             "blocked": False,
             "blocking_reasons": [],

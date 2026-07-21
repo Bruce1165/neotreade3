@@ -1,0 +1,482 @@
+{
+  "version": "chaos_weights_v1_1",
+  "generated_at": "2026-07-20T15:57:50Z",
+  "weights": {
+    "amount": 0.9147307141585682,
+    "amount_rank": 0.3807059842757435,
+    "attention_score": 0.3646773410965558,
+    "avg_volume_20d": 0.2,
+    "config_score": 0.36755361397934927,
+    "consensus_orgs": 0.18410436137071684,
+    "hazard_score_5d_high": 0.5259036144578313,
+    "holder_etf_count": 0.34800000000000003,
+    "holder_fund_count": 0.27764812288713636,
+    "index_count": 0.2719413507434031,
+    "lab_hit_count": 0.3,
+    "market_breadth_weak": 0.7419031719532566,
+    "market_cap": 0.1,
+    "market_drawdown_weak": 0.5536727879799673,
+    "market_price_trend_weak": 0.7481375358166202,
+    "pb_ratio": 0.2740095476743929,
+    "pct_change": 0.9071664156883678,
+    "pe_ratio": 0.4565182369741487,
+    "research_inst": 0.1878894658753712,
+    "resonance_score": 0.9165305205676264,
+    "roe": 0.18460434785282315,
+    "screener_hit_count": 0.4,
+    "sector_amount_ratio_today_over_avg20": 0.5490606298181677,
+    "sector_avg_pct_20d": 0.3715885043669785,
+    "sector_avg_pct_today": 0.4545334176935183,
+    "sector_cooldown_detected": 0.8069148936170218,
+    "sector_leader_rollover": 0.7533230293663054,
+    "sector_rps_120": 0.7285830527497195,
+    "sector_total_amount_today": 0.547538928015939,
+    "sector_trend_deteriorating": 0.6333410565338238,
+    "survey_count": 0.18126478616924513,
+    "survey_orgs": 0.18126478616924513,
+    "tier_leadership_score": 0.5447284826898511,
+    "trend_exhaustion_armed": 0.0,
+    "trend_exhaustion_triggered": 0.0,
+    "turnover": 0.3,
+    "volume": 0.2,
+    "volume_ratio_20d": 0.6
+  },
+  "tuning_payload": {
+    "_meta": {
+      "status": "ok",
+      "generated_at": "2026-07-20T15:57:50Z",
+      "requested_by": "run_chaos_m5_tune_weights_v1"
+    },
+    "range": {
+      "start_date": "2026-06-22",
+      "end_date": "2026-07-17"
+    },
+    "universe": {
+      "mode": "top_by_amount",
+      "code_limit": 200
+    },
+    "versions": {
+      "registry_id": "v1",
+      "registry_version": "chaos_registry_v1",
+      "thresholds_version": "chaos_thresholds_v0",
+      "base_weights_version": "chaos_weights_v1",
+      "out_weights_version": "chaos_weights_v1_1"
+    },
+    "objective": {
+      "primary": "5d_accuracy_direction",
+      "constraint": "10d_accuracy_direction_not_decrease"
+    },
+    "tuning": {
+      "alphas_tried": [
+        0.5,
+        0.25,
+        0.1,
+        0.05,
+        0.0
+      ],
+      "alpha_chosen": 0.25
+    },
+    "baseline": {
+      "h5": {
+        "horizon": 5,
+        "evaluable": 2990,
+        "correct": 1433,
+        "accuracy_direction": 0.47926421404682273,
+        "skipped_missing_price": 1000
+      },
+      "h10": {
+        "horizon": 10,
+        "evaluable": 1998,
+        "correct": 878,
+        "accuracy_direction": 0.4394394394394394,
+        "skipped_missing_price": 2000
+      }
+    },
+    "candidate": {
+      "h5_accuracy_direction": 0.4806020066889632,
+      "h10_accuracy_direction": 0.43993993993993996
+    },
+    "factors": [
+      {
+        "factor_id": "pct_change",
+        "yin_or_yang": "signed",
+        "category": "technical",
+        "normalization": "raw",
+        "score_5d": -0.37133433724652887,
+        "abs_contrib_mean_5d": 1.3866806688963234,
+        "weight_before": 1.0,
+        "weight_after": 0.9071664156883678
+      },
+      {
+        "factor_id": "resonance_score",
+        "yin_or_yang": "yang",
+        "category": "technical",
+        "normalization": "score_0_100",
+        "score_5d": -0.33387791772949443,
+        "abs_contrib_mean_5d": 0.15914845206914568,
+        "weight_before": 1.0,
+        "weight_after": 0.9165305205676264
+      },
+      {
+        "factor_id": "sector_rps_120",
+        "yin_or_yang": "yang",
+        "category": "technical",
+        "normalization": "score_0_100",
+        "score_5d": -0.35708473625140275,
+        "abs_contrib_mean_5d": 0.13786678486521248,
+        "weight_before": 0.8,
+        "weight_after": 0.7285830527497195
+      },
+      {
+        "factor_id": "tier_leadership_score",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "score_0_100",
+        "score_5d": -0.3684767820676593,
+        "abs_contrib_mean_5d": 0.09642619709240237,
+        "weight_before": 0.6,
+        "weight_after": 0.5447284826898511
+      },
+      {
+        "factor_id": "screener_hit_count",
+        "yin_or_yang": "yang",
+        "category": "technical",
+        "normalization": "count",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.4,
+        "weight_after": 0.4
+      },
+      {
+        "factor_id": "lab_hit_count",
+        "yin_or_yang": "yang",
+        "category": "technical",
+        "normalization": "count",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.3,
+        "weight_after": 0.3
+      },
+      {
+        "factor_id": "amount",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "rank_percentile",
+        "score_5d": -0.34107714336572725,
+        "abs_contrib_mean_5d": 0.3889127863894285,
+        "weight_before": 1.0,
+        "weight_after": 0.9147307141585682
+      },
+      {
+        "factor_id": "amount_rank",
+        "yin_or_yang": "yin",
+        "category": "capital",
+        "normalization": "rank_percentile",
+        "score_5d": -0.1929401572425652,
+        "abs_contrib_mean_5d": 0.00400679179874354,
+        "weight_before": 0.4,
+        "weight_after": 0.3807059842757435
+      },
+      {
+        "factor_id": "turnover",
+        "yin_or_yang": "neutral",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.3,
+        "weight_after": 0.3
+      },
+      {
+        "factor_id": "volume",
+        "yin_or_yang": "neutral",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.2,
+        "weight_after": 0.2
+      },
+      {
+        "factor_id": "avg_volume_20d",
+        "yin_or_yang": "neutral",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.2,
+        "weight_after": 0.2
+      },
+      {
+        "factor_id": "volume_ratio_20d",
+        "yin_or_yang": "neutral",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.6,
+        "weight_after": 0.6
+      },
+      {
+        "factor_id": "sector_total_amount_today",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "rank_percentile",
+        "score_5d": -0.3497404798937407,
+        "abs_contrib_mean_5d": 0.22681431933606166,
+        "weight_before": 0.6,
+        "weight_after": 0.547538928015939
+      },
+      {
+        "factor_id": "sector_amount_ratio_today_over_avg20",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": -0.339595801212215,
+        "abs_contrib_mean_5d": 0.2255671957001578,
+        "weight_before": 0.6,
+        "weight_after": 0.5490606298181677
+      },
+      {
+        "factor_id": "sector_avg_pct_today",
+        "yin_or_yang": "signed",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": -0.36373265845185354,
+        "abs_contrib_mean_5d": 0.337072473838162,
+        "weight_before": 0.5,
+        "weight_after": 0.4545334176935183
+      },
+      {
+        "factor_id": "sector_avg_pct_20d",
+        "yin_or_yang": "signed",
+        "category": "capital",
+        "normalization": "raw",
+        "score_5d": -0.2841149563302153,
+        "abs_contrib_mean_5d": 0.08174317745206566,
+        "weight_before": 0.4,
+        "weight_after": 0.3715885043669785
+      },
+      {
+        "factor_id": "pe_ratio",
+        "yin_or_yang": "yin",
+        "category": "composite",
+        "normalization": "log1p",
+        "score_5d": -0.34785410420681057,
+        "abs_contrib_mean_5d": 0.5600122823522147,
+        "weight_before": 0.5,
+        "weight_after": 0.4565182369741487
+      },
+      {
+        "factor_id": "pb_ratio",
+        "yin_or_yang": "yin",
+        "category": "composite",
+        "normalization": "log1p",
+        "score_5d": -0.3465393643414279,
+        "abs_contrib_mean_5d": 0.17513475219510466,
+        "weight_before": 0.3,
+        "weight_after": 0.2740095476743929
+      },
+      {
+        "factor_id": "roe",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "raw",
+        "score_5d": -0.30791304294353716,
+        "abs_contrib_mean_5d": 0.5547565886287635,
+        "weight_before": 0.2,
+        "weight_after": 0.18460434785282315
+      },
+      {
+        "factor_id": "market_cap",
+        "yin_or_yang": "neutral",
+        "category": "composite",
+        "normalization": "log1p",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.1,
+        "weight_after": 0.1
+      },
+      {
+        "factor_id": "holder_etf_count",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "count",
+        "score_5d": -0.52,
+        "abs_contrib_mean_5d": 0.0008026755852842815,
+        "weight_before": 0.4,
+        "weight_after": 0.34800000000000003
+      },
+      {
+        "factor_id": "holder_fund_count",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "count",
+        "score_5d": -0.29802502817151505,
+        "abs_contrib_mean_5d": 0.06766956521739297,
+        "weight_before": 0.3,
+        "weight_after": 0.27764812288713636
+      },
+      {
+        "factor_id": "index_count",
+        "yin_or_yang": "yang",
+        "category": "capital",
+        "normalization": "count",
+        "score_5d": -0.3741153234212916,
+        "abs_contrib_mean_5d": 0.07315183946488472,
+        "weight_before": 0.3,
+        "weight_after": 0.2719413507434031
+      },
+      {
+        "factor_id": "config_score",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "score_0_5",
+        "score_5d": -0.32446386020650736,
+        "abs_contrib_mean_5d": 0.08084548494983487,
+        "weight_before": 0.4,
+        "weight_after": 0.36755361397934927
+      },
+      {
+        "factor_id": "attention_score",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "score_0_4",
+        "score_5d": -0.3532265890344422,
+        "abs_contrib_mean_5d": 0.08271571906354754,
+        "weight_before": 0.4,
+        "weight_after": 0.3646773410965558
+      },
+      {
+        "factor_id": "research_inst",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "count",
+        "score_5d": -0.24221068249257618,
+        "abs_contrib_mean_5d": 0.010820066889632305,
+        "weight_before": 0.2,
+        "weight_after": 0.1878894658753712
+      },
+      {
+        "factor_id": "consensus_orgs",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "count",
+        "score_5d": -0.3179127725856637,
+        "abs_contrib_mean_5d": 0.05153177257525229,
+        "weight_before": 0.2,
+        "weight_after": 0.18410436137071684
+      },
+      {
+        "factor_id": "survey_orgs",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "count",
+        "score_5d": -0.37470427661509753,
+        "abs_contrib_mean_5d": 0.022053511705685973,
+        "weight_before": 0.2,
+        "weight_after": 0.18126478616924513
+      },
+      {
+        "factor_id": "survey_count",
+        "yin_or_yang": "yang",
+        "category": "composite",
+        "normalization": "count",
+        "score_5d": -0.37470427661509753,
+        "abs_contrib_mean_5d": 0.022053511705685973,
+        "weight_before": 0.2,
+        "weight_after": 0.18126478616924513
+      },
+      {
+        "factor_id": "market_breadth_weak",
+        "yin_or_yang": "yin",
+        "category": "composite",
+        "normalization": "binary",
+        "score_5d": -0.29048414023371716,
+        "abs_contrib_mean_5d": 0.09616053511705847,
+        "weight_before": 0.8,
+        "weight_after": 0.7419031719532566
+      },
+      {
+        "factor_id": "market_price_trend_weak",
+        "yin_or_yang": "yin",
+        "category": "composite",
+        "normalization": "binary",
+        "score_5d": -0.2593123209168994,
+        "abs_contrib_mean_5d": 0.11205351170568784,
+        "weight_before": 0.8,
+        "weight_after": 0.7481375358166202
+      },
+      {
+        "factor_id": "market_drawdown_weak",
+        "yin_or_yang": "yin",
+        "category": "composite",
+        "normalization": "binary",
+        "score_5d": -0.3088480801335511,
+        "abs_contrib_mean_5d": 0.03606020066889685,
+        "weight_before": 0.6,
+        "weight_after": 0.5536727879799673
+      },
+      {
+        "factor_id": "sector_cooldown_detected",
+        "yin_or_yang": "yin",
+        "category": "capital",
+        "normalization": "binary",
+        "score_5d": -0.41371158392434737,
+        "abs_contrib_mean_5d": 0.05092976588628787,
+        "weight_before": 0.9,
+        "weight_after": 0.8069148936170218
+      },
+      {
+        "factor_id": "sector_trend_deteriorating",
+        "yin_or_yang": "yin",
+        "category": "capital",
+        "normalization": "binary",
+        "score_5d": -0.38090824837815007,
+        "abs_contrib_mean_5d": 0.20208695652172812,
+        "weight_before": 0.7,
+        "weight_after": 0.6333410565338238
+      },
+      {
+        "factor_id": "sector_leader_rollover",
+        "yin_or_yang": "yin",
+        "category": "capital",
+        "normalization": "binary",
+        "score_5d": -0.2333848531684734,
+        "abs_contrib_mean_5d": 0.06924414715718963,
+        "weight_before": 0.8,
+        "weight_after": 0.7533230293663054
+      },
+      {
+        "factor_id": "trend_exhaustion_triggered",
+        "yin_or_yang": "yin",
+        "category": "technical",
+        "normalization": "binary",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.0,
+        "weight_after": 0.0
+      },
+      {
+        "factor_id": "trend_exhaustion_armed",
+        "yin_or_yang": "yin",
+        "category": "technical",
+        "normalization": "binary",
+        "score_5d": 0.0,
+        "abs_contrib_mean_5d": 0.0,
+        "weight_before": 0.0,
+        "weight_after": 0.0
+      },
+      {
+        "factor_id": "hazard_score_5d_high",
+        "yin_or_yang": "yin",
+        "category": "technical",
+        "normalization": "binary",
+        "score_5d": -0.493975903614458,
+        "abs_contrib_mean_5d": 0.009993311036789285,
+        "weight_before": 0.6,
+        "weight_after": 0.5259036144578313
+      }
+    ]
+  }
+}

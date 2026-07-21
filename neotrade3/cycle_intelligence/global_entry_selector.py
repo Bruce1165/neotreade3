@@ -16,6 +16,8 @@ def build_global_candidates(
     cross_sector_scan_limit: int,
     exclude_sectors: set[str] | None,
     exclude_codes: set[str] | None,
+    audit_watch_codes: set[str] | None = None,
+    audit_by_code_out: dict[str, str] | None = None,
     cup_handle_enabled: bool,
     cup_handle_bonus: float,
     relative_strength_bonus_cap: float,
@@ -45,6 +47,43 @@ def build_global_candidates(
         exclude_sectors=exclude_sectors,
         exclude_codes=exclude_codes,
     )
+    watch_codes = {
+        str(code or "").strip()
+        for code in (audit_watch_codes or set())
+        if str(code or "").strip()
+    }
+    if watch_codes and isinstance(audit_by_code_out, dict):
+        excluded_sectors = {
+            str(item or "").strip()
+            for item in (exclude_sectors or set())
+            if str(item or "").strip()
+        }
+        excluded_codes = {
+            str(item or "").strip()
+            for item in (exclude_codes or set())
+            if str(item or "").strip()
+        }
+        seed_codes = {str(row[0] or "").strip() for row in seed_rows if row and row[0]}
+        seed_sector_by_code: dict[str, str] = {}
+        for row in seed_rows:
+            if not row or len(row) < 3:
+                continue
+            code = str(row[0] or "").strip()
+            sector = str(row[2] or "").strip()
+            if code and sector:
+                seed_sector_by_code[code] = sector
+        for code in watch_codes:
+            if code not in seed_codes:
+                audit_by_code_out[code] = "cross_sector_not_in_seed_rows"
+                continue
+            if code in excluded_codes:
+                audit_by_code_out[code] = "cross_sector_excluded_by_code"
+                continue
+            sector = str(seed_sector_by_code.get(code) or "").strip()
+            if sector and sector in excluded_sectors:
+                audit_by_code_out[code] = "cross_sector_excluded_by_sector"
+                continue
+            audit_by_code_out[code] = "cross_sector_pending_rank"
     if not filtered_rows:
         return []
 
@@ -69,6 +108,21 @@ def build_global_candidates(
         base_score = 0.0
         cup_ok = code in cup_picks
         soft_flags: list[str] = []
+        mkt_cap_value = float(mkt_cap or 0.0)
+        mkt_cap_min = float(market_cap_min)
+        mkt_cap_max = float(market_cap_max)
+        if mkt_cap_value <= 0:
+            soft_flags.append("market_cap_missing")
+            base_score -= 8.0
+            reasons.append("capture-first: 市值缺失，降权保留")
+        elif mkt_cap_value < mkt_cap_min:
+            soft_flags.append("market_cap_low")
+            base_score -= 8.0
+            reasons.append(f"capture-first: 市值低于{mkt_cap_min/1e8:.0f}亿，降权保留")
+        elif mkt_cap_value > mkt_cap_max:
+            soft_flags.append("market_cap_high")
+            base_score -= 8.0
+            reasons.append(f"capture-first: 市值高于{mkt_cap_max/1e8:.0f}亿，降权保留")
 
         fundamentals = fundamentals_by_code.get(code) or {
             "pe_ttm": 0,
@@ -95,11 +149,14 @@ def build_global_candidates(
             reasons.extend([f"soft:{reason}" for reason in list(structure.get("reasons") or [])])
         else:
             reasons.extend(list(structure.get("reasons") or []))
+        pattern_evidence = list(structure.get("reasons") or [])
 
         if cup_ok:
             base_score += float(cup_handle_bonus)
             if "杯柄确认（cup_handle_v4）" not in reasons:
                 reasons.append("杯柄确认（cup_handle_v4）")
+            if "杯柄确认（cup_handle_v4）" not in pattern_evidence:
+                pattern_evidence.append("杯柄确认（cup_handle_v4）")
 
         history = history_by_code.get(code) or []
         closes = [row["close"] for row in history[:30] if row.get("close") is not None]
@@ -124,7 +181,7 @@ def build_global_candidates(
         wave_closes = [row["close"] for row in history if row.get("close") is not None]
         wave_highs = [row["high"] for row in history if row.get("high") is not None]
         wave_lows = [row["low"] for row in history if row.get("low") is not None]
-        wave_phase, _wave_confidence = wave_phase_detector(
+        wave_phase, wave_confidence = wave_phase_detector(
             closes=wave_closes,
             highs=wave_highs,
             lows=wave_lows,
@@ -175,7 +232,7 @@ def build_global_candidates(
             elif ma5 > ma10 and float(close) > ma5:
                 base_score += 6
 
-        mkt_cap_yi = float(mkt_cap) / 1e8
+        mkt_cap_yi = float(mkt_cap_value) / 1e8
         if 200 <= mkt_cap_yi <= 300:
             base_score += 10
         elif 300 < mkt_cap_yi <= 350:
@@ -210,6 +267,7 @@ def build_global_candidates(
                 "base_score": float(base_score),
                 "reasons": reasons,
                 "wave_phase": wave_phase,
+                "wave_confidence": float(wave_confidence or 0.0),
                 "ret_5d": float(ret_5d),
                 "vol_ratio": float(vol_ratio),
                 "price_position": float(price_position),
@@ -217,6 +275,7 @@ def build_global_candidates(
                 "strength_score": float(strength_score),
                 "cup_ok": bool(cup_ok),
                 "soft_flags": soft_flags,
+                "pattern_evidence": pattern_evidence,
             }
         )
 
@@ -288,6 +347,9 @@ def build_global_candidates(
                 buy_score=float(score),
                 buy_reasons=reasons,
                 wave_phase=str(item.get("wave_phase") or ""),
+                wave_phase_confidence=round(float(item.get("wave_confidence") or 0.0), 4),
+                evidence_bundle=reasons,
+                pattern_evidence=list(item.get("pattern_evidence") or []),
                 ret_5d=round(float(item.get("ret_5d") or 0.0), 2),
                 vol_ratio=round(float(item.get("vol_ratio") or 0.0), 2),
                 price_position=round(float(item.get("price_position") or 0.0), 1),
@@ -303,7 +365,18 @@ def build_global_candidates(
         )
 
     candidates.sort(key=_buy_score_of, reverse=True)
-    return candidates[: int(top_n)]
+    selected = candidates[: int(top_n)]
+    if watch_codes and isinstance(audit_by_code_out, dict):
+        selected_codes = {str(getattr(item, "code", "") or "").strip() for item in selected}
+        for code in watch_codes:
+            if audit_by_code_out.get(code) != "cross_sector_pending_rank":
+                continue
+            audit_by_code_out[code] = (
+                "cross_sector_selected"
+                if code in selected_codes
+                else "cross_sector_ranked_out_top_n"
+            )
+    return selected
 
 
 def load_global_seed_rows(
@@ -321,7 +394,6 @@ def load_global_seed_rows(
         FROM stocks s
         JOIN daily_prices dp ON s.code = dp.code
         WHERE dp.trade_date = ?
-          AND s.total_market_cap >= ? AND s.total_market_cap <= ?
           AND (s.is_delisted IS NULL OR s.is_delisted = 0)
           AND dp.close > 0
         ORDER BY dp.pct_change DESC
@@ -329,8 +401,6 @@ def load_global_seed_rows(
         """,
         (
             target_date.isoformat(),
-            market_cap_min,
-            market_cap_max,
             int(cross_sector_scan_limit),
         ),
     )

@@ -1,0 +1,416 @@
+{
+  "version": "chaos_weights_v1_2",
+  "generated_at": "2026-07-20T16:17:37Z",
+  "weights": {
+    "amount": 0.9643863762887072,
+    "amount_rank": 0.415234228827426,
+    "attention_score": 0.38459622328123333,
+    "avg_volume_20d": 0.2,
+    "config_score": 0.3867304554823468,
+    "consensus_orgs": 0.19447489217592964,
+    "hazard_score_5d_high": 0.5150694216750057,
+    "holder_etf_count": 0.32328604926320315,
+    "holder_fund_count": 0.29070880580733327,
+    "index_count": 0.29395244094945716,
+    "lab_hit_count": 0.3,
+    "market_breadth_weak": 0.7897181040546453,
+    "market_cap": 0.1,
+    "market_drawdown_weak": 0.5685566757750139,
+    "market_price_trend_weak": 0.8025769597933893,
+    "pb_ratio": 0.2902067676401493,
+    "pct_change": 0.9725286069289577,
+    "pe_ratio": 0.48514578044131845,
+    "research_inst": 0.19521249812920707,
+    "resonance_score": 0.9750576431263968,
+    "roe": 0.18705382737214818,
+    "screener_hit_count": 0.4,
+    "sector_amount_ratio_today_over_avg20": 0.5758022049347934,
+    "sector_avg_pct_20d": 0.39124679254391553,
+    "sector_avg_pct_today": 0.4857692110766197,
+    "sector_cooldown_detected": 0.7076229243807594,
+    "sector_leader_rollover": 0.7644558606758016,
+    "sector_rps_120": 0.7899963330616798,
+    "sector_total_amount_today": 0.5781965270472278,
+    "sector_trend_deteriorating": 0.6823117494883049,
+    "survey_count": 0.1890723255015685,
+    "survey_orgs": 0.1890723255015685,
+    "tier_leadership_score": 0.5685383083802369,
+    "trend_exhaustion_armed": 0.0,
+    "trend_exhaustion_triggered": 0.0,
+    "turnover": 0.3,
+    "volume": 0.2,
+    "volume_ratio_20d": 0.6
+  },
+  "tuning_payload": {
+    "_meta": {
+      "status": "ok",
+      "generated_at": "2026-07-20T16:17:37Z",
+      "requested_by": "run_chaos_m5_tune_weights_v1_rolling"
+    },
+    "rolling": {
+      "end_date": "2026-07-17",
+      "window_days": 20,
+      "num_windows": 20,
+      "step_days": 1,
+      "start_date": "2026-05-25",
+      "end_date_range": "2026-07-17"
+    },
+    "universe": {
+      "mode": "top_by_amount",
+      "code_limit": 200
+    },
+    "versions": {
+      "registry_id": "v1",
+      "registry_version": "chaos_registry_v1",
+      "thresholds_version": "chaos_thresholds_v0",
+      "base_weights_version": "chaos_weights_v1_1",
+      "out_weights_version": "chaos_weights_v1_2"
+    },
+    "objective": {
+      "primary": "5d_accuracy_direction",
+      "constraint": "10d_accuracy_direction_not_decrease"
+    },
+    "tuning": {
+      "alphas_tried": [
+        0.5,
+        0.25,
+        0.1,
+        0.05,
+        0.0
+      ],
+      "alpha_chosen": 0.5
+    },
+    "baseline": {
+      "h5_accuracy_direction": 0.5313115465500551,
+      "h10_accuracy_direction": 0.5133978833596037,
+      "per_window": [
+        {
+          "start_date": "2026-05-25",
+          "end_date": "2026-06-22",
+          "h5_accuracy_direction": 0.5023333333333333,
+          "h10_accuracy_direction": 0.5262631315657829,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-05-26",
+          "end_date": "2026-06-23",
+          "h5_accuracy_direction": 0.5283333333333333,
+          "h10_accuracy_direction": 0.5097548774387194,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-05-27",
+          "end_date": "2026-06-24",
+          "h5_accuracy_direction": 0.5456666666666666,
+          "h10_accuracy_direction": 0.5435435435435435,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-05-28",
+          "end_date": "2026-06-25",
+          "h5_accuracy_direction": 0.5576666666666666,
+          "h10_accuracy_direction": 0.5255255255255256,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-05-29",
+          "end_date": "2026-06-26",
+          "h5_accuracy_direction": 0.566,
+          "h10_accuracy_direction": 0.539039039039039,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-01",
+          "end_date": "2026-06-29",
+          "h5_accuracy_direction": 0.563,
+          "h10_accuracy_direction": 0.5415415415415415,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-02",
+          "end_date": "2026-06-30",
+          "h5_accuracy_direction": 0.5625208402800934,
+          "h10_accuracy_direction": 0.576076076076076,
+          "h5_evaluable": 2999,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-03",
+          "end_date": "2026-07-01",
+          "h5_accuracy_direction": 0.5610406937958639,
+          "h10_accuracy_direction": 0.5717858929464732,
+          "h5_evaluable": 2998,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-04",
+          "end_date": "2026-07-02",
+          "h5_accuracy_direction": 0.5547031354236157,
+          "h10_accuracy_direction": 0.5587793896948474,
+          "h5_evaluable": 2998,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-05",
+          "end_date": "2026-07-03",
+          "h5_accuracy_direction": 0.5598932265598933,
+          "h10_accuracy_direction": 0.5402701350675337,
+          "h5_evaluable": 2997,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-08",
+          "end_date": "2026-07-06",
+          "h5_accuracy_direction": 0.5530707610146862,
+          "h10_accuracy_direction": 0.5262631315657829,
+          "h5_evaluable": 2996,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-09",
+          "end_date": "2026-07-07",
+          "h5_accuracy_direction": 0.5495826377295493,
+          "h10_accuracy_direction": 0.5642821410705353,
+          "h5_evaluable": 2995,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-10",
+          "end_date": "2026-07-08",
+          "h5_accuracy_direction": 0.521376085504342,
+          "h10_accuracy_direction": 0.511255627813907,
+          "h5_evaluable": 2994,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-11",
+          "end_date": "2026-07-09",
+          "h5_accuracy_direction": 0.5300802139037433,
+          "h10_accuracy_direction": 0.5152576288144072,
+          "h5_evaluable": 2992,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-12",
+          "end_date": "2026-07-10",
+          "h5_accuracy_direction": 0.518555667001003,
+          "h10_accuracy_direction": 0.5175175175175175,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-15",
+          "end_date": "2026-07-13",
+          "h5_accuracy_direction": 0.5165496489468405,
+          "h10_accuracy_direction": 0.502002002002002,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-16",
+          "end_date": "2026-07-14",
+          "h5_accuracy_direction": 0.5101972584419926,
+          "h10_accuracy_direction": 0.44294294294294295,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-17",
+          "end_date": "2026-07-15",
+          "h5_accuracy_direction": 0.5021731862253427,
+          "h10_accuracy_direction": 0.40790790790790793,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-18",
+          "end_date": "2026-07-16",
+          "h5_accuracy_direction": 0.4630558341691742,
+          "h10_accuracy_direction": 0.43093093093093093,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-22",
+          "end_date": "2026-07-17",
+          "h5_accuracy_direction": 0.459866220735786,
+          "h10_accuracy_direction": 0.4169169169169169,
+          "h5_evaluable": 2990,
+          "h10_evaluable": 1998
+        }
+      ]
+    },
+    "candidate": {
+      "h5_accuracy_direction": 0.5320292419134092,
+      "h10_accuracy_direction": 0.5137481548199855,
+      "per_window": [
+        {
+          "start_date": "2026-05-25",
+          "end_date": "2026-06-22",
+          "h5_accuracy_direction": 0.5026666666666667,
+          "h10_accuracy_direction": 0.5257628814407204,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-05-26",
+          "end_date": "2026-06-23",
+          "h5_accuracy_direction": 0.528,
+          "h10_accuracy_direction": 0.5082541270635318,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-05-27",
+          "end_date": "2026-06-24",
+          "h5_accuracy_direction": 0.5453333333333333,
+          "h10_accuracy_direction": 0.5420420420420421,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-05-28",
+          "end_date": "2026-06-25",
+          "h5_accuracy_direction": 0.5573333333333333,
+          "h10_accuracy_direction": 0.524024024024024,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-05-29",
+          "end_date": "2026-06-26",
+          "h5_accuracy_direction": 0.5656666666666667,
+          "h10_accuracy_direction": 0.5375375375375375,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-01",
+          "end_date": "2026-06-29",
+          "h5_accuracy_direction": 0.5633333333333334,
+          "h10_accuracy_direction": 0.54004004004004,
+          "h5_evaluable": 3000,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-02",
+          "end_date": "2026-06-30",
+          "h5_accuracy_direction": 0.5615205068356118,
+          "h10_accuracy_direction": 0.5745745745745746,
+          "h5_evaluable": 2999,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-03",
+          "end_date": "2026-07-01",
+          "h5_accuracy_direction": 0.5603735823882589,
+          "h10_accuracy_direction": 0.5702851425712856,
+          "h5_evaluable": 2998,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-04",
+          "end_date": "2026-07-02",
+          "h5_accuracy_direction": 0.5540360240160107,
+          "h10_accuracy_direction": 0.5572786393196598,
+          "h5_evaluable": 2998,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-05",
+          "end_date": "2026-07-03",
+          "h5_accuracy_direction": 0.5598932265598933,
+          "h10_accuracy_direction": 0.5392696348174087,
+          "h5_evaluable": 2997,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-08",
+          "end_date": "2026-07-06",
+          "h5_accuracy_direction": 0.5534045393858478,
+          "h10_accuracy_direction": 0.527263631815908,
+          "h5_evaluable": 2996,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-09",
+          "end_date": "2026-07-07",
+          "h5_accuracy_direction": 0.5495826377295493,
+          "h10_accuracy_direction": 0.5642821410705353,
+          "h5_evaluable": 2995,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-10",
+          "end_date": "2026-07-08",
+          "h5_accuracy_direction": 0.5220440881763527,
+          "h10_accuracy_direction": 0.5127563781890946,
+          "h5_evaluable": 2994,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-11",
+          "end_date": "2026-07-09",
+          "h5_accuracy_direction": 0.5307486631016043,
+          "h10_accuracy_direction": 0.5167583791895948,
+          "h5_evaluable": 2992,
+          "h10_evaluable": 1999
+        },
+        {
+          "start_date": "2026-06-12",
+          "end_date": "2026-07-10",
+          "h5_accuracy_direction": 0.5198930123704447,
+          "h10_accuracy_direction": 0.5195195195195195,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-15",
+          "end_date": "2026-07-13",
+          "h5_accuracy_direction": 0.5188900033433634,
+          "h10_accuracy_direction": 0.5045045045045045,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-16",
+          "end_date": "2026-07-14",
+          "h5_accuracy_direction": 0.512871949180876,
+          "h10_accuracy_direction": 0.44494494494494496,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-17",
+          "end_date": "2026-07-15",
+          "h5_accuracy_direction": 0.5048478769642261,
+          "h10_accuracy_direction": 0.4109109109109109,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-18",
+          "end_date": "2026-07-16",
+          "h5_accuracy_direction": 0.4657305249080575,
+          "h10_accuracy_direction": 0.4339339339339339,
+          "h5_evaluable": 2991,
+          "h10_evaluable": 1998
+        },
+        {
+          "start_date": "2026-06-22",
+          "end_date": "2026-07-17",
+          "h5_accuracy_direction": 0.46387959866220735,
+          "h10_accuracy_direction": 0.4209209209209209,
+          "h5_evaluable": 2990,
+          "h10_evaluable": 1998
+        }
+      ]
+    }
+  }
+}

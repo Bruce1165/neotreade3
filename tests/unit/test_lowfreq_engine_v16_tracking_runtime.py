@@ -109,4 +109,169 @@ def test_run_backtest_records_tracking_audit_without_polluting_execution_action_
     assert dropped["source_layer"] == "tracking"
     assert dropped["tracking_state"] == "tracking_dropped"
     assert dropped["code"] == "300001"
+    assert dropped["drop_reason"] == "candidate_missing_from_current_tracking_set"
     assert result["execution_action_summary"] == {"buy": 1}
+
+
+def test_tracking_dropped_records_hot_sector_drop_reason_when_sector_is_still_hot() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 2
+    engine.TRACKING_MIN_DAYS = 2
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = False
+    engine.EXECUTION_RESERVATION_ENABLED = False
+    engine._conn = lambda: _FakeConn()
+    engine._get_trading_dates = lambda start, end: [day1, day2]
+    engine._count_trading_days = lambda start, end: 1
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {"close": 10.0, "pct_change": 0.0, "amount": 1e9}
+    engine.get_config_snapshot = lambda: {}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+
+    def _signals(current_date):
+        if current_date == day1:
+            observe = {
+                "code": "300001",
+                "name": "观察候选",
+                "sector": "B",
+                "buy_score": 70.0,
+                "wave_phase": "未知",
+                "role": "龙头",
+                "reasons": ["继续观察"],
+                "soft_flags": ["wave_uncertain"],
+                "candidate_tier": "soft_retained",
+                "entry_ready": False,
+                "tracking_ready": False,
+                "tracking_state": "tracking_observe",
+                "tracking_transition_reason": "candidate_retained_for_tracking",
+                "tracking_evidence_bundle": ["继续观察"],
+                "signal_source": "hot_sector",
+            }
+            return {
+                "buy_signals": [],
+                "candidate_signals": [observe],
+                "entry_signals": [],
+                "hot_sectors": ["B"],
+                "cross_sector_scan_enabled": False,
+            }
+        return {
+            "buy_signals": [],
+            "candidate_signals": [],
+            "entry_signals": [],
+            "hot_sectors": ["B"],
+            "cross_sector_scan_enabled": False,
+        }
+
+    engine.generate_buy_signals = _signals
+
+    result = engine.run_backtest(
+        day1,
+        day2,
+        initial_capital=100000.0,
+        include_trades=True,
+    )
+
+    dropped = next(row for row in result["buy_signal_audit"] if row["event"] == "tracking_dropped")
+    assert dropped["drop_reason"] == "hot_sector_candidate_missing"
+
+
+def test_tracking_dropped_records_cross_sector_ranked_out_reason() -> None:
+    class _FakeCursor:
+        pass
+
+    class _FakeConn:
+        def cursor(self):
+            return _FakeCursor()
+
+        def close(self):
+            return None
+
+    day1 = date(2026, 6, 1)
+    day2 = day1 + timedelta(days=1)
+
+    engine = LowFreqTradingEngineV16.__new__(LowFreqTradingEngineV16)
+    engine.config = LowFreqV16Config()
+    engine.MAX_POSITIONS = 1
+    engine.BUY_SIGNAL_MEMORY_DAYS = 2
+    engine.TRACKING_MIN_DAYS = 2
+    engine.REBALANCE_DAYS = 1
+    engine.COMMISSION_RATE = 0.0
+    engine.STAMP_TAX_RATE = 0.0
+    engine.SLIPPAGE_BPS = 0.0
+    engine.MIN_COMMISSION = 0.0
+    engine.EXECUTION_SIGNAL_GATE_ENABLED = False
+    engine.EXECUTION_RESERVATION_ENABLED = False
+    engine._conn = lambda: _FakeConn()
+    engine._get_trading_dates = lambda start, end: [day1, day2]
+    engine._count_trading_days = lambda start, end: 1
+    engine.check_sell_signal_v2 = lambda trade, current_date: None
+    engine._get_bar = lambda cursor, code, d: {"close": 10.0, "pct_change": 0.0, "amount": 1e9}
+    engine.get_config_snapshot = lambda: {}
+    engine._chase_entry_snapshot = lambda cursor, code, target_date, ref_price: {"blocked": False}
+
+    def _signals(current_date):
+        if current_date == day1:
+            observe = {
+                "code": "300001",
+                "name": "观察候选",
+                "sector": "X",
+                "buy_score": 70.0,
+                "wave_phase": "未知",
+                "role": "龙头",
+                "reasons": ["继续观察"],
+                "soft_flags": ["wave_uncertain"],
+                "candidate_tier": "soft_retained",
+                "entry_ready": False,
+                "tracking_ready": False,
+                "tracking_state": "tracking_observe",
+                "tracking_transition_reason": "candidate_retained_for_tracking",
+                "tracking_evidence_bundle": ["继续观察"],
+                "signal_source": "cross_sector",
+            }
+            return {
+                "buy_signals": [],
+                "candidate_signals": [observe],
+                "entry_signals": [],
+                "hot_sectors": [],
+                "cross_sector_scan_enabled": True,
+                "global_candidate_audit_by_code": {"300001": "cross_sector_ranked_out_top_n"},
+            }
+        return {
+            "buy_signals": [],
+            "candidate_signals": [],
+            "entry_signals": [],
+            "hot_sectors": [],
+            "cross_sector_scan_enabled": True,
+            "global_candidate_audit_by_code": {"300001": "cross_sector_ranked_out_top_n"},
+        }
+
+    engine.generate_buy_signals = _signals
+
+    result = engine.run_backtest(
+        day1,
+        day2,
+        initial_capital=100000.0,
+        include_trades=True,
+    )
+
+    dropped = next(row for row in result["buy_signal_audit"] if row["event"] == "tracking_dropped")
+    assert dropped["drop_reason"] == "cross_sector_ranked_out_top_n"

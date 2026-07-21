@@ -22,63 +22,42 @@ def detect_sector_cooldown(
         if isinstance(cached, dict):
             return cached
 
-    sector_key = str(sector or "").strip()
-    cached_members = sector_members_cache.get(sector_key) if sector_members_cache and sector_key else None
-    if isinstance(cached_members, dict):
-        codes = list(cached_members.get("codes") or [])
-        name_by_code = dict(cached_members.get("name_by_code") or {})
-    else:
-        cursor.execute(
-            """
-            SELECT s.code, s.name
-            FROM stocks s
-            WHERE s.sector_lv1 = ?
+    cursor.execute(
+        """
+        SELECT code, name, close, rn FROM (
+            SELECT dp.code as code,
+                   s.name as name,
+                   dp.close as close,
+                   row_number() OVER (PARTITION BY dp.code ORDER BY dp.trade_date DESC) as rn
+            FROM daily_prices dp
+            JOIN stocks s ON s.code = dp.code
+            WHERE dp.trade_date <= ?
+              AND s.sector_lv1 = ?
               AND s.total_market_cap >= ? AND s.total_market_cap <= ?
               AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-            """,
-            (sector, market_cap_min, market_cap_max),
-        )
-        stock_rows = cursor.fetchall()
-        if len(stock_rows) < 10:
-            return _remember_result(sector_cooldown_cache, cache_key, _unknown_result())
-
-        codes = []
-        name_by_code = {}
-        for code, name in stock_rows:
-            code_s = str(code or "").strip()
-            if not code_s:
-                continue
-            codes.append(code_s)
-            name_by_code[code_s] = str(name or "")
-
-        if sector_members_cache is not None:
-            sector_members_cache[sector_key] = {"codes": codes, "name_by_code": name_by_code}
-
-    if len(codes) < 10 or not codes:
-        return _remember_result(sector_cooldown_cache, cache_key, _unknown_result())
-
-    placeholders = ",".join(["?"] * len(codes))
-    cursor.execute(
-        f"""
-        SELECT code, close, rn FROM (
-            SELECT code, close,
-                   row_number() OVER (PARTITION BY code ORDER BY trade_date DESC) as rn
-            FROM daily_prices
-            WHERE trade_date <= ?
-              AND code IN ({placeholders})
         )
         WHERE rn <= 5
         ORDER BY code, rn
         """,
-        (target_date.isoformat(), *codes),
+        (
+            target_date.isoformat(),
+            str(sector),
+            float(market_cap_min),
+            float(market_cap_max),
+        ),
     )
     price_rows = cursor.fetchall()
 
     closes_by_code: dict[str, list[float]] = {}
-    for code, close, _rn in price_rows:
+    name_by_code: dict[str, str] = {}
+    for code, name, close, _rn in price_rows:
         code_s = str(code or "").strip()
-        if not code_s or close is None:
+        if not code_s:
             continue
+        if close is None:
+            continue
+        if code_s not in name_by_code:
+            name_by_code[code_s] = str(name or "")
         values = closes_by_code.get(code_s)
         if values is None:
             values = []
@@ -87,7 +66,7 @@ def detect_sector_cooldown(
             values.append(float(close))
 
     returns: list[tuple[str, str, float]] = []
-    for code_s in codes:
+    for code_s in closes_by_code.keys():
         closes = closes_by_code.get(code_s) or []
         if len(closes) < 5:
             continue

@@ -1,0 +1,48 @@
+{
+  "version": "chaos_registry_v0",
+  "generated_at": "2026-07-20",
+  "factors": [
+    {
+      "factor_id": "pct_change",
+      "yin_or_yang": "unassigned",
+      "category": "technical",
+      "normalization": "raw",
+      "default_weight": 1.0
+    },
+    {
+      "factor_id": "volume",
+      "yin_or_yang": "unassigned",
+      "category": "flow",
+      "normalization": "raw",
+      "default_weight": 1.0
+    },
+    {
+      "factor_id": "avg_volume_20d",
+      "yin_or_yang": "unassigned",
+      "category": "flow",
+      "normalization": "raw",
+      "default_weight": 1.0
+    },
+    {
+      "factor_id": "volume_ratio_20d",
+      "yin_or_yang": "unassigned",
+      "category": "flow",
+      "normalization": "raw",
+      "default_weight": 1.0
+    },
+    {
+      "factor_id": "net_energy_base",
+      "yin_or_yang": "unassigned",
+      "category": "composite",
+      "normalization": "raw",
+      "default_weight": 1.0
+    },
+    {
+      "factor_id": "net_energy_adjusted",
+      "yin_or_yang": "unassigned",
+      "category": "composite",
+      "normalization": "raw",
+      "default_weight": 1.0
+    }
+  ]
+}

@@ -558,14 +558,64 @@ LaunchAgent 模板与安装约定:
 - 安装/校验脚本：`scripts/install_launchagents.py`
 - `ProgramArguments[0]` 默认写入 `PROJECT_ROOT/.venv/bin/python`，也可通过 `--python-bin` 显式覆盖
 - `Node` 进程模板默认通过 `node` 自动探测，也可通过 `--node-bin` 显式覆盖
-- 只允许修改仓库模板后再执行脚本同步到 `~/Library/LaunchAgents`
+- 只允许修改仓库模板后再执行脚本同步到 `~/Library/LaunchAgents` 或 `/Library/LaunchDaemons`
 - 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.api.plist`
 - 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.frontend_gateway.plist`
-- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.scheduler.plist`
+- 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.scheduler.plist`（若仍以 LaunchAgent 形式存在）
+- 不要手工直接编辑 `/Library/LaunchDaemons/com.neotrade3.scheduler.plist`（若已迁移为 LaunchDaemon）
 - 不要手工直接编辑 `~/Library/LaunchAgents/com.neotrade3.trade_execution_rt.plist`
 - `launchd Weekday` 语义：`1=周一 ... 5=周五，6=周六，0/7=周日`
 
-### 11.1.1 `com.neotrade3.api` 的 `launchd` 真相源与恢复边界
+### 11.1.1 `com.neotrade3.scheduler` 的 LaunchDaemon 模式（只迁移 scheduler）
+
+背景（已证伪）：
+
+- 目标：避免 “LaunchAgent 依赖用户登录/前台会话” 导致的漏跑
+- 迁移路径：只将 `com.neotrade3.scheduler` 迁移为 system 域 LaunchDaemon，不动 `com.neotrade3.api` / `com.neotrade3.frontend_gateway` / `com.neotrade3.trade_execution_rt`
+- 根因：当 stdout/stderr 指向外置盘 `var/log`（`var -> /Volumes/Data/...`，exFAT + `noowners`）时，`launchd` 可能触发 `EX_CONFIG (78)` 并导致任务直接不执行；将日志落点迁移到系统盘后恢复
+
+恢复口径：
+
+- scheduler 的真相源应以 `launchctl print` 为准：
+  - LaunchDaemon：`launchctl print system/com.neotrade3.scheduler`
+  - LaunchAgent：`launchctl print gui/$(id -u)/com.neotrade3.scheduler`
+- 建议日志落点（系统盘）：`~/Library/Logs/NeoTrade3/`
+  - `~/Library/Logs/NeoTrade3/neotrade3_scheduler.out.log`
+  - `~/Library/Logs/NeoTrade3/neotrade3_scheduler.err.log`
+
+安装/更新（system 域，仅 scheduler）：
+
+```bash
+sudo python3 scripts/install_launchagents.py install \
+  --domain system \
+  --target-dir /Library/LaunchDaemons \
+  --home-dir "$HOME" \
+  --labels com.neotrade3.scheduler \
+  --daemon-user "$(whoami)"
+```
+
+将 scheduler 的 stdout/stderr 固化到系统盘日志目录：
+
+```bash
+mkdir -p "$HOME/Library/Logs/NeoTrade3"
+chmod 700 "$HOME/Library/Logs/NeoTrade3"
+
+sudo /usr/libexec/PlistBuddy -c "Set :StandardOutPath $HOME/Library/Logs/NeoTrade3/neotrade3_scheduler.out.log" /Library/LaunchDaemons/com.neotrade3.scheduler.plist
+sudo /usr/libexec/PlistBuddy -c "Set :StandardErrorPath $HOME/Library/Logs/NeoTrade3/neotrade3_scheduler.err.log" /Library/LaunchDaemons/com.neotrade3.scheduler.plist
+
+sudo launchctl bootout system/com.neotrade3.scheduler || true
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.neotrade3.scheduler.plist
+sudo launchctl kickstart -k system/com.neotrade3.scheduler
+```
+
+验证：
+
+```bash
+launchctl print system/com.neotrade3.scheduler | egrep "stdout path|stderr path|runs =|last exit code"
+tail -n 40 "$HOME/Library/Logs/NeoTrade3/neotrade3_scheduler.err.log"
+```
+
+### 11.1.2 `com.neotrade3.api` 的 `launchd` 真相源与恢复边界
 
 `com.neotrade3.api` 的运行真相源不是“当前哪个 plist 文件名看起来最像正式文件”，而是：
 
@@ -631,7 +681,7 @@ curl -u user:$DASHBOARD_PASSWORD https://sanford.vip.cpolar.cn/healthz
 说明:
 
 - 本节描述的是代码内 APScheduler 注册定义
-- 当前生产实际触发仍以 `launchd` 的 `--run-once` LaunchAgent 为准
+- 当前生产实际触发仍以 `launchd` 的 `--run-once` LaunchAgent/LaunchDaemon 为准
 - 若代码定义与 `config/launchd/` 模板不一致，应优先核对并修正模板与运维文档
 - 任何生产任务的时间、工作日、启停状态，均不得只通过 APScheduler 注册来判断
 - `task_scheduler.py` 在这里代表代码能力与本地调试入口，不等于生产启用清单

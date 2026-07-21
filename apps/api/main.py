@@ -19632,7 +19632,10 @@ class BootstrapApiService:
             return {}
         raw_items: list[dict[str, Any]] = []
         if isinstance(signals, dict):
-            if isinstance(signals.get("candidate_signals"), list):
+            tracking_pool = signals.get("tracking_pool_candidates")
+            if isinstance(tracking_pool, dict):
+                raw_items = [item for item in tracking_pool.values() if isinstance(item, dict)]
+            elif isinstance(signals.get("candidate_signals"), list):
                 raw_items = [item for item in (signals.get("candidate_signals") or []) if isinstance(item, dict)]
             elif isinstance(signals.get("buy_signals"), list):
                 raw_items = [item for item in (signals.get("buy_signals") or []) if isinstance(item, dict)]
@@ -19654,6 +19657,13 @@ class BootstrapApiService:
     def _lowfreq_formal_front_entry_ready(cls, formal_front: object) -> bool:
         if not cls._lowfreq_formal_front_ok(formal_front):
             return False
+        entry_window = (
+            formal_front.get("entry_window")
+            if isinstance(formal_front.get("entry_window"), dict)
+            else None
+        )
+        if isinstance(entry_window, dict):
+            return bool(entry_window.get("actionable")) or str(entry_window.get("status") or "").strip() == "ready"
         entry_state = (
             formal_front.get("entry_state")
             if isinstance(formal_front.get("entry_state"), dict)
@@ -20673,7 +20683,7 @@ class BootstrapApiService:
             cursor.execute(
                 """
                 SELECT bucket_key, n, hits, confidence_prob
-                FROM confidence_calibration_buckets
+                FROM confidence_calibration_buckets_100d
                 WHERE as_of_date = ?
                 """,
                 (str(as_of_date),),
@@ -20764,7 +20774,7 @@ class BootstrapApiService:
                 )
                 cursor.execute(
                     """
-                    INSERT OR IGNORE INTO stock_forward_labels_60d (
+                    INSERT OR IGNORE INTO stock_forward_labels_100d (
                       obs_date, code, label_status, updated_at
                     ) VALUES (?, ?, 'pending', ?)
                     """,
@@ -20875,7 +20885,7 @@ class BootstrapApiService:
             cursor.execute(
                 """
                 SELECT l.obs_date, l.code
-                FROM stock_forward_labels_60d l
+                FROM stock_forward_labels_100d l
                 WHERE l.label_status = 'pending'
                 ORDER BY l.obs_date ASC
                 LIMIT ?
@@ -20908,20 +20918,20 @@ class BootstrapApiService:
                     FROM daily_prices
                     WHERE code = ? AND trade_date >= ?
                     ORDER BY trade_date ASC
-                    LIMIT 60
+                    LIMIT 100
                     """,
                     (code, entry_date),
                 )
                 highs = [float(r[0]) for r in cursor.fetchall() if r and r[0] is not None and float(r[0]) > 0]
-                if len(highs) < 60:
+                if len(highs) < 100:
                     continue
                 max_high = max(highs)
                 max_return = (max_high - entry_price) / max(entry_price, 1e-9)
                 hit = 1 if max_return >= 0.50 else 0
                 cursor.execute(
                     """
-                    UPDATE stock_forward_labels_60d
-                    SET entry_date = ?, entry_price = ?, max_high_60d = ?, max_return_60d = ?,
+                    UPDATE stock_forward_labels_100d
+                    SET entry_date = ?, entry_price = ?, max_high_100d = ?, max_return_100d = ?,
                         hit_50pct = ?, label_status = 'ready', label_ready_at = ?, updated_at = ?
                     WHERE obs_date = ? AND code = ?
                     """,
@@ -20941,12 +20951,15 @@ class BootstrapApiService:
 
             conn.commit()
 
-            cursor.execute("DELETE FROM confidence_calibration_buckets WHERE as_of_date = ?", (target_dt.isoformat(),))
+            cursor.execute(
+                "DELETE FROM confidence_calibration_buckets_100d WHERE as_of_date = ?",
+                (target_dt.isoformat(),),
+            )
             cursor.execute(
                 """
                 SELECT o.raw_score, o.role, o.risk_level, l.hit_50pct
                 FROM stock_daily_observations o
-                JOIN stock_forward_labels_60d l
+                JOIN stock_forward_labels_100d l
                   ON o.obs_date = l.obs_date AND o.code = l.code
                 WHERE l.label_status = 'ready'
                 """,
@@ -20972,7 +20985,7 @@ class BootstrapApiService:
                 prob = (hits + 1.0) / (n + 2.0) if n > 0 else 0.5
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO confidence_calibration_buckets (
+                    INSERT OR REPLACE INTO confidence_calibration_buckets_100d (
                       as_of_date, bucket_key, n, hits, confidence_prob, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
@@ -21018,7 +21031,7 @@ class BootstrapApiService:
             cursor.execute(
                 """
                 SELECT bucket_key, n, hits, confidence_prob
-                FROM confidence_calibration_buckets
+                FROM confidence_calibration_buckets_100d
                 WHERE as_of_date = ?
                 ORDER BY confidence_prob DESC, n DESC
                 LIMIT ?
@@ -21623,6 +21636,27 @@ class BootstrapApiService:
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS stock_forward_labels_100d (
+              obs_date TEXT NOT NULL,
+              code TEXT NOT NULL,
+              entry_date TEXT,
+              entry_price REAL,
+              max_high_100d REAL,
+              max_return_100d REAL,
+              hit_50pct INTEGER,
+              label_status TEXT NOT NULL,
+              label_ready_at TEXT,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (obs_date, code)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stock_forward_labels_100d_status_date ON stock_forward_labels_100d (label_status, obs_date)"
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS confidence_calibration_buckets (
               as_of_date TEXT NOT NULL,
               bucket_key TEXT NOT NULL,
@@ -21636,6 +21670,23 @@ class BootstrapApiService:
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_confidence_calibration_buckets_date_prob ON confidence_calibration_buckets (as_of_date, confidence_prob)"
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS confidence_calibration_buckets_100d (
+              as_of_date TEXT NOT NULL,
+              bucket_key TEXT NOT NULL,
+              n INTEGER NOT NULL,
+              hits INTEGER NOT NULL,
+              confidence_prob REAL NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (as_of_date, bucket_key)
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_confidence_calibration_buckets_100d_date_prob ON confidence_calibration_buckets_100d (as_of_date, confidence_prob)"
         )
 
     def _confidence_score_bucket(self, raw_score: Optional[float]) -> str:
@@ -22406,11 +22457,11 @@ class BootstrapApiService:
                 """
                 SELECT COUNT(*)
                 FROM stock_daily_observations o
-                JOIN stock_forward_labels_60d l
+                JOIN stock_forward_labels_100d l
                   ON o.obs_date = l.obs_date AND o.code = l.code
                 WHERE o.obs_date BETWEEN ? AND ?
                   AND l.label_status = 'ready'
-                  AND l.max_return_60d IS NOT NULL
+                  AND l.max_return_100d IS NOT NULL
                   AND o.raw_score IS NOT NULL
                   AND o.role IN ('龙头', '中军')
                   AND o.risk_level != 'exit'
@@ -22439,13 +22490,13 @@ class BootstrapApiService:
                     """
                     SELECT
                       SUM(CASE WHEN o.raw_score >= ? THEN 1 ELSE 0 END) AS n_pred,
-                      SUM(CASE WHEN o.raw_score >= ? AND l.max_return_60d >= ? THEN 1 ELSE 0 END) AS n_hit
+                      SUM(CASE WHEN o.raw_score >= ? AND l.max_return_100d >= ? THEN 1 ELSE 0 END) AS n_hit
                     FROM stock_daily_observations o
-                    JOIN stock_forward_labels_60d l
+                    JOIN stock_forward_labels_100d l
                       ON o.obs_date = l.obs_date AND o.code = l.code
                     WHERE o.obs_date BETWEEN ? AND ?
                       AND l.label_status = 'ready'
-                      AND l.max_return_60d IS NOT NULL
+                      AND l.max_return_100d IS NOT NULL
                       AND o.raw_score IS NOT NULL
                       AND o.role IN ('龙头', '中军')
                       AND o.risk_level != 'exit'
@@ -22844,7 +22895,10 @@ class BootstrapApiService:
 
         raw_candidates = []
         if isinstance(model_signals, dict):
-            if isinstance(model_signals.get("candidate_signals"), list):
+            tracking_pool = model_signals.get("tracking_pool_candidates")
+            if isinstance(tracking_pool, dict):
+                raw_candidates = list(tracking_pool.values())
+            elif isinstance(model_signals.get("candidate_signals"), list):
                 raw_candidates = model_signals.get("candidate_signals") or []
             elif isinstance(model_signals.get("buy_signals"), list):
                 raw_candidates = model_signals.get("buy_signals") or []
