@@ -13,19 +13,11 @@ venv/
 .claude/
 .superpowers/
 code-review-report.md
-var/logs/*
-!var/logs/.gitkeep
-var/artifacts/*
-!var/artifacts/.gitkeep
-var/ledgers/*
-!var/ledgers/.gitkeep
-var/db/*
-var/data/*
-var/models/*
-var/cache/*
-var/backtest_results/*
-var/log/*
-var/sector_rotation/*
+# var is now a symlink to the external NEO drive; runtime data must never be tracked
+var
+var__repo_dir_*/
+.uploads/
+*.egg-info/
 *.db
 *.db-wal
 *.db-shm
