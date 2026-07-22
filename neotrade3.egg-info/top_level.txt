@@ -1,3 +1,0 @@
-apps
-neotrade3
-neotrade3-dashboard
