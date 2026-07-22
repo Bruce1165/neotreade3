@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-21
+**Last Updated**: 2026-07-22
 
 ---
 
@@ -609,6 +609,24 @@
   - `M2/M3` 前半段 formal 消费切换在代码层面已经可运行、可测试
   - 且核心 consumer 链已通过多段窄提交进入历史
   - 后续继续工作时，必须显式区分“已提交的 formal-front 主线”与“当前 working tree 中其他未审计脏改动”
+
+## 2026-07-22 仓库清理与单主线恢复（Kimi Work 首个工作周期）
+
+- 协作方变化：TRAE Work 不可用（无法打开本地目录，历史记录丢失），项目转入 Kimi Work 协作；`CLAUDE.md` 工作规则继续生效。Kimi Work 侧另有持久记忆 `agents/main/memory/neotrade3-project.md`。
+- 目标口径（owner 当面校准，覆盖 code-wiki 旧表述）：20–60 个交易日内有机会涨 30%+；100 个交易日内有希望涨 50%+。注意：rulebook `RB.M2.CERTAINTY_SHORT.001`（占位 10–20 日/+30%，标“待补齐”）与 owner 短档口径不一致，待下次更新 rulebook 时按 owner 口径回填（需先确认）。
+- 混沌模型：owner 明确“需要单独专项讨论”；在那之前，不把 `chaos_rulebook.md` 的 SSOT 表述当作推进代码切换的依据，文档与代码现状保持原样。
+- 仓库清理（5 个 commit，分支 `chore/repo-cleanup`，已合并并推送）：
+  - `ba692df` 在途混沌快照脚本存检（py_compile 通过）
+  - `de68ee7` 删除根目录残留（probe plist×2、0 字节 project_tree、egg-info）；未跟踪 `.uploads` 与 `var__repo_dir_20260721_165702` 移至 `/Volumes/NEO/NeoTrade3_attic/20260722_repo_cleanup/`
+  - `ab99d43` 4 份规划 docx → `docs/archive/planning_v0/`；已闭环调度调试记录 → `docs/archive/`
+  - `0124188` `.gitignore` 将 `var` 按外挂盘整体忽略（+attic/egg-info 规则）；清除失效 var .gitkeep
+  - `c9d2896` 孤儿脚本（`run_autore.py`、根目录 `sector_rotation.py`、`generate_handover.js`）→ `scripts/archive/`（引用证据见提交信息）
+  - `legacy/` 按文档定位保留（回退对照，无活代码依赖）
+- 分支治理：`wip/20260721-workspace-snapshot` 积压的 128 文件 / ~1.7 万行真实工作随本轮回归；本地与 GitHub 均已恢复**单 main 主线**（origin 已同步至 `c9d2896`）。
+- 测试基线（新基线）：`.venv/bin/python -m pytest tests -q --tb=line` → **974 passed in 39s**。
+- 运行时状态：`.venv` 已重建（Homebrew python3.10.20 + `pip install -e ".[dev]"`），launchd 三个服务（`com.neotrade3.api`、`com.neotrade3.frontend_gateway` exit 78、系统域 `com.neotrade3.scheduler`）的解释器路径已恢复有效，但**服务尚未重启**（owner 暂缓）；`tushare`、`apscheduler` 未安装（pyproject 未声明，`tushare` 属缺失依赖）。
+- 磁盘事实：系统盘 142GB 可用 / NEO 917GB 可用；仓库本体 ~55MB；此前撑满磁盘的真因是 TRAE ai-agent 目录（100+GB），已迁至 NEO。
+- 下一步待办（按序）：specs 436 份引用闭包归档 → `scripts/` 一次性脚本梳理 → LaunchAgents 墓园（需 owner 确认）→ `apps/dashboard/` 死代码；专项：混沌模型讨论、运行时服务重启。
 
 
 ---
