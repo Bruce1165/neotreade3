@@ -631,6 +631,22 @@
 
 ---
 
+## 2026-07-22 specs 归档与 GitHub CI 修复（Kimi Work 第二工作周期）
+
+- specs 归档：`b0c0c2b` 将 414 份历史 specs 移入 `docs/archive/specs/`（保留 21 份活文档，`docs/archive/specs/README.md` 说明归档口径）；`6f952f9` 为交接存检。
+- GitHub CI 失败根因（三类，均已修复）：
+  1. 后端 3 个测试依赖生产库/真实文件：CI 上 stock_db 为空或兄弟测试留下的 0 字节库，`/api/lowfreq/*` 返回 500；
+  2. 前端 `eslint.config.js` 缺 node / vitest globals，构建期报错；
+  3. wip 批次漏连前端 `api.js` 的 `getOpsCenterSummary`（后端 `/api/ops-center/summary` 早已存在）→ build 失败。
+- 后端修复（`17d30d6`）：`labs/runtime.py::_enrich_from_db` 加表存在性守卫（空库降级而非 500）；`data_control/pipeline.py` 的 `_project_root()`/`_stock_db_path()` 改为实例方法并支持 `project_root=` 注入（`from_registry_file` 同参），`apps/worker/main.py` 传入 `project_root=self.project_root`——同时消除了"测试用种子库时把日历覆盖写到 NEO 真实库"的隐患；`tests/integration/test_http_smoke.py` 新增 `_prepare_seeded_project_root`（复制 labs/orchestrator/source_registry 配置 + 种子 daily_prices/stocks，口径：pct 百分制、amount/volume≈close）；`tests/unit/test_bootstrap_skeleton.py` 用 `NEOTRADE3_STOCK_DB_PATH` 指向种子库、stub `_lowfreq_next_trading_day`。
+- 前端修复（`6a81bbe`）：`eslint.config.js` 增加 node（vite.config/server）与 vitest+node（*.test）两个 globals 块；清理 Lowfreq.jsx / OpsCenter.jsx / Screeners.jsx 未用符号；`StockCodeLink.jsx` 辅助函数抽到 `src/components/stockCodeUtils.js`；`api.js` 补 `getOpsCenterSummary`。
+- 验证基线（双环境，均本地亲测）：后端 `.venv/bin/python -m pytest tests -q` 有 NEO 974 passed (29s) / 无 NEO 类 CI 环境 974 passed (21s)；前端 neotrade3-dashboard 四步全过（npm ci ✓、lint 0 error 1 warning ✓、78 tests ✓、build 794ms ✓）。GitHub Actions 实际结果未直接核验（`gh` 未登录），以 owner 邮件确认为准。
+- 环境陷阱（长期有效）：`var` 是指向 `/Volumes/NEO/NeoTradeDB/var` 的符号链接；**checkout 清理前旧 commit 会用 tracked 的 var 目录挤掉该链接**；恢复：`ln -s /Volumes/NEO/NeoTradeDB/var var`。对 `var` 禁用 `rm -rf`；类 CI 模拟用 `mv var /tmp` 暂存再还原，事后 `readlink var` 验证。
+- 下一步待办（按序）：确认 GitHub CI 转绿 → `scripts/` 一次性脚本梳理 → LaunchAgents 墓园（需 owner 确认清单后执行 bootout）→ `apps/dashboard/` 死代码；专项：混沌模型讨论、运行时服务重启（owner 暂缓）。
+
+
+---
+
 ## v1 Priorities
 
 1. data control skeleton
