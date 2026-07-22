@@ -220,6 +220,9 @@ export const runAllScreeners = (date, apiKey) =>
 export const getStocksCoverage = (date) =>
   fetchApi(`/api/stocks/coverage?date=${date}`);
 
+export const getOpsCenterSummary = (date) =>
+  fetchApi(`/api/ops-center/summary?date=${encodeURIComponent(date)}`);
+
 export const lookupStock = (code, date) =>
   fetchApi(`/api/stocks/lookup?code=${code}&date=${date}`);
 

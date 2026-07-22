@@ -139,7 +139,7 @@ export default function Screeners() {
   const [activeTab, setActiveTab] = useState('runs');
   const [error, setError] = useState(null);
   const [runLoading, setRunLoading] = useState(false);
-  const [runResult, setRunResult] = useState(null);
+  const [, setRunResult] = useState(null);
   const [blocks, setBlocks] = useState({
     screeners: createBlockState(),
     runs: createBlockState(),

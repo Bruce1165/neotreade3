@@ -34,11 +34,6 @@ function safeNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function formatAmountWan(value) {
-  const numeric = safeNumber(value);
-  return numeric == null ? '--' : `¥${(numeric / 10000).toFixed(2)}万`;
-}
-
 function formatCurrency(value) {
   const numeric = safeNumber(value);
   return numeric == null ? '--' : `¥${numeric.toFixed(2)}`;
@@ -79,27 +74,6 @@ function displaySectorName(value) {
 
 function backtestReportDetailPath(reportId) {
   return `/lowfreq/backtest-reports/${encodeURIComponent(String(reportId || '').trim())}`;
-}
-
-function manualIntentTypeBadge(intentType) {
-  const value = String(intentType || '').trim();
-  if (value === 'buy_intent') return { key: 'entry_ready', label: '买入' };
-  if (value === 'sell_intent') return { key: 'exit_signal', label: '卖出' };
-  return null;
-}
-
-function manualIntentStatusBadge(status, intentType, cancelReason) {
-  const value = String(status || '').trim();
-  if (value === 'pending') return { key: 'queue_pending', label: '待处理' };
-  if (value === 'executed') return { key: 'queue_executed', label: '已处理' };
-  if (value === 'cancelled' && String(cancelReason || '').trim() === 'abandoned') {
-    return { key: 'queue_abandoned', label: '已放弃' };
-  }
-  if (value === 'cancelled') return { key: 'queue_cancelled', label: '已取消' };
-  if (String(intentType || '').trim() === 'sell_intent') {
-    return { key: 'exit_signal', label: value || '卖出' };
-  }
-  return null;
 }
 
 function SectorCard({ sector, snapshotMeta, onBuyIntent, onAbandon, posting, canPost }) {

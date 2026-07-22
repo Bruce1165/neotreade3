@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, AlertTriangle, ListChecks, ShieldAlert } from 'lucide-react';
 
-import BlockMessage from '../components/BlockMessage';
 import DateSelector from '../components/DateSelector';
 import MetricCard from '../components/MetricCard';
 import PageHeader from '../components/PageHeader';

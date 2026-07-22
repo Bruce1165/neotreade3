@@ -1,10 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import StockCodeLink, {
-  buildTonghuashunStockUrl,
-  isSupportedAStockCode,
-} from './StockCodeLink'
+import StockCodeLink from './StockCodeLink'
+import { buildTonghuashunStockUrl, isSupportedAStockCode } from './stockCodeUtils'
 
 describe('StockCodeLink', () => {
   afterEach(() => {
