@@ -735,7 +735,8 @@ class BootstrapWorkerApp:
         dry_run: bool,
     ) -> dict[str, object]:
         data_control = DataControlPipeline.from_registry_file(
-            self.paths["source_registry_config"]
+            self.paths["source_registry_config"],
+            project_root=self.project_root,
         )
         orchestrator = DailyMasterOrchestrator.from_files(
             orchestrator_config_path=self.paths["orchestrator_config"],

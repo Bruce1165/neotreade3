@@ -5,6 +5,8 @@ from datetime import date
 from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
+import shutil
+import sqlite3
 from threading import Thread
 from urllib.request import Request, urlopen
 
@@ -84,6 +86,67 @@ def _read_bytes(url: str) -> tuple[int, dict[str, str], bytes]:
         return status, dict(response.headers.items()), response.read()
 
 
+def _prepare_seeded_project_root(tmp_path: Path) -> Path:
+    """构造带最小种子数据的临时项目根：让 bootstrap 主链在无真实行情库的环境（如 CI）也可复现。"""
+    for relative_path in (
+        Path("config/labs/labs_registry.json"),
+        Path("config/orchestrator/daily_master_orchestrator.json"),
+        Path("config/data_control/source_registry.json"),
+    ):
+        destination = tmp_path / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(PROJECT_ROOT / relative_path, destination)
+    shutil.copytree(
+        PROJECT_ROOT / "config/benchmark",
+        tmp_path / "config/benchmark",
+    )
+
+    db_dir = tmp_path / "var/db"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_dir / "stock_data.db")) as conn:
+        conn.execute(
+            """
+            CREATE TABLE daily_prices (
+                trade_date TEXT NOT NULL,
+                code TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL,
+                preclose REAL, pct_change REAL, volume REAL, amount REAL,
+                PRIMARY KEY (trade_date, code)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE stocks (
+                code TEXT PRIMARY KEY,
+                name TEXT,
+                sector_lv1 TEXT,
+                sector_lv2 TEXT,
+                asset_type TEXT,
+                is_delisted INTEGER,
+                circulating_market_cap REAL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO stocks VALUES (?,?,?,?,?,?,?)",
+            [
+                ("000001", "平安银行", "金融", "银行", "stock", 0, 2.0e11),
+                ("000002", "万科A", "地产", "房地产开发", "stock", 0, 1.0e11),
+            ],
+        )
+        # 单位校验要求：pct_change 为百分制、volume 为股数（amount/volume ≈ close）
+        conn.executemany(
+            "INSERT INTO daily_prices VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [
+                ("2026-05-19", "000001", 10.0, 10.6, 9.9, 10.5, 10.0, 5.0, 1_000_000.0, 10_500_000.0),
+                ("2026-05-19", "000002", 20.0, 20.5, 19.5, 20.4, 20.0, 2.0, 500_000.0, 10_200_000.0),
+                ("2026-05-18", "000001", 9.8, 10.1, 9.7, 10.0, 9.8, 2.04, 900_000.0, 9_000_000.0),
+            ],
+        )
+    return tmp_path
+
+
 def test_http_smoke_healthz_allows_local_cors() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
 
@@ -99,7 +162,7 @@ def test_http_smoke_healthz_allows_local_cors() -> None:
 
 
 def test_http_smoke_bootstrap_summary_reads_stored_snapshot(tmp_path: Path) -> None:
-    service = BootstrapApiService(project_root=PROJECT_ROOT)
+    service = BootstrapApiService(project_root=_prepare_seeded_project_root(tmp_path))
     service.worker_app.paths["ledgers_root"] = tmp_path / "ledgers"
     service.worker_app.paths["artifacts_root"] = tmp_path / "artifacts"
     _install_fast_lab_runtime(service)

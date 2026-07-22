@@ -3282,6 +3282,26 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
     )
     service._screeners_config_dir = isolated_screeners_dir
     service._screeners_registry_config = isolated_registry_path
+    # 种子行情库：CSV 导出校验收款代码必须能解析名称；CI 等无真实库环境下用种子库替代
+    seed_db_path = tmp_path / "seed_stock_data.db"
+    with sqlite3.connect(str(seed_db_path)) as conn:
+        conn.execute("CREATE TABLE stocks (code TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            "CREATE TABLE daily_prices (trade_date TEXT, code TEXT, close REAL, preclose REAL, pct_change REAL, volume REAL, amount REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO stocks(code, name) VALUES (?, ?)",
+            [("000001", "平安银行"), ("600519", "贵州茅台")],
+        )
+        conn.executemany(
+            "INSERT INTO daily_prices VALUES (?,?,?,?,?,?,?)",
+            [
+                ("2026-05-19", "000001", 11.0, 10.0, 10.0, 1_000_000.0, 11_000_000.0),
+                ("2026-05-19", "600519", 1500.0, 1490.0, 0.6711409395973155, 100_000.0, 150_000_000.0),
+            ],
+        )
+    previous_stock_db_env = os.environ.get("NEOTRADE3_STOCK_DB_PATH")
+    os.environ["NEOTRADE3_STOCK_DB_PATH"] = str(seed_db_path)
     handler = build_handler(service)
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -3605,6 +3625,10 @@ def test_bootstrap_api_handler_accepts_screener_run_post(tmp_path: Path) -> None
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+        if previous_stock_db_env is None:
+            os.environ.pop("NEOTRADE3_STOCK_DB_PATH", None)
+        else:
+            os.environ["NEOTRADE3_STOCK_DB_PATH"] = previous_stock_db_env
         cleanup_var_paths(
             project_root=PROJECT_ROOT,
             relative_paths=[
@@ -5732,6 +5756,10 @@ def test_http_end_to_end_dashboard_shell_points_to_api() -> None:
 
 def test_lowfreq_advance_does_not_execute_pending_when_disallowed() -> None:
     service = BootstrapApiService(project_root=PROJECT_ROOT)
+    # 本测试只断言 allow_execute=False 时不触发执行；下一交易日查询与真实库无关，stub 掉以隔离环境
+    service._lowfreq_next_trading_day = (  # type: ignore[method-assign]
+        lambda after_date: "2026-06-12"
+    )
 
     calls = {"n": 0}
 

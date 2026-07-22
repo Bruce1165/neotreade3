@@ -723,6 +723,15 @@ class LabRuntimeAdapter:
 
         conn = sqlite3.connect(str(db_path))
         try:
+            available_tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('stocks', 'daily_prices')"
+                )
+            }
+            if not {"stocks", "daily_prices"}.issubset(available_tables):
+                # 富化是尽力而为：库存在但表缺失（空库/未初始化）时降级返回，不阻断主链
+                return candidates
             placeholders = ",".join("?" * len(codes))
             cursor = conn.execute(
                 f"""

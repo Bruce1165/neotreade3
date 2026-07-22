@@ -27,13 +27,28 @@ logger = logging.getLogger(__name__)
 class DataControlPipeline:
     """Defines the minimal capture-compose-publish chain for bootstrap."""
 
-    def __init__(self, source_registry: SourceRegistry | None = None) -> None:
+    def __init__(
+        self,
+        source_registry: SourceRegistry | None = None,
+        *,
+        project_root: Path | None = None,
+    ) -> None:
         self.source_registry = source_registry
         self.ledger_builder = DataControlLedgerBuilder()
+        # 可注入项目根：缺省保持历史行为（包文件上溯两级），测试/隔离环境可显式指定
+        self._project_root_override = Path(project_root) if project_root is not None else None
 
     @classmethod
-    def from_registry_file(cls, file_path: str | Path) -> "DataControlPipeline":
-        return cls(source_registry=SourceRegistry.from_file(file_path))
+    def from_registry_file(
+        cls,
+        file_path: str | Path,
+        *,
+        project_root: Path | None = None,
+    ) -> "DataControlPipeline":
+        return cls(
+            source_registry=SourceRegistry.from_file(file_path),
+            project_root=project_root,
+        )
 
     @staticmethod
     def default_steps() -> list[DataControlStepDefinition]:
@@ -569,8 +584,9 @@ class DataControlPipeline:
             message=message,
         )
 
-    @staticmethod
-    def _project_root() -> Path:
+    def _project_root(self) -> Path:
+        if self._project_root_override is not None:
+            return self._project_root_override
         return Path(__file__).resolve().parents[2]
 
     def _maybe_rebuild_trading_calendar(self) -> None:
@@ -632,9 +648,8 @@ class DataControlPipeline:
             encoding="utf-8",
         )
 
-    @staticmethod
-    def _stock_db_path() -> Path:
-        project_root = DataControlPipeline._project_root()
+    def _stock_db_path(self) -> Path:
+        project_root = self._project_root()
         sqlite_db_path = os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(
             project_root / "var/db/stock_data.db"
         )
