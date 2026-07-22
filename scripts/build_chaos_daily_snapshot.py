@@ -517,6 +517,7 @@ def main() -> int:
 
     t0 = time.time()
     with sqlite3.connect(str(stock_db)) as stock_conn, sqlite3.connect(str(chaos_db)) as chaos_conn:
+        chaos_conn.execute("PRAGMA busy_timeout=60000")
         ensure_chaos_schema(chaos_conn)
         upsert_registry(chaos_conn, registry_version=registry.version, payload=registry_to_payload(registry))
 
@@ -714,7 +715,7 @@ def main() -> int:
                         series = net_series_by_code.get(str(code))
                         if series is not None:
                             series.append(float(snap.get("net_energy") or 0.0))
-                weights_v = str(snap.get("weights_version") or "chaos_weights_v0").strip() or "chaos_weights_v0"
+                weights_v = str(snap.get("weights_version") or weights_version).strip() or str(weights_version)
                 weights_versions.add(weights_v)
                 upsert_daily_snapshot(
                     chaos_conn,
