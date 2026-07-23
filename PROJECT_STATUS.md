@@ -659,6 +659,17 @@
 
 ---
 
+## 2026-07-23 apps/dashboard 退役化石移除（Kimi Work 第三工作周期·收尾）
+
+- 引用闭包修正了"死代码"预判：`apps/dashboard/main.py`（678 行）是**被 3 个测试钉住的退役化石**——`build_handler` 全部请求返回 410 Gone；`DashboardPageBuilder`（约 500 行内联 HTML + 4 静态资源）生产侧零调用方，仅被测试 import。owner 决策选 B（删除）。
+- `bb8843e`：`git rm apps/dashboard/`（含 static 4 文件）+ 移除 `tests/unit/test_bootstrap_skeleton.py` 中 apps.dashboard.main 导入块与 3 个化石测试（renders_sections / loads_static_assets / end_to_end_dashboard_shell）。验证：**971 passed in 31.83s**（974−3，无其他 fallout），apps/、neotrade3/、tests/ 零残留引用。退役文档（README、runbook、本文件）保持准确，无需改动；恢复途径 = git 历史。
+- 关联事实：根目录 `dashboard_server.py` 早在 7 月初已移入 `legacy/runtime/`（DEPLOY.md 有载），昨日移除的 dashboard plist 指向的是失效旧路径。
+- **异常记录（待 owner 确认）**：2026-07-23 08:53 工作树出现非本协作产生的改动——`docs/wiki/index.md` 被修改、`docs/wiki/neotrade3_repository_code_wiki.md` 新增（仓库级 Code Wiki，疑为其他 AI 工具的项目审查输出；其中 `var -> /Volumes/Data/NeoTradeDB/var` 路径有误，实际为 `/Volumes/NEO/NeoTradeDB/var`）。未纳入任何提交，保持未暂存状态待 owner 决定保留或还原。
+- 网络状况：GitHub 推送间歇性 "Connection reset by peer"（今日已成功数次），提交均在本地安全保存，恢复后补推。
+- Housekeeping 全部收官：仓库清理 → specs 归档 → CI 修复 → scripts 梳理 → LaunchAgents 墓园 → apps/dashboard 化石。下一步唯一待办：混沌模型专项讨论（owner 发起；含 5 个零引用混沌/M6 脚本的去留）。
+
+---
+
 ## v1 Priorities
 
 1. data control skeleton
