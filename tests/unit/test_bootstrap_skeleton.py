@@ -18,10 +18,6 @@ from apps.api.main import (
     build_handler,
     format_api_error,
 )
-from apps.dashboard.main import (
-    DashboardPageBuilder,
-    build_handler as build_dashboard_handler,
-)
 from apps.worker.main import BootstrapWorkerApp
 import apps.worker.main as worker_main
 from neotrade3.config_contracts import ConfigContractError, build_config_contract_report
@@ -5520,48 +5516,6 @@ def test_factor_matrix_daily_output_supports_live_and_stored_modes() -> None:
         )
 
 
-def test_dashboard_page_builder_renders_sections_and_api_base_url() -> None:
-    dashboard_builder = DashboardPageBuilder(api_base_url="http://127.0.0.1:18030")
-    dashboard_handler = build_dashboard_handler(dashboard_builder)
-    dashboard_server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_handler)
-    dashboard_thread = Thread(target=dashboard_server.serve_forever, daemon=True)
-    dashboard_thread.start()
-
-    try:
-        try:
-            urlopen(f"http://127.0.0.1:{dashboard_server.server_port}/")
-            raise AssertionError("expected dashboard to be retired")
-        except Exception as exc:
-            assert getattr(exc, "code", None) == 410
-            body = exc.read().decode("utf-8")
-            assert "retired" in body.lower()
-    finally:
-        dashboard_server.shutdown()
-        dashboard_server.server_close()
-        dashboard_thread.join(timeout=2)
-
-
-def test_dashboard_page_builder_loads_static_assets() -> None:
-    dashboard_builder = DashboardPageBuilder(api_base_url="http://127.0.0.1:18030")
-    dashboard_handler = build_dashboard_handler(dashboard_builder)
-    dashboard_server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_handler)
-    dashboard_thread = Thread(target=dashboard_server.serve_forever, daemon=True)
-    dashboard_thread.start()
-
-    try:
-        try:
-            urlopen(f"http://127.0.0.1:{dashboard_server.server_port}/healthz")
-            raise AssertionError("expected dashboard to be retired")
-        except Exception as exc:
-            assert getattr(exc, "code", None) == 410
-            payload = json.loads(exc.read().decode("utf-8"))
-            assert payload["status"] == "gone"
-    finally:
-        dashboard_server.shutdown()
-        dashboard_server.server_close()
-        dashboard_thread.join(timeout=2)
-
-
 def test_http_end_to_end_api_and_error_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5720,38 +5674,6 @@ def test_http_end_to_end_domain_endpoints_cover_current_api_views(
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-
-
-def test_http_end_to_end_dashboard_shell_points_to_api() -> None:
-    api_service = BootstrapApiService(project_root=PROJECT_ROOT)
-    api_handler = build_handler(api_service)
-    api_server = ThreadingHTTPServer(("127.0.0.1", 0), api_handler)
-    api_thread = Thread(target=api_server.serve_forever, daemon=True)
-    api_thread.start()
-
-    dashboard_builder = DashboardPageBuilder(
-        api_base_url=f"http://127.0.0.1:{api_server.server_port}"
-    )
-    dashboard_handler = build_dashboard_handler(dashboard_builder)
-    dashboard_server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_handler)
-    dashboard_thread = Thread(target=dashboard_server.serve_forever, daemon=True)
-    dashboard_thread.start()
-
-    try:
-        try:
-            urlopen(f"http://127.0.0.1:{dashboard_server.server_port}/")
-            raise AssertionError("expected dashboard to be retired")
-        except Exception as exc:
-            assert getattr(exc, "code", None) == 410
-            body = exc.read().decode("utf-8")
-            assert "retired" in body.lower()
-    finally:
-        dashboard_server.shutdown()
-        dashboard_server.server_close()
-        dashboard_thread.join(timeout=2)
-        api_server.shutdown()
-        api_server.server_close()
-        api_thread.join(timeout=2)
 
 
 def test_lowfreq_advance_does_not_execute_pending_when_disallowed() -> None:
