@@ -666,6 +666,7 @@
 - 关联事实：根目录 `dashboard_server.py` 早在 7 月初已移入 `legacy/runtime/`（DEPLOY.md 有载），昨日移除的 dashboard plist 指向的是失效旧路径。
 - **异常记录（待 owner 确认）**：2026-07-23 08:53 工作树出现非本协作产生的改动——`docs/wiki/index.md` 被修改、`docs/wiki/neotrade3_repository_code_wiki.md` 新增（仓库级 Code Wiki，疑为其他 AI 工具的项目审查输出；其中 `var -> /Volumes/Data/NeoTradeDB/var` 路径有误，实际为 `/Volumes/NEO/NeoTradeDB/var`）。未纳入任何提交，保持未暂存状态待 owner 决定保留或还原。
 - 网络状况：GitHub 推送间歇性 "Connection reset by peer"（今日已成功数次），提交均在本地安全保存，恢复后补推。
+- **GitHub CI 全绿确认（2026-07-23，run #13 success）**：本地双环境绿≠CI 绿，又查出两层仅 CI 侧触发的原因：① `9a4a85c` lockfile 487 个 tarball URL 指向 `registry.npmmirror.com`（owner 本机 ~/.npmrc 镜像生成），GitHub 美国 runner 无法访问致 `npm ci` 秒挂——已全部改写为 `registry.npmjs.org`（版本与 integrity 未动，本机经 npm replace-registry-host 默认行为继续走镜像）；② `9c0202d` CI Node 20（npm 10）会硬性校验 lockfile 全平台 optional 依赖条目，而本地 npm 11 生成的 lockfile 对 esbuild@0.28.1（vitest 4 传递依赖）缺 6 个非本平台条目——本地 `npx npm@10 ci` 完整复现报错后，将 CI 前端 job 对齐为 Node 24（npm 11 只校验当前平台条目，linux-x64 在案）。验证：run #13 backend-smoke + frontend-build 双 job success，annotations 仅 2 条非阻断 warning。教训沉淀：CI 修复必须经 GitHub 侧闭环验证；本机 npm/node 版本即 lockfile 工具链，CI 须与之对齐。
 - Housekeeping 全部收官：仓库清理 → specs 归档 → CI 修复 → scripts 梳理 → LaunchAgents 墓园 → apps/dashboard 化石。下一步唯一待办：混沌模型专项讨论（owner 发起；含 5 个零引用混沌/M6 脚本的去留）。
 
 ---
