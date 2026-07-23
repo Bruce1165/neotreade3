@@ -647,6 +647,18 @@
 
 ---
 
+## 2026-07-23 scripts 归档与 LaunchAgents 墓园清理（Kimi Work 第三工作周期）
+
+- scripts/ 引用闭包检查（26 个脚本逐个过）：范围含仓库代码/配置/tests/CI、用户域+系统域 launchd plist、现行文档、脚本间交叉 import。发现：launchd 中 scripts/ 引用全部指向 NeoTrade2 而非本仓库；脚本间零相互 import。
+- `537a780` 归档 6 个一次性脚本 → `scripts/archive/`（fetch_20260525_data 写死已失效 TRAE 路径、sync_v2_param_metadata_to_v3、brainstorm_server、start-server.sh、两个已完成的 backfill）；保留 14 个有活引用（`update_financial_data.py` 被生产调度器代码引用，最关键）；`scripts/archive/README.md` 写明归档口径与 `parents[1]` 路径推导注意事项；空目录 scripts/bootstrap、scripts/maintenance 删除。验证：974 tests 全绿 (33.87s)。
+- 5 个零引用混沌/M6 研究脚本（run_chaos_factor_health_report、run_chaos_full_history_backtest、run_chaos_m4_eval_monitor_rolling_series、verify_chaos_operational_readiness、run_m6_full_backtest_top200_report）按 owner 挂起指示留待混沌专项讨论，未动。
+- LaunchAgents 清理（系统侧，非仓库文件）：5 个墓园 plist（api.fresh、api.recover.20260619、cpolar.recover.20260619、dashboard.plist、dashboard.plist.bak）移至 `/Volumes/NEO/NeoTrade3_attic/20260723_launchagents/`；2 个 studyquest plist 按 owner 指示直接删除。全部均未加载，纯文件移动，无 bootout（Label 撞车风险：bootout com.neotrade3.api 会误杀活服务，已规避）。~/Library/LaunchAgents 从 15 个文件降至 8 个，余者全部对应当前加载的活 agent。
+- 运行时自愈确认：api（PID 8596，18031 响应）与 frontend_gateway（PID 8595，5174 返回 401）因 KeepAlive 在 .venv 重建后已自动恢复；系统域 scheduler 注册正常（周一至五 15:45 触发）。exit 78 故障关闭。
+- 保留不动：NeoTrade2 四个生产 agent（16:25 日线、16:35 模拟盘计划、周五 22:00 五旗池、22:30 元数据新鲜度）；FYI：stock_meta_freshness 上次退出码 2（v2 侧问题，超范围）。
+- 下一步待办：混沌模型专项讨论（owner 发起）→ `apps/dashboard/` 死代码（旧 python dashboard，其 plist 已随本轮移除）。
+
+---
+
 ## v1 Priorities
 
 1. data control skeleton
