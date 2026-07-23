@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.neotrade3.backup_daily</string>
+
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+
+    <!-- 必须用 .venv python 启动：该二进制有可移动磁盘 TCC 授权；/bin/bash 会被拒 -->
+    <key>ProgramArguments</key>
+    <array>
+      <string>{{PROJECT_ROOT}}/.venv/bin/python</string>
+      <string>{{PROJECT_ROOT}}/scripts/backup_neotrade_daily.py</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- 每天 04:47：避开 15:45 管线、09:35 早盘执行、04:17 类校验窗口 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>4</integer>
+      <key>Minute</key>
+      <integer>47</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/Library/Logs/NeoTrade3/neotrade3_backup_daily.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/Library/Logs/NeoTrade3/neotrade3_backup_daily.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PYTHONUNBUFFERED</key>
+      <string>1</string>
+    </dict>
+  </dict>
+</plist>

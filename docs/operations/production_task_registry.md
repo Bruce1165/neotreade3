@@ -35,6 +35,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | `update_daily_prices_authoritative` | 是 | `launchd` | 周一到周五 `15:45` | `neotrade3.scheduler.task_scheduler:_run_update_daily_prices_authoritative` | 触发 `daily_pipeline`；`daily_prices` 按 `Tushare -> Tencent safety-net` 口径执行 | 是 | 通常因无新增交易日差额直接 `up-to-date`；若进入 pipeline，仍会做交易日检查 | 准确 | 当日 `Tushare daily` 为空时，会在 `16:00` 前按 3 分钟窗口短重试 |
 | `trade_execution_rt_0935` | 是 | `launchd` | 周一到周五 `09:35` | `neotrade3.scheduler.task_scheduler:_run_trade_execution_rt_0935` | 修改模拟持仓、现金、意图状态，写 `trade_execution_rt` ledger | 是 | 业务层通过 `trading_day_view()` 检查，非交易日直接 `skipped_non_trading_day` | 准确 | 当前生产最关键的早盘执行任务，交易日门禁已实现 |
+| `backup_daily` | 是 | `launchd` | 每天 `04:47` | `scripts/backup_neotrade_daily.py`（经 `.venv/bin/python` 启动，该二进制持有可移动磁盘 TCC 授权） | 将 NEO `var/` 增量镜像到 DATA（APFS 备份盘）`NeoTradeDB.daily/var/`（rsync `--delete-after`） | 否 | 照常运行（增量快照不依赖交易日） | 准确 | 2026-07-24 新增（owner 裁决 Q3）；fail-closed 护栏：NEO 核心库缺失/异常小时 EX_CONFIG 拒同步；DATA 未挂载则 skip 当日 |
 | `update_financial_data` | 否 | APScheduler 代码定义（未生产启用） | 每天 `18:00` | `neotrade3.scheduler.task_scheduler:_run_update_financial_data` | 更新 `stocks` 财务字段 | 否 | 仍可运行 | 基本准确 | 更像维护型数据任务；当前未见生产 LaunchAgent |
 | `fetch_news` | 否 | APScheduler 代码定义（未生产启用） | 工作日 `09:00-14:59` 每 30 分钟 | `neotrade3.scheduler.task_scheduler:_run_fetch_news` | 抓取财联社快讯 | 是 | 任务函数先检查 `trading_day_view()`，非交易日记录 `skip` 后返回 | 准确 | 当前未见生产 LaunchAgent；若未来启用，交易日语义已内置在任务函数 |
 | `warm_tushare_theme_cache` | 否 | APScheduler 代码定义（未生产启用） | 每 2 分钟 | `neotrade3.scheduler.task_scheduler:_run_warm_tushare_theme_cache` | 预热概念/主题缓存 | 否 | 持续运行 | 基本准确 | 若定位为缓存维护任务则合理；不应与交易日业务任务混写 |
@@ -43,12 +44,13 @@
 
 ### 4.1 当前生产真正启用的自动任务
 
-当前生产实际启用的自动任务只有 2 个：
+当前生产实际启用的自动任务有 3 个：
 
-- `update_daily_prices_authoritative`
-- `trade_execution_rt_0935`
+- `update_daily_prices_authoritative`（系统域 LaunchDaemon）
+- `trade_execution_rt_0935`（用户域 LaunchAgent）
+- `backup_daily`（用户域 LaunchAgent，2026-07-24 新增，数据备份）
 
-它们由 `config/launchd/` 中的模板定义，并通过仓库脚本安装到 `~/Library/LaunchAgents`。
+它们由 `config/launchd/` 中的模板定义，并通过仓库脚本安装到对应 launchd 域。
 
 补充口径：
 
