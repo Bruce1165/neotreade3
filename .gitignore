@@ -16,6 +16,7 @@ code-review-report.md
 # var is now a symlink to the external NEO drive; runtime data must never be tracked
 var
 var__repo_dir_*/
+.runtime_outputs/
 .uploads/
 *.egg-info/
 *.db
