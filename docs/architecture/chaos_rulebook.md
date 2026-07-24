@@ -382,6 +382,12 @@ Gate-v1 的默认验收方式（冻结）：
 - `RB.M4.CHAOS.EVAL_ROLLING.001` status=deferred evidence=scripts/archive/run_chaos_m4_eval_monitor_rolling.py
   - 2026-07-24 转 deferred：rolling 评估为契约冻结前探索件，已由 2026-07-23 冻结的中期验证契约（`scripts/run_chaos_midterm_validation.py`）取代
 - `RB.M5.CHAOS.GOVERNANCE.001` status=planned evidence=docs/superpowers/specs/2026-07-20-chaos-model-design.md
+- `RB.M5.CHAOS.WEIGHT_CHANGE_GOVERNANCE.001` status=planned evidence=docs/architecture/chaos_rulebook.md,docs/superpowers/specs/2026-07-23-chaos-midterm-validation-contract.md,scripts/run_chaos_full_history_backtest.py
+  - R-A 过拟合防御（2026-07-24 专项裁决项 5 落入）：① 任何因子权重的新增/调整/下线必须经 walk-forward 分段验证，训练段定权重、验证段只读评估，禁止同段两用；② 样本外窗口必须达到 2026-07-23 中期验证契约冻结的通过标准，不达标不上线；③ 权重变更只能经 M5 治理流程产出新版本号文件（`chaos_weights_vN_*`），禁止手工修改在产版本；④ 每次变更必须附全历史回填证据（`scripts/run_chaos_full_history_backtest.py` 或同等工具）
+- `RB.M3.CHAOS.FACTOR_COLLINEARITY_AUDIT.001` status=planned evidence=docs/architecture/chaos_rulebook.md,scripts/run_chaos_factor_health_report.py
+  - R-B 共线性防御（2026-07-24 专项裁决项 5 落入）：① 建立定期因子相关性审计（候选工具 `scripts/run_chaos_factor_health_report.py`，频率随 M5 治理节奏）；② 高相关因子簇必须合并或降权，禁止同一信息以不同因子名义重复计入阴阳能量；③ 审计结果写入 `var/ledgers` 留痕，作为权重治理输入
+- `RB.M5.CHAOS.LAYER_WEIGHT_PRIOR.001` status=planned evidence=docs/architecture/chaos_rulebook.md,config/chaos/chaos_weights_v1.json
+  - R-C 层面权重防御（2026-07-24 专项裁决项 5 落入）：① 技术/资金/综合三层权重 3:4:3 仅作粗先验，不视为已校准真值；② 层面权重只允许经 M5 治理缓慢调整：单次 ≤ 5 个百分点，间隔 ≥ 20 个交易日（默认值，后续按结果裁决调整）；③ 每次调整必须附全历史回填证据
 
 待补齐（本次升级后需要新增/重写并绑定证据）：
 
