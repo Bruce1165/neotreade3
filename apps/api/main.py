@@ -27888,11 +27888,30 @@ class BootstrapApiService:
             "ts_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "payload": payload or {},
         }
-        body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        if "sctapi.ftqq.com" in url:
+            # Server酱（方糖）只认 form 编码的 title/desp；desp 支持 markdown
+            from urllib.parse import urlencode
+
+            desp = "\n\n".join(
+                [
+                    f"- severity: `{doc['severity']}`",
+                    f"- ts_utc: `{doc['ts_utc']}`",
+                    "```json",
+                    json.dumps(doc["payload"], ensure_ascii=False, indent=2)[:1500],
+                    "```",
+                ]
+            )
+            body = urlencode(
+                {"title": doc["title"] or "NeoTrade3 ops alert", "desp": desp}
+            ).encode("utf-8")
+            content_type = "application/x-www-form-urlencoded"
+        else:
+            body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+            content_type = "application/json"
         req = urllib.request.Request(
             url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": content_type},
             method="POST",
         )
         try:

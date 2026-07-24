@@ -93,8 +93,10 @@ def test_write_daily_run_ledger_archive_failure_does_not_break_main_write(tmp_pa
 
 
 def test_send_ops_alert_logs_warning_when_webhook_missing(monkeypatch, caplog) -> None:
-    monkeypatch.delenv("NEOTRADE3_ALERT_WEBHOOK_URL", raising=False)
+    # 服务构造时会把 env.secrets 载入 os.environ；必须在构造之后再删键，
+    # 否则本机 secrets 里真实配置的 webhook 会让用例误发真实告警。
     svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    monkeypatch.delenv("NEOTRADE3_ALERT_WEBHOOK_URL", raising=False)
 
     with caplog.at_level(logging.WARNING, logger="apps.api.main"):
         out = svc._send_ops_alert(title="daily_pipeline_test_alert", payload={"k": "v"})
@@ -118,6 +120,44 @@ def test_send_ops_alert_logs_exception_when_delivery_fails(monkeypatch, caplog) 
     assert out["status"] == "failed"
     assert out["error_type"] == "OSError"
     assert "ops_alert_delivery_failed" in caplog.text
+
+
+def test_send_ops_alert_serverchan_branch_uses_form_encoding(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "NEOTRADE3_ALERT_WEBHOOK_URL",
+        "https://sctapi.ftqq.com/SCTTESTKEY.send",
+    )
+    captured: dict = {}
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"code":0}'
+
+    def _fake_urlopen(req, timeout=0):
+        captured["content_type"] = req.headers.get("Content-type")
+        captured["body"] = req.data.decode("utf-8")
+        return _Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    out = svc._send_ops_alert(title="链路测试", payload={"k": "v"}, severity="warning")
+
+    assert out["status"] == "ok"
+    assert captured["content_type"] == "application/x-www-form-urlencoded"
+    from urllib.parse import parse_qs
+
+    form = parse_qs(captured["body"])
+    assert form["title"] == ["链路测试"]
+    assert "severity: `warning`" in form["desp"][0]
+    assert '"k": "v"' in form["desp"][0]
 
 
 def test_daily_pipeline_records_ops_alert_when_trading_day_check_fails(monkeypatch, tmp_path) -> None:
