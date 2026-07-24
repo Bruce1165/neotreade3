@@ -68,10 +68,10 @@
     <string>Background</string>
 
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/var/log/neotrade3_scheduler.out.log</string>
+    <string>{{HOME}}/Library/Logs/NeoTrade3/neotrade3_scheduler.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/var/log/neotrade3_scheduler.err.log</string>
+    <string>{{HOME}}/Library/Logs/NeoTrade3/neotrade3_scheduler.err.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

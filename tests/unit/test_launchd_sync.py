@@ -17,7 +17,7 @@ from neotrade3.operations.launchd_sync import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_render_launch_agents_uses_monday_to_friday_and_existing_log_paths(tmp_path: Path) -> None:
+def test_render_launch_agents_uses_monday_to_friday_and_expected_log_paths(tmp_path: Path) -> None:
     home_dir = tmp_path / "home"
     python_bin = "/tmp/neotrade3-venv/bin/python"
     node_bin = "/opt/homebrew/bin/node"
@@ -61,7 +61,7 @@ def test_render_launch_agents_uses_monday_to_friday_and_existing_log_paths(tmp_p
     assert scheduler.document["ProgramArguments"][-1] == "update_daily_prices_authoritative"
     assert trade_execution.document["ProgramArguments"][0] == python_bin
     assert scheduler.document["StandardErrorPath"] == str(
-        PROJECT_ROOT / "var" / "log" / "neotrade3_scheduler.err.log"
+        home_dir / "Library" / "Logs" / "NeoTrade3" / "neotrade3_scheduler.err.log"
     )
     assert trade_execution.document["StandardErrorPath"] == str(
         PROJECT_ROOT / "var" / "log" / "neotrade3_trade_execution_rt.err.log"

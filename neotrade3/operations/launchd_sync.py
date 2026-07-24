@@ -52,6 +52,7 @@ class LaunchAgentSpec:
     run_at_load: bool = False
     keep_alive: bool = False
     build_environment_variables: Optional[EnvironmentFactory] = None
+    logs_under_home: bool = False
 
     @property
     def target_file_name(self) -> str:
@@ -173,6 +174,7 @@ def build_launch_agent_specs(project_root: Path) -> list[LaunchAgentSpec]:
                 minute=45,
             ),
             build_environment_variables=_build_scheduler_environment,
+            logs_under_home=True,
         ),
         LaunchAgentSpec(
             label="com.neotrade3.trade_execution_rt",
@@ -381,8 +383,12 @@ def validate_launch_agent_document(
             if str(env.get(key) or "") != str(value):
                 errors.append(f"{key} 不匹配")
 
-    expected_stdout = project_root / "var" / "log" / f"{spec.log_stem}.out.log"
-    expected_stderr = project_root / "var" / "log" / f"{spec.log_stem}.err.log"
+    if spec.logs_under_home:
+        expected_log_dir = home_dir / "Library" / "Logs" / "NeoTrade3"
+    else:
+        expected_log_dir = project_root / "var" / "log"
+    expected_stdout = expected_log_dir / f"{spec.log_stem}.out.log"
+    expected_stderr = expected_log_dir / f"{spec.log_stem}.err.log"
     if str(document.get("StandardOutPath") or "") != str(expected_stdout):
         errors.append("StandardOutPath 不匹配")
     if str(document.get("StandardErrorPath") or "") != str(expected_stderr):

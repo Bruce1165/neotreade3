@@ -21,6 +21,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Dependency smoke (production entry imports)
+        run: |
+          python -c "import neotrade3.scheduler.task_scheduler"
+          python -c "import apps.api.main"
+
       - name: Run stable backend subset
         run: python -m pytest tests -q
 

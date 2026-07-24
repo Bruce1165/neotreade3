@@ -12476,6 +12476,11 @@ class BootstrapApiService:
         tencent_update = dict(tencent_result.get("tencent_update") or {})
         fallback_ok = bool((tencent_update.get("quality_gate") or {}).get("passed"))
         if fallback_ok:
+            logger.warning(
+                "daily_prices fallback_used=true primary_final_reason=%s target=%s",
+                primary_reason,
+                target_date,
+            )
             self._note_tushare_resource_ok(
                 resource="daily_prices",
                 provider=primary_provider,
@@ -12822,6 +12827,23 @@ class BootstrapApiService:
                         }
                     )
 
+            if skipped_days > 0:
+                logger.warning(
+                    "backfill_daily_prices_tushare_range skipped_days=%d range=%s..%s skip_reasons=%s",
+                    int(skipped_days),
+                    start_date,
+                    end_date,
+                    [
+                        {
+                            "trade_date": r.get("trade_date"),
+                            "status": r.get("status"),
+                            "reason": r.get("reason"),
+                            "gate_reasons": r.get("gate_reasons"),
+                        }
+                        for r in results_sample
+                        if isinstance(r, dict) and str(r.get("status") or "") != "ok"
+                    ],
+                )
             return {
                 "_meta": {"status": "ok"},
                 "status": "ok",
@@ -18222,90 +18244,16 @@ class BootstrapApiService:
 
     def prediction_signals_view(self, query: dict) -> dict:
         """
-        返回当日 ML 模型预测信号
+        已退役：旧 dashboard 的 ML 预测信号端点（ml_prediction_line_sunset）。
 
-        GET /api/prediction/signals?date=YYYY-MM-DD&threshold=0.6&top_n=20
+        GET /api/prediction/signals 路由保留，仅返回稳定的弃用负载；
+        不再加载 joblib/scikit-learn 或 var/models/autore_v2_best.pkl。
+        恢复 ML 预测线须经 owner 专项决策并声明 joblib/scikit-learn 依赖。
         """
-        import sqlite3, json, numpy as np
-        from pathlib import Path
-
-        target_date_str = query.get("date", [None])[0]
-        threshold = float(query.get("threshold", [0.6])[0])
-        top_n = int(query.get("top_n", [20])[0])
-
-        if not target_date_str:
-            # 默认最新交易日
-            conn = sqlite3.connect(str(self._stock_db_default_path))
-            cur = conn.execute("SELECT MAX(trade_date) FROM daily_prices")
-            target_date_str = cur.fetchone()[0]
-            conn.close()
-
-        model_path = self.project_root / "var/models/autore_v2_best.pkl"
-        if not model_path.exists():
-            return {
-                "date": target_date_str,
-                "signals": [],
-                "model_loaded": False,
-                "message": "模型文件不存在，请先训练模型",
-            }
-
-        # 延迟加载模型（首次调用时加载，后续复用）
-        if not hasattr(self, '_ml_trainer'):
-            from neotrade3.ml.autore.train import MLTrainer
-            self._ml_trainer = MLTrainer(self._stock_db_default_path)
-            self._ml_trainer.load_model(str(model_path))
-
-        trainer = self._ml_trainer
-
-        # 获取 Top 100 股票
-        conn = sqlite3.connect(str(self._stock_db_default_path))
-        cur = conn.execute(
-            """
-            SELECT s.code, s.name FROM stocks s
-            JOIN daily_prices dp ON s.code = dp.code
-            WHERE dp.trade_date = ? AND (s.is_delisted IS NULL OR s.is_delisted = 0)
-            ORDER BY dp.amount DESC LIMIT 100
-        """,
-            (target_date_str,),
-        )
-        stocks = cur.fetchall()
-        conn.close()
-
-        signals = []
-        for code, name in stocks:
-            features = trainer._extract_features_for_date(code, date.fromisoformat(target_date_str))
-            if features is None:
-                continue
-            X = np.array([[features[f] for f in trainer._feature_names]])
-            proba = trainer._model.predict_proba(X)[0]
-            prob_up = float(proba[1])
-
-            if prob_up >= threshold or prob_up <= (1 - threshold):
-                signals.append({
-                    "code": code,
-                    "name": name,
-                    "signal": "buy" if prob_up >= threshold else "sell",
-                    "probability": round(prob_up, 4),
-                    "confidence": round(abs(prob_up - 0.5) * 2, 4),
-                })
-
-        # 按置信度排序
-        signals.sort(key=lambda x: x["confidence"], reverse=True)
-        signals = signals[:top_n]
-
-        buy_count = len([s for s in signals if s["signal"] == "buy"])
-        sell_count = len([s for s in signals if s["signal"] == "sell"])
-
         return {
-            "date": target_date_str,
-            "threshold": threshold,
-            "model_loaded": True,
-            "summary": {
-                "total_signals": len(signals),
-                "buy_signals": buy_count,
-                "sell_signals": sell_count,
-            },
-            "signals": signals,
+            "status": "deprecated",
+            "reason": "ml_prediction_line_sunset",
+            "detail": "该端点已随旧 dashboard 退役；如需恢复 ML 预测线须经 owner 专项决策并声明 joblib/scikit-learn 依赖",
         }
 
     def prediction_backtest_view(self, query: dict) -> dict:
@@ -25931,6 +25879,12 @@ class BootstrapApiService:
         self._load_env_file()
         self._ensure_no_proxy(hosts=["api.tushare.pro", "api.waditu.com"])
         t0 = time.perf_counter()
+        try:
+            import tushare  # noqa: F401
+
+            tushare_package_importable = True
+        except ImportError:
+            tushare_package_importable = False
         ts = TushareConceptAdapter()
         if not ts.configured:
             return {
@@ -25939,7 +25893,10 @@ class BootstrapApiService:
                 "requested_by": requested_by,
                 "ok": False,
                 "elapsed_ms": float((time.perf_counter() - t0) * 1000.0),
-                "checks": {"token_configured": False},
+                "checks": {
+                    "token_configured": False,
+                    "tushare_package_importable": bool(tushare_package_importable),
+                },
                 "errors": ["tushare_token_not_configured"],
             }
 
@@ -25984,7 +25941,7 @@ class BootstrapApiService:
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         concepts_ok = bool(concepts) and all(bool(c.code) and bool(str(c.name).strip()) for c in concepts[:5])
         stocks_ok = bool(stocks) and all(bool(s.code) and bool(str(s.name).strip()) for s in stocks)
-        ok = bool(concepts_ok and stocks_ok and not errors)
+        ok = bool(tushare_package_importable and concepts_ok and stocks_ok and not errors)
         return {
             "_meta": {"status": "ok"},
             "provider": "tushare",
@@ -25993,6 +25950,7 @@ class BootstrapApiService:
             "elapsed_ms": float(elapsed_ms),
             "checks": {
                 "token_configured": True,
+                "tushare_package_importable": bool(tushare_package_importable),
                 "concepts_ok": bool(concepts_ok),
                 "concepts_count": len(concepts),
                 "probe_concept_code": probe_concept_code or None,
@@ -27887,8 +27845,17 @@ class BootstrapApiService:
 
     def _write_daily_run_ledger(self, *, target_date: str, payload: dict[str, Any]) -> str:
         self._daily_runs_dir.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
         path = self._daily_runs_dir / f"{target_date}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(text, encoding="utf-8")
+        try:
+            archive_dir = self._daily_runs_dir / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            started_at_compact = re.sub(r"[^0-9A-Za-z]+", "", str(payload.get("started_at") or ""))
+            archive_path = archive_dir / f"{target_date}_{started_at_compact or 'unknown'}.json"
+            archive_path.write_text(text, encoding="utf-8")
+        except Exception as exc:
+            logger.warning("daily_run_ledger_archive_write_failed: %s", exc)
         return str(path)
 
     def _write_trade_closeout_ledger(self, *, closeout_date: str, payload: dict[str, Any]) -> str:
@@ -27913,6 +27880,7 @@ class BootstrapApiService:
     ) -> dict[str, Any]:
         url = str(os.environ.get("NEOTRADE3_ALERT_WEBHOOK_URL") or "").strip()
         if not url:
+            logger.warning("ops_alert_skipped_no_webhook: %s", title)
             return {"status": "skipped", "reason": "alert_webhook_not_configured"}
         doc = {
             "title": str(title or "").strip(),
@@ -27933,6 +27901,7 @@ class BootstrapApiService:
             text = raw.decode("utf-8", errors="replace")
             return {"status": "ok", "http_status": int(getattr(resp, "status", 200)), "response": text[:2000]}
         except Exception as exc:
+            logger.exception("ops_alert_delivery_failed")
             return {"status": "failed", "error_type": type(exc).__name__, "error": str(exc)}
 
     def trade_closeout_yesterday_run_view(self, *, target_date: str, requested_by: str) -> dict[str, Any]:
@@ -28398,12 +28367,14 @@ class BootstrapApiService:
             ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             ledger["trade_date"] = None
             ledger["summary"] = {"status": "failed_trading_day_check"}
-            path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
-            _ = self._send_ops_alert(
+            ops_alert = self._send_ops_alert(
                 title="daily_pipeline_trading_day_check_failed",
                 payload={"target_date": target_date, "requested_by": requested_by, "trading_day_check": trading_day_check},
                 severity="error",
             )
+            if steps and isinstance(steps[-1].get("outputs"), dict):
+                steps[-1]["outputs"]["ops_alert"] = ops_alert
+            path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
             return {"_meta": {"status": "failed"}, "ledger_path": path, "ledger": ledger}
 
         if trading_day_check.get("is_trading_day") is False:
@@ -28450,11 +28421,13 @@ class BootstrapApiService:
                     error=str(exc),
                     elapsed_ms=(time.perf_counter() - t_cl) * 1000.0,
                 )
-                _ = self._send_ops_alert(
+                ops_alert = self._send_ops_alert(
                     title="trade_closeout_failed",
                     payload={"target_date": target_date, "requested_by": requested_by, "error": str(exc)},
                     severity="error",
                 )
+                if steps and isinstance(steps[-1].get("outputs"), dict):
+                    steps[-1]["outputs"]["ops_alert"] = ops_alert
 
         trade_date: Optional[str] = None
         calendar_is_trading_day = False
@@ -28565,7 +28538,7 @@ class BootstrapApiService:
                 error=str(last_error or "authoritative_update_failed"),
                 elapsed_ms=(time.perf_counter() - t0) * 1000.0,
             )
-            _ = self._send_ops_alert(
+            ops_alert = self._send_ops_alert(
                 title="authoritative_daily_prices_update_failed",
                 payload={
                     "target_date": target_date,
@@ -28575,6 +28548,8 @@ class BootstrapApiService:
                 },
                 severity="error",
             )
+            if steps and isinstance(steps[-1].get("outputs"), dict):
+                steps[-1]["outputs"]["ops_alert"] = ops_alert
 
         db_path = Path(
             os.environ.get("NEOTRADE3_STOCK_DB_PATH") or str(self._stock_db_default_path)
@@ -28701,9 +28676,31 @@ class BootstrapApiService:
                 trace_id=f"dp-{target_date}-{started_at}",
             )
             # #endregion
+            failed_acquisition_steps = [
+                s
+                for s in steps
+                if isinstance(s, dict)
+                and str(s.get("step_id") or "") in {"authoritative_update", "tushare_backfill"}
+                and str(s.get("status") or "") == "failed"
+            ]
+            meta_status = "failed" if failed_acquisition_steps else "ok"
+            if failed_acquisition_steps:
+                ops_alert = self._send_ops_alert(
+                    title="daily_pipeline_acquisition_failed",
+                    payload={
+                        "target_date": target_date,
+                        "requested_by": requested_by,
+                        "failed_steps": [str(s.get("step_id") or "") for s in failed_acquisition_steps],
+                        "last_error": last_error,
+                    },
+                    severity="error",
+                )
+                for s in failed_acquisition_steps:
+                    if isinstance(s.get("outputs"), dict):
+                        s["outputs"]["ops_alert"] = ops_alert
             ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             path = self._write_daily_run_ledger(target_date=target_date, payload=ledger)
-            return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
+            return {"_meta": {"status": meta_status}, "ledger_path": path, "ledger": ledger}
 
         t1 = time.perf_counter()
         try:

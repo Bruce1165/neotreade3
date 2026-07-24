@@ -20,6 +20,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from neotrade3.common.python_runtime import log_python_runtime, require_python_310
@@ -70,6 +71,38 @@ _load_env_file()
 def _require_scheduler_python() -> None:
     require_python_310(entrypoint="neotrade3.scheduler.task_scheduler")
 
+
+def _list_expected_run_dates(conn: Any, latest_in_db: str | None, cutoff_iso: str) -> list[str]:
+    """Trading dates in (latest_in_db, cutoff_iso] per trading_calendar_cache.
+
+    When latest_in_db is None, returns the most recent trading day <= cutoff_iso.
+    """
+    if latest_in_db:
+        rows = conn.execute(
+            """
+            SELECT trade_date
+            FROM trading_calendar_cache
+            WHERE trade_date > ? AND trade_date <= ?
+            ORDER BY trade_date ASC
+            """,
+            (latest_in_db, cutoff_iso),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT trade_date
+            FROM trading_calendar_cache
+            WHERE trade_date <= ?
+            ORDER BY trade_date DESC
+            LIMIT 1
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+    run_dates = [str(r[0]) for r in rows if r and r[0]]
+    if latest_in_db is None:
+        run_dates = sorted(run_dates)
+    return run_dates
+
 # ---------------------------------------------------------------------------
 # Job functions (called by the scheduler)
 # ---------------------------------------------------------------------------
@@ -80,6 +113,15 @@ def _run_update_daily_prices_authoritative() -> bool:
         from apps.api.main import BootstrapApiService
 
         _require_scheduler_python()
+        try:
+            import tushare  # noqa: F401
+        except ImportError:
+            logger.error(
+                "update_daily_prices_authoritative aborted: tushare is not importable "
+                "in this interpreter (%s); install it before running the daily pipeline",
+                sys.executable,
+            )
+            return False
         service = BootstrapApiService(project_root=_PROJECT_ROOT)
         service._ensure_no_proxy(hosts=["api.waditu.com", "api.tushare.pro"])
         # #region debug-point B:scheduler-run-start
@@ -118,30 +160,7 @@ def _run_update_daily_prices_authoritative() -> bool:
             import sqlite3
 
             with sqlite3.connect(str(db_path)) as conn:
-                if latest_in_db:
-                    rows = conn.execute(
-                        """
-                        SELECT trade_date
-                        FROM trading_calendar_cache
-                        WHERE trade_date > ? AND trade_date <= ?
-                        ORDER BY trade_date ASC
-                        """,
-                        (latest_in_db, cutoff_iso),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        """
-                        SELECT trade_date
-                        FROM trading_calendar_cache
-                        WHERE trade_date <= ?
-                        ORDER BY trade_date DESC
-                        LIMIT 1
-                        """,
-                        (cutoff_iso,),
-                    ).fetchall()
-                run_dates = [str(r[0]) for r in rows if r and r[0]]
-                if latest_in_db is None:
-                    run_dates = sorted(run_dates)
+                run_dates = _list_expected_run_dates(conn, latest_in_db, cutoff_iso)
         except Exception:
             run_dates = [cutoff_iso]
 
@@ -153,6 +172,8 @@ def _run_update_daily_prices_authoritative() -> bool:
             )
             return True
 
+        any_run_failed = False
+        failure_summaries: list[str] = []
         for d in run_dates:
             payload = service.daily_pipeline_run_view(
                 target_date=str(d),
@@ -187,6 +208,51 @@ def _run_update_daily_prices_authoritative() -> bool:
                 payload.get("ledger_path"),
                 step_status,
             )
+            meta_status = str((payload.get("_meta") or {}).get("status") or "")
+            bad_steps = {
+                step_id: status
+                for step_id, status in step_status.items()
+                if status not in {"ok", "skipped_non_trading_day"}
+            }
+            if meta_status != "ok" or bad_steps:
+                any_run_failed = True
+                failure_summaries.append(
+                    f"target_date={ledger.get('target_date') or d} "
+                    f"meta_status={meta_status or 'unknown'} bad_steps={bad_steps}"
+                )
+        if any_run_failed:
+            logger.error(
+                "update_daily_prices_authoritative: pipeline run(s) failed: %s",
+                "; ".join(failure_summaries),
+            )
+            return False
+
+        # Post-loop freshness re-check: the DB must now cover every expected
+        # trading date up to the cutoff. A re-check that cannot run is a failure.
+        try:
+            import sqlite3
+
+            with sqlite3.connect(str(db_path)) as conn:
+                row = conn.execute("SELECT MAX(trade_date) FROM daily_prices").fetchone()
+                latest_after = str(row[0]) if row and row[0] else None
+                if latest_after and latest_after > cutoff_iso:
+                    latest_after = cutoff_iso
+                missing_dates = _list_expected_run_dates(conn, latest_after, cutoff_iso)
+        except Exception as exc:
+            logger.error(
+                "update_daily_prices_authoritative: post-run freshness re-check failed: %s",
+                exc,
+            )
+            return False
+        if missing_dates:
+            logger.error(
+                "update_daily_prices_authoritative: daily_prices still missing expected "
+                "trading dates %s (latest=%s cutoff=%s)",
+                missing_dates,
+                latest_after,
+                cutoff_iso,
+            )
+            return False
         return True
     except Exception as exc:
         logger.error("update_daily_prices_authoritative failed: %s", exc)
