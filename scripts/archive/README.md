@@ -28,6 +28,15 @@
 | `backfill_chaos_daily_snapshot_all_a_share.py` | 混沌快照全 A 回填，owner 确认回填已完成，零引用 |
 | `backfill_stock_top_hazard_labels_t2.py` | 风险标签 T+2 回填，同上 |
 
+## 2026-07-24 批次（4 项，混沌专项裁决项 4，owner 批准）
+
+| 脚本 | 归档理由 |
+|------|----------|
+| `run_chaos_m4_eval_monitor.py` | 一次性 M4 评估入口，已被 2026-07-23 冻结的中期验证契约（`scripts/run_chaos_midterm_validation.py`）取代；rulebook 证据已同步改为模块+测试+现役 runner |
+| `run_chaos_m4_eval_monitor_rolling.py` | rolling 评估探索件，契约冻结后退出；`RB.M4.CHAOS.EVAL_ROLLING.001` 已同步转 deferred |
+| `run_chaos_m4_eval_monitor_rolling_series.py` | rolling series 探索件，同上；属 owner 挂起 5 脚本名单（PROJECT_STATUS:654） |
+| `run_chaos_m4_gate_v1_sweep.py` | 门限参数扫描（大规模参数搜索，2026-07-23 起明确不纳入本轮）；`RB.M4.CHAOS.EVAL_GATE_V1.001` 已同步转 deferred |
+
 ## 早期批次（2026-07-22 第一轮清理）
 
 `run_autore.py`、`sector_rotation.py`（根目录移入）、`generate_handover.js` — 孤儿脚本，引用证据见提交 `c9d2896`。

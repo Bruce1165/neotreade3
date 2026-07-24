@@ -302,7 +302,7 @@ v1 的硬要求是：上面列出的因子必须都能：
 实现证据（已存在）：
 
 - [m4_eval_monitor.py](file:///Users/mac/NeoTrade3/neotrade3/chaos/m4_eval_monitor.py)
-- [run_chaos_m4_eval_monitor.py](file:///Users/mac/NeoTrade3/scripts/run_chaos_m4_eval_monitor.py)
+- [run_chaos_m4_eval_monitor.py](file:///Users/mac/NeoTrade3/scripts/archive/run_chaos_m4_eval_monitor.py)（2026-07-24 归档；现役验证入口为 `scripts/run_chaos_midterm_validation.py`）
 
 #### 3.4.1 M4 验收门槛（Gate-v1，科学口径）
 
@@ -376,9 +376,11 @@ Gate-v1 的默认验收方式（冻结）：
 
 - `RB.M3.CHAOS.SNAPSHOT.001` status=implemented evidence=neotrade3/decision_engine/chaos_model_v0.py,tests/unit/test_chaos_model_v0.py,tests/unit/test_position_contract_snapshot_chaos_field.py
 - `RB.M3.CHAOS.PROJECTION_V1.001` status=implemented evidence=neotrade3/chaos/projection_v1.py,tests/unit/test_chaos_projection_v1.py,scripts/build_chaos_daily_snapshot.py
-- `RB.M4.CHAOS.EVAL_MONITOR.001` status=implemented evidence=neotrade3/chaos/m4_eval_monitor.py,scripts/run_chaos_m4_eval_monitor.py,tests/unit/test_chaos_m4_eval_monitor.py
-- `RB.M4.CHAOS.EVAL_GATE_V1.001` status=implemented evidence=docs/architecture/chaos_rulebook.md,neotrade3/chaos/m4_eval_monitor.py,scripts/run_chaos_m4_gate_v1_sweep.py
-- `RB.M4.CHAOS.EVAL_ROLLING.001` status=implemented evidence=scripts/run_chaos_m4_eval_monitor_rolling.py
+- `RB.M4.CHAOS.EVAL_MONITOR.001` status=implemented evidence=neotrade3/chaos/m4_eval_monitor.py,tests/unit/test_chaos_m4_eval_monitor.py,scripts/run_chaos_midterm_validation.py
+- `RB.M4.CHAOS.EVAL_GATE_V1.001` status=deferred evidence=docs/architecture/chaos_rulebook.md,scripts/archive/run_chaos_m4_gate_v1_sweep.py
+  - 2026-07-24 转 deferred：门限参数扫描属大规模参数搜索，2026-07-23 专项冻结起不纳入本轮；脚本已归档，如需恢复须走 M5 治理路径
+- `RB.M4.CHAOS.EVAL_ROLLING.001` status=deferred evidence=scripts/archive/run_chaos_m4_eval_monitor_rolling.py
+  - 2026-07-24 转 deferred：rolling 评估为契约冻结前探索件，已由 2026-07-23 冻结的中期验证契约（`scripts/run_chaos_midterm_validation.py`）取代
 - `RB.M5.CHAOS.GOVERNANCE.001` status=planned evidence=docs/superpowers/specs/2026-07-20-chaos-model-design.md
 
 待补齐（本次升级后需要新增/重写并绑定证据）：

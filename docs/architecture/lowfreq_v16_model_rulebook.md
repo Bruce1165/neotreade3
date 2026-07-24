@@ -432,7 +432,7 @@ hazard 的评估与演进原则（硬约束）：
 - RB.M5.CH4.GOVERNANCE_VERDICT.001 status=implemented evidence=neotrade3/governance/step8_governance.py,neotrade3/governance/step8_artifact_writer.py,tests/unit/test_step8_eval_governance_v0.py
 - RB.M5.CH4.ADJUSTMENT_APPLICATION_RECORD.001 status=implemented evidence=neotrade3/governance/step8_governance.py,neotrade3/governance/step8_artifact_writer.py,tests/unit/test_step8_eval_governance_v0.py
 - RB.M3.CHAOS.SNAPSHOT.001 status=implemented evidence=neotrade3/decision_engine/chaos_model_v0.py,tests/unit/test_chaos_model_v0.py,tests/unit/test_position_contract_snapshot_chaos_field.py
-- RB.M4.CHAOS.EVAL_MONITOR.001 status=implemented evidence=neotrade3/chaos/m4_eval_monitor.py,scripts/run_chaos_m4_eval_monitor.py,tests/unit/test_chaos_m4_eval_monitor.py
+- RB.M4.CHAOS.EVAL_MONITOR.001 status=implemented evidence=neotrade3/chaos/m4_eval_monitor.py,tests/unit/test_chaos_m4_eval_monitor.py,scripts/run_chaos_midterm_validation.py
 - RB.M5.CHAOS.GOVERNANCE.001 status=planned evidence=docs/superpowers/specs/2026-07-20-chaos-model-design.md
 
 - A. 关键字段字典（certainty_score 等）
