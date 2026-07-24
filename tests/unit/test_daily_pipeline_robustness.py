@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -432,3 +434,128 @@ def test_prediction_signals_view_returns_stable_deprecation_payload() -> None:
     # The deprecated path must not touch the model/trainer or the stock db.
     assert not hasattr(svc, "_ml_trainer")
     assert svc.prediction_signals_view({}) == out
+
+
+# ---------------------------------------------------------------------------
+# Chaos chain daily steps (snapshot -> focus board), fail-closed
+# ---------------------------------------------------------------------------
+
+
+class _FakeProc:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _collect_steps() -> tuple[list[dict], Any]:
+    calls: list[dict] = []
+
+    def fake_add_step(step_id, status, *, outputs=None, error=None, elapsed_ms=0.0):
+        calls.append(
+            {
+                "step_id": step_id,
+                "status": status,
+                "outputs": outputs,
+                "error": error,
+            }
+        )
+
+    return calls, fake_add_step
+
+
+def test_chaos_chain_steps_both_ok(monkeypatch) -> None:
+    svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    calls, add_step = _collect_steps()
+    run_cmds: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        run_cmds.append(list(cmd))
+        if "build_chaos_daily_snapshot.py" in cmd[1]:
+            return _FakeProc(0, json.dumps({"rows_written": 5015}))
+        return _FakeProc(
+            0,
+            json.dumps({"summary": {"selected_count_after_cap": {"focus_list": 50}}}),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    svc._run_chaos_chain_steps(end_date="2026-07-24", add_step=add_step)
+
+    assert [c["step_id"] for c in calls] == ["chaos_daily_snapshot", "chaos_focus_board"]
+    assert [c["status"] for c in calls] == ["ok", "ok"]
+    assert calls[0]["outputs"]["rows_written"] == 5015
+    assert calls[0]["outputs"]["universe"] == "code_asc_all_a"
+    assert calls[1]["outputs"]["selected_count_after_cap"] == {"focus_list": 50}
+
+    build_cmd = run_cmds[0]
+    assert build_cmd[0] == sys.executable
+    assert "code_asc" in build_cmd
+    assert "chaos_weights_v1_2" in build_cmd
+    assert "chaos_registry_v1" not in build_cmd  # registry goes through --registry-id v1
+    assert "v1" in build_cmd
+    assert "chaos_thresholds_v0" in build_cmd
+
+    board_cmd = run_cmds[1]
+    assert board_cmd[0] == sys.executable
+    assert "run_chaos_focus_board.py" in board_cmd[1]
+    assert "all_a_share" in board_cmd
+    assert "2026-07-24" in board_cmd
+
+
+def test_chaos_chain_steps_snapshot_failure_skips_board(monkeypatch) -> None:
+    svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    calls, add_step = _collect_steps()
+    run_cmds: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        run_cmds.append(list(cmd))
+        return _FakeProc(1, "", "boom-build")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    svc._run_chaos_chain_steps(end_date="2026-07-24", add_step=add_step)
+
+    assert [c["step_id"] for c in calls] == ["chaos_daily_snapshot", "chaos_focus_board"]
+    assert calls[0]["status"] == "failed"
+    assert "boom-build" in calls[0]["error"]
+    assert calls[1]["status"] == "failed"
+    assert "skipped" in calls[1]["error"]
+    # focus board command must never run when the snapshot step failed
+    assert len(run_cmds) == 1
+
+
+def test_chaos_chain_steps_board_failure_after_snapshot_ok(monkeypatch) -> None:
+    svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    calls, add_step = _collect_steps()
+
+    def fake_run(cmd, **kwargs):
+        if "build_chaos_daily_snapshot.py" in cmd[1]:
+            return _FakeProc(0, json.dumps({"rows_written": 5015}))
+        return _FakeProc(2, "", "boom-board")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    svc._run_chaos_chain_steps(end_date="2026-07-24", add_step=add_step)
+
+    assert calls[0]["status"] == "ok"
+    assert calls[1]["step_id"] == "chaos_focus_board"
+    assert calls[1]["status"] == "failed"
+    assert "boom-board" in calls[1]["error"]
+
+
+def test_chaos_chain_steps_exception_is_recorded_not_raised(monkeypatch) -> None:
+    svc = BootstrapApiService(project_root=str(PROJECT_ROOT))
+    calls, add_step = _collect_steps()
+
+    def fake_run(cmd, **kwargs):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    svc._run_chaos_chain_steps(end_date="2026-07-24", add_step=add_step)
+
+    assert calls[0]["status"] == "failed"
+    assert "spawn failed" in calls[0]["error"]
+    assert calls[1]["status"] == "failed"
+    assert "skipped" in calls[1]["error"]

@@ -16,6 +16,8 @@ import os
 import shutil
 import sqlite3
 import statistics
+import subprocess
+import sys
 from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24198,6 +24200,8 @@ class BootstrapApiService:
             "confidence_daily": "置信度日更新",
             "lowfreq_backtest_roll60": "滚动回测",
             "auto_optimize": "自动优化",
+            "chaos_daily_snapshot": "混沌快照",
+            "chaos_focus_board": "混沌关注名单",
         }
         return mapping.get(str(step_id or "").strip(), str(step_id or "").strip() or "--")
 
@@ -28313,6 +28317,120 @@ class BootstrapApiService:
         path = self._write_trade_execution_rt_ledger(target_date=target_date, payload=ledger)
         return {"_meta": {"status": "ok"}, "ledger_path": path, "ledger": ledger}
 
+    def _run_chaos_chain_steps(
+        self,
+        *,
+        end_date: str,
+        add_step: Any,
+    ) -> None:
+        """Append chaos-chain steps (snapshot -> focus board) to the daily pipeline.
+
+        fail-closed：快照步失败则关注名单步记 failed（skipped），所有结果经 add_step
+        留痕，调度器诚实退出与告警机制据此判定整体成败。
+        """
+        t_snapshot = time.perf_counter()
+        snapshot_ok = False
+        try:
+            build_cmd = [
+                sys.executable,
+                str(self.project_root / "scripts" / "build_chaos_daily_snapshot.py"),
+                "--start-date", str(end_date),
+                "--end-date", str(end_date),
+                "--universe", "code_asc",
+                "--code-limit", "6000",
+                "--registry-id", "v1",
+                "--weights-version", "chaos_weights_v1_2",
+                "--thresholds-version", "chaos_thresholds_v0",
+            ]
+            proc = subprocess.run(
+                build_cmd,
+                cwd=str(self.project_root),
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+            if proc.returncode == 0:
+                snapshot_ok = True
+                rows_written: Optional[int] = None
+                try:
+                    build_payload = json.loads((proc.stdout or "").strip())
+                    rows_written = build_payload.get("rows_written")
+                except Exception:
+                    rows_written = None
+                add_step(
+                    "chaos_daily_snapshot",
+                    "ok",
+                    outputs={"rows_written": rows_written, "universe": "code_asc_all_a"},
+                    elapsed_ms=(time.perf_counter() - t_snapshot) * 1000.0,
+                )
+            else:
+                add_step(
+                    "chaos_daily_snapshot",
+                    "failed",
+                    error=((proc.stderr or "") + (proc.stdout or ""))[-2000:],
+                    elapsed_ms=(time.perf_counter() - t_snapshot) * 1000.0,
+                )
+        except Exception as exc:
+            add_step(
+                "chaos_daily_snapshot",
+                "failed",
+                error=str(exc),
+                elapsed_ms=(time.perf_counter() - t_snapshot) * 1000.0,
+            )
+
+        t_board = time.perf_counter()
+        if not snapshot_ok:
+            add_step(
+                "chaos_focus_board",
+                "failed",
+                error="skipped: chaos_daily_snapshot step not ok",
+                elapsed_ms=(time.perf_counter() - t_board) * 1000.0,
+            )
+            return
+        try:
+            board_cmd = [
+                sys.executable,
+                str(self.project_root / "scripts" / "run_chaos_focus_board.py"),
+                "--trade-date", str(end_date),
+                "--universe", "all_a_share",
+            ]
+            proc_board = subprocess.run(
+                board_cmd,
+                cwd=str(self.project_root),
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            if proc_board.returncode == 0:
+                selected_counts: dict[str, Any] = {}
+                try:
+                    board_payload = json.loads((proc_board.stdout or "").strip())
+                    summary = board_payload.get("summary") if isinstance(board_payload, dict) else {}
+                    selected = summary.get("selected_count_after_cap") if isinstance(summary, dict) else {}
+                    selected_counts = selected if isinstance(selected, dict) else {}
+                except Exception:
+                    selected_counts = {}
+                add_step(
+                    "chaos_focus_board",
+                    "ok",
+                    outputs={"selected_count_after_cap": selected_counts},
+                    elapsed_ms=(time.perf_counter() - t_board) * 1000.0,
+                )
+            else:
+                add_step(
+                    "chaos_focus_board",
+                    "failed",
+                    error=((proc_board.stderr or "") + (proc_board.stdout or ""))[-2000:],
+                    elapsed_ms=(time.perf_counter() - t_board) * 1000.0,
+                )
+        except Exception as exc:
+            add_step(
+                "chaos_focus_board",
+                "failed",
+                error=str(exc),
+                elapsed_ms=(time.perf_counter() - t_board) * 1000.0,
+            )
+
     def daily_pipeline_run_view(self, *, target_date: str, requested_by: str) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         steps: list[dict[str, Any]] = []
@@ -29001,6 +29119,8 @@ class BootstrapApiService:
                 error=str(exc),
                 elapsed_ms=(time.perf_counter() - t6) * 1000.0,
             )
+
+        self._run_chaos_chain_steps(end_date=end_date, add_step=add_step)
 
         ledger["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         ledger["trade_date"] = end_date
