@@ -13,11 +13,13 @@ class HorizonMetrics:
     evaluable: int
     skipped_missing_price: int
     skipped_missing_snapshot: int
+    skipped_quality_gate: int
     skipped_small_move: int
     accuracy_direction: float
     avg_return: float
     avg_return_pred_up: float | None
     avg_return_pred_down: float | None
+    return_spread: float | None
     pred_up_count: int
     pred_down_count: int
 
@@ -55,7 +57,39 @@ def _load_close_map(
     return out
 
 
-def _load_ready_snapshots(
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, float(value)))
+
+
+def _parse_json_object(raw: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except Exception:
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _theme_context_score(raw_factors: dict[str, Any]) -> float:
+    rps = _clamp(float(raw_factors.get("sector_rps_120") or 0.0) / 100.0, 0.0, 1.0)
+    avg_pct_today = _clamp(float(raw_factors.get("sector_avg_pct_today") or 0.0) / 5.0, -1.0, 1.0)
+    avg_pct_20d = _clamp(float(raw_factors.get("sector_avg_pct_20d") or 0.0) / 20.0, -1.0, 1.0)
+    amount_ratio = _clamp(float(raw_factors.get("sector_amount_ratio_today_over_avg20") or 1.0) - 1.0, -1.0, 1.0)
+    cooldown = _clamp(float(raw_factors.get("sector_cooldown_detected") or 0.0), 0.0, 1.0)
+    deteriorating = _clamp(float(raw_factors.get("sector_trend_deteriorating") or 0.0), 0.0, 1.0)
+    rollover = _clamp(float(raw_factors.get("sector_leader_rollover") or 0.0), 0.0, 1.0)
+    positive = 0.40 * rps + 0.25 * avg_pct_today + 0.20 * avg_pct_20d + 0.15 * amount_ratio
+    negative = 0.45 * cooldown + 0.35 * deteriorating + 0.20 * rollover
+    return float(positive - negative)
+
+
+def _market_context_score(raw_factors: dict[str, Any]) -> float:
+    breadth_weak = _clamp(float(raw_factors.get("market_breadth_weak") or 0.0), 0.0, 1.0)
+    trend_weak = _clamp(float(raw_factors.get("market_price_trend_weak") or 0.0), 0.0, 1.0)
+    drawdown_weak = _clamp(float(raw_factors.get("market_drawdown_weak") or 0.0), 0.0, 1.0)
+    return float(-(0.40 * breadth_weak + 0.40 * trend_weak + 0.20 * drawdown_weak))
+
+
+def _load_snapshots(
     conn: sqlite3.Connection,
     *,
     codes: list[str],
@@ -79,10 +113,17 @@ def _load_ready_snapshots(
         params.append(wv)
     rows = conn.execute(
         f"""
-        SELECT code, trade_date, net_energy, registry_version, weights_version, self_history_reference_json
+        SELECT
+          code,
+          trade_date,
+          chaos_status,
+          net_energy,
+          registry_version,
+          weights_version,
+          self_history_reference_json,
+          raw_factors_json
         FROM chaos_daily_snapshot
-        WHERE chaos_status = 'ready'
-          AND thresholds_version = ?
+        WHERE thresholds_version = ?
           AND code IN ({placeholders_codes})
           AND trade_date IN ({placeholders_dates})
           {rv_sql}
@@ -91,16 +132,53 @@ def _load_ready_snapshots(
         params,
     ).fetchall()
     out: dict[tuple[str, str], dict[str, Any]] = {}
-    for code, trade_date, net_energy, rv, wv, self_ref_json in rows:
+    for code, trade_date, chaos_status, net_energy, rv, wv, self_ref_json, raw_factors_json in rows:
         if not code or not trade_date:
             continue
         out[(str(code), str(trade_date))] = {
+            "chaos_status": str(chaos_status or ""),
             "net_energy": float(net_energy or 0.0),
             "registry_version": str(rv or ""),
             "weights_version": str(wv or ""),
             "self_history_reference_json": str(self_ref_json or "{}"),
+            "raw_factors_json": str(raw_factors_json or "{}"),
         }
     return out
+
+
+def _compute_predicted_direction(
+    *,
+    snap: dict[str, Any],
+    signal_mode: str,
+    combo_lambda: float | None,
+    combo_beta: float | None,
+    context_mode: str,
+) -> int:
+    ref = _parse_json_object(snap.get("self_history_reference_json"))
+    raw_factors = _parse_json_object(snap.get("raw_factors_json"))
+    base_score = 0.0
+    if signal_mode == "point":
+        base_score = float(snap.get("net_energy") or 0.0)
+    elif signal_mode == "regime_speed":
+        base_score = float(ref.get("yang_speed_mean_in_window") or 0.0)
+    elif signal_mode == "regime_combo":
+        speed = float(ref.get("yang_speed_mean_in_window") or 0.0)
+        z = float(ref.get("net_energy_zscore_in_window") or 0.0)
+        point_dir = _sign(float(snap.get("net_energy") or 0.0))
+        base_score = (
+            float(speed)
+            + float(combo_lambda or 0.0) * float(z)
+            + float(combo_beta or 0.0) * float(point_dir)
+        )
+    else:
+        raise RuntimeError(f"unknown signal_mode: {signal_mode}")
+
+    score = float(base_score)
+    if context_mode in {"stock_theme", "stock_theme_market"}:
+        score += _theme_context_score(raw_factors)
+    if context_mode == "stock_theme_market":
+        score += _market_context_score(raw_factors)
+    return _sign(float(score))
 
 
 def evaluate_chaos_m4_monitor(
@@ -117,6 +195,7 @@ def evaluate_chaos_m4_monitor(
     combo_lambda: float | None = None,
     combo_beta: float | None = None,
     actual_eps: float = 0.0,
+    context_mode: str = "stock_only",
 ) -> tuple[dict[str, Any], list[HorizonMetrics]]:
     normalized_codes = [str(c).strip() for c in list(codes or []) if str(c).strip()]
     normalized_dates = [str(d).strip() for d in list(trade_dates or []) if str(d).strip()]
@@ -147,7 +226,7 @@ def evaluate_chaos_m4_monitor(
     date_index = {d: i for i, d in enumerate(calendar_all)}
     end_with_buffer = calendar_all[-1]
 
-    snaps = _load_ready_snapshots(
+    snaps = _load_snapshots(
         chaos_conn,
         codes=normalized_codes,
         trade_dates=normalized_dates,
@@ -170,6 +249,9 @@ def evaluate_chaos_m4_monitor(
     signal_mode_v = str(signal_mode or "").strip() or "point"
     if signal_mode_v not in {"point", "regime_speed", "regime_combo"}:
         raise RuntimeError(f"unknown signal_mode: {signal_mode_v}")
+    context_mode_v = str(context_mode or "").strip() or "stock_only"
+    if context_mode_v not in {"stock_only", "stock_theme", "stock_theme_market"}:
+        raise RuntimeError(f"unknown context_mode: {context_mode_v}")
     combo_lambda_v = None
     combo_beta_v = None
     if signal_mode_v == "regime_combo":
@@ -181,6 +263,7 @@ def evaluate_chaos_m4_monitor(
         evaluable = 0
         skipped_missing_price = 0
         skipped_missing_snapshot = 0
+        skipped_quality_gate = 0
         skipped_small_move = 0
         correct_dir = 0
         sum_ret = 0.0
@@ -195,6 +278,9 @@ def evaluate_chaos_m4_monitor(
                 snap = snaps.get((str(code), str(d)))
                 if not isinstance(snap, dict):
                     skipped_missing_snapshot += 1
+                    continue
+                if str(snap.get("chaos_status") or "") != "ready":
+                    skipped_quality_gate += 1
                     continue
                 idx = date_index.get(str(d))
                 if idx is None:
@@ -215,32 +301,13 @@ def evaluate_chaos_m4_monitor(
                 if actual == 0:
                     skipped_small_move += 1
                     continue
-                pred = 0
-                if signal_mode_v == "point":
-                    pred = _sign(float(snap.get("net_energy") or 0.0))
-                elif signal_mode_v == "regime_speed":
-                    ref_raw = snap.get("self_history_reference_json")
-                    try:
-                        ref = json.loads(str(ref_raw or "{}"))
-                    except Exception:
-                        ref = {}
-                    speed = float(ref.get("yang_speed_mean_in_window") or 0.0) if isinstance(ref, dict) else 0.0
-                    pred = _sign(float(speed))
-                elif signal_mode_v == "regime_combo":
-                    ref_raw = snap.get("self_history_reference_json")
-                    try:
-                        ref = json.loads(str(ref_raw or "{}"))
-                    except Exception:
-                        ref = {}
-                    speed = float(ref.get("yang_speed_mean_in_window") or 0.0) if isinstance(ref, dict) else 0.0
-                    z = float(ref.get("net_energy_zscore_in_window") or 0.0) if isinstance(ref, dict) else 0.0
-                    point_dir = _sign(float(snap.get("net_energy") or 0.0))
-                    score = (
-                        float(speed)
-                        + float(combo_lambda_v or 0.0) * float(z)
-                        + float(combo_beta_v or 0.0) * float(point_dir)
-                    )
-                    pred = _sign(float(score))
+                pred = _compute_predicted_direction(
+                    snap=snap,
+                    signal_mode=signal_mode_v,
+                    combo_lambda=combo_lambda_v,
+                    combo_beta=combo_beta_v,
+                    context_mode=context_mode_v,
+                )
                 evaluable += 1
                 sum_ret += float(ret)
                 if pred == 1:
@@ -256,6 +323,11 @@ def evaluate_chaos_m4_monitor(
         avg = float(sum_ret) / float(evaluable) if evaluable > 0 else 0.0
         avg_up = float(sum_ret_up) / float(n_up) if n_up > 0 else None
         avg_down = float(sum_ret_down) / float(n_down) if n_down > 0 else None
+        return_spread = (
+            float(avg_up) - float(avg_down)
+            if avg_up is not None and avg_down is not None
+            else None
+        )
         metrics_list.append(
             HorizonMetrics(
                 horizon=int(h),
@@ -263,11 +335,13 @@ def evaluate_chaos_m4_monitor(
                 evaluable=int(evaluable),
                 skipped_missing_price=int(skipped_missing_price),
                 skipped_missing_snapshot=int(skipped_missing_snapshot),
+                skipped_quality_gate=int(skipped_quality_gate),
                 skipped_small_move=int(skipped_small_move),
                 accuracy_direction=float(acc),
                 avg_return=float(avg),
                 avg_return_pred_up=avg_up,
                 avg_return_pred_down=avg_down,
+                return_spread=return_spread,
                 pred_up_count=int(n_up),
                 pred_down_count=int(n_down),
             )
@@ -280,6 +354,7 @@ def evaluate_chaos_m4_monitor(
         "registry_version": str(registry_version or ""),
         "weights_version": str(weights_version or ""),
         "signal_mode": str(signal_mode_v),
+        "context_mode": str(context_mode_v),
         "combo_lambda": float(combo_lambda_v) if combo_lambda_v is not None else None,
         "combo_beta": float(combo_beta_v) if combo_beta_v is not None else None,
         "actual_eps": float(actual_eps),
