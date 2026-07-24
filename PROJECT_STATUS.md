@@ -1,6 +1,6 @@
 # NeoTrade3 Project Status
 
-**Last Updated**: 2026-07-22
+**Last Updated**: 2026-07-24
 
 ---
 
@@ -71,7 +71,7 @@
 - `M5 governance status transition` 已完成 `runtime -> CLI -> worker -> API` 闭环；当前属于 on-demand 触发面，不属于 `daily` scheduled task。
 - `M5 governance reject execution` 与 `status transition` 当前已消费 persisted `candidate validation outcome` truth，不再依赖 handoff payload 直接承载最终 validation 结论。
 - snapshot 根字段 `publish_succeeded` 表示本次运行的实际 publish 结果；`requested_publish_succeeded` 保留请求侧传入的 planning hint。
-- `apps/dashboard/main.py` 已退役，当前会返回 `410 Gone`；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
+- `apps/dashboard/` 已于 2026-07-23 从仓库移除；在用前端是 `neotrade3-dashboard/` React + Vite 工程。
 - `com.neotrade3.scheduler` 已迁移为 system 域 LaunchDaemon（仅迁移 scheduler，不动 `api/frontend_gateway/trade_execution_rt`）
   - `launchctl print system/com.neotrade3.scheduler` 为真相源
   - stdout/stderr 已从 `var/log` 切到系统盘：`~/Library/Logs/NeoTrade3/neotrade3_scheduler.{out,err}.log`
@@ -81,7 +81,7 @@
 
 ### 1) 终极目标与边界（对齐交接文档）
 
-- 终极目标：预判未来 20-60 个交易日有 80%+ 机会涨幅达到 30% 以上的股票（低频/中低频，不做高频/日内）。
+- 终极目标（2026-07-24 裁决 Q1 口径，覆盖旧“80%+”表述）：20–60 个交易日内有机会涨 30% 以上；100 个交易日内有希望涨 50% 以上（低频/中低频，不做高频/日内）。
 - 核心概念：确定性（Certainty）= 可衡量置信度；以因子矩阵 + 证据链解释“为什么买/为什么不买”。
 - 自进化原则：受约束的自调整（候选变更→评估→可审计→可回滚），不允许黑箱自动改参直接上线。
 
@@ -613,7 +613,7 @@
 ## 2026-07-22 仓库清理与单主线恢复（Kimi Work 首个工作周期）
 
 - 协作方变化：TRAE Work 不可用（无法打开本地目录，历史记录丢失），项目转入 Kimi Work 协作；`CLAUDE.md` 工作规则继续生效。Kimi Work 侧另有持久记忆 `agents/main/memory/neotrade3-project.md`。
-- 目标口径（owner 当面校准，覆盖 code-wiki 旧表述）：20–60 个交易日内有机会涨 30%+；100 个交易日内有希望涨 50%+。注意：rulebook `RB.M2.CERTAINTY_SHORT.001`（占位 10–20 日/+30%，标“待补齐”）与 owner 短档口径不一致，待下次更新 rulebook 时按 owner 口径回填（需先确认）。
+- 目标口径（owner 当面校准，覆盖 code-wiki 旧表述）：20–60 个交易日内有机会涨 30%+；100 个交易日内有希望涨 50%+。注意：rulebook `RB.M2.CERTAINTY_SHORT.001`（占位 10–20 日/+30%，标“待补齐”）与 owner 短档口径不一致，待下次更新 rulebook 时按 owner 口径回填（需先确认）。**（2026-07-24 已闭环：Q1 裁决本口径为准并已改写上方 Code-Wiki §1；Q2 裁决后 rulebook §1.2 已回填 20–60 日/+30%，status 维持 planned，代码零引用已验证）**
 - 混沌模型：owner 明确“需要单独专项讨论”；在那之前，不把 `chaos_rulebook.md` 的 SSOT 表述当作推进代码切换的依据，文档与代码现状保持原样。
 - 仓库清理（5 个 commit，分支 `chore/repo-cleanup`，已合并并推送）：
   - `ba692df` 在途混沌快照脚本存检（py_compile 通过）
@@ -671,6 +671,57 @@
 
 ---
 
+## 2026-07-23 混沌模型专项基线固化（TRAE 协作）
+
+- 已完成混沌模型专项第一轮对齐讨论，并将阶段性结论固化到活跃设计文档 [2026-07-23-chaos-model-context-baseline-design.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-chaos-model-context-baseline-design.md)；该文档属于 `docs/superpowers/specs/` design 层，**不替代**本文件的当前状态真相源口径。
+- 已完成 `任务 2` 的最小对象契约固化，并形成独立活跃设计文档 [2026-07-23-m2-chaos-state-context-minimal-contract.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-m2-chaos-state-context-minimal-contract.md)；该文档只定义 `stock_state_context / theme_state_context / market_state_context / state_context_link` 的对象边界、字段类别与消费关系，不进入实现细节。对象命名规则已同步冻结为：**对象名不带版本后缀，版本通过对象内部 `object_version = v1` 表达**。
+- 已完成 `任务 3` 的中期验证口径冻结，并形成独立活跃设计文档 [2026-07-23-chaos-midterm-validation-contract.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-chaos-midterm-validation-contract.md)；该文档将当前主验证窗口正式冻结为 `20D/40D/60D`，明确 `5D/10D` 仅作短窗辅助对照、`120D` 仅作后验滤噪辅助观察，并冻结了主验证对象、主/辅 universe、指标集合、通过/失败判定标准。当前阶段对 `stock + theme` 与 `stock + theme + market` 对照的正式口径也已补充为：允许使用**验证阶段临时投影的 `theme_state_context`**，但必须显式记录其来源，不得误表述为“完整成熟的主题 persisted truth-source”。
+- 已完成 `任务 4` 的 `L2` 最小承接能力核实，并形成独立活跃设计文档 [2026-07-23-l2-theme-context-readiness-check.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-l2-theme-context-readiness-check.md)；当前结论冻结为：`theme_state_context` **现在可以立最小对象**，但只能以“最小可用、双源并存、能力受限”的方式成立——行业/板块侧较稳定，概念侧当前仍是 persisted 日表 + cache 预热成员关系的混合承接，不能误表述为“完整成熟的主题真相源”。
+- 已完成 `任务 5` 的 `M6` 最小承接口径冻结，并形成独立活跃设计文档 [2026-07-23-m6-chaos-state-context-display-contract.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-m6-chaos-state-context-display-contract.md)；当前阶段已明确：`M6` 只承担三层状态对象的**最小承接、只读展示、禁止动作化**，其中 `MarketIntelligence` 更适合优先承接 `theme_state_context` 与相关 `market_state_context` 摘要，`OpsCenter` 更适合承接 `coverage_quality / context_validity / audit_ref` 的摘要性观测。
+- 当前阶段总原则已冻结为：**把明确的部分落实，查缺补漏，夯实基础**；不围绕混沌线单线深挖到明显超出 `M1-M6` 承接能力的深度，不继续堆远端 TODO。
+- 混沌模型当前阶段定位已调整为：先作为 **状态上下文主变量体系** 推进，而不是直接承担完整交易动作主责任；其正式结构冻结为三层：
+  - `L1` 个股自身状态（主语义）
+  - `L2` 板块/概念上下文状态（关键上下文）
+  - `L3` 全市场背景状态（背景约束）
+  - 优先级固定为 `L1 > L2 > L3`
+- 当前阶段正式主归属冻结为 `M2`；`M4` 与 `M6` 只读消费，不反向定义状态语义；`M3` 当前阶段不直接以混沌状态上下文替代完整动作主线。
+- 当前阶段正式验证目标已调整为：先证 **中期有效性**，而不是继续围绕 `5D/10D` 短窗结果推进动作主线。当前需要补齐的主验证窗口是 `20D/40D/60D`。
+- 已新增专项总控图 [2026-07-23-chaos-team-output-control-board.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-chaos-team-output-control-board.md)，后续混沌专项推进不再按零散切片组织，而统一围绕 3 个最终团队输出组织：`当前应专注哪些股票 / 明天应买入哪些股票 / 明天应卖出哪些股票`。所有未完成事项必须显式归入 `Blocking / Deferred / Rejected`，不允许隐藏尾巴。
+- 已完成 `CB2` 的最小定义文档 [2026-07-23-durability-gate-minimal-definition.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-durability-gate-minimal-definition.md)。该对象当前只服务输出 A（当前应专注哪些股票），定位为“中低频可持有价值过滤层”，只允许输出 `durable_pass / durable_watch / durable_reject` 三档最小结论，明确禁止直接产出买卖动作。
+- 已完成 `CB3` 的最小定义文档 [2026-07-23-focus-watch-warning-minimal-definition.md](file:///Users/mac/NeoTrade3/docs/superpowers/specs/2026-07-23-focus-watch-warning-minimal-definition.md)。该文档已将 `focus_list / watch_list / short_pulse_warning` 冻结为团队会议优先对象，采用强互斥规则，并明确这 3 个名单只服务“当前应专注哪些股票”，不等于买卖指令。
+- 输出 A 的第一版最小落地已完成：新增脚本 [run_chaos_focus_board.py](file:///Users/mac/NeoTrade3/scripts/run_chaos_focus_board.py)，按单日交易日读取 `stock_only` 状态证据与 `Durability Gate` 结果，产出 `focus_list / watch_list / short_pulse_warning` 三桶互斥日报 JSON，并附带 `exclusions.missing_fundamentals` 数据质量排除列表。`2026-07-20` 的全 A 正式 `v2` 产物已生成：[chaos_focus_board_formal_all_a_share_20260720_v2.json](file:///Users/mac/NeoTrade3/.runtime_outputs/artifacts/chaos_focus_board/2026-07-20/chaos_focus_board_formal_all_a_share_20260720_v2.json)。当前计数为：`focus_list=427`、`watch_list=145`、`short_pulse_warning=1123`、`missing_fundamentals=107`、`state_not_positive=3213`。
+- 对输出 A 正式日报 `v2` 的结果审查已完成。当前已确认的阻塞项有 3 个：1. `Durability Gate` 的 `durable_pass` 仍偏宽，高估值且增长证据偏弱的标的仍可能进入 `focus_list`；2. 基本面解释字段仍会出现 `净利下滑0.0%` 这类误导性表述；3. 结果文件虽已成功落盘，但运行进程最终仍因外置 DB 沙箱告警而以非零退出，运行成功状态尚未统一。
+- 已冻结的最小推进顺序为：
+  1. 固化专项基线
+  2. 冻结 `M2` 最小对象契约（`L1/L2/L3 + link`）
+  3. 建立中期验证口径
+  4. 核实 `L2` 最小承接能力
+  5. 预留 `M6` 最小承接口径
+- 当前阶段明确不纳入本轮的事项：
+  - `L2` 传播图
+  - 行业/概念拆对象
+  - 多主题融合算法
+  - 更细动作规则
+  - 大规模参数搜索
+  - 新增远端 TODO
+- 现阶段对“全市场按日阴阳比例”结果的正式理解已校正为：它是重要输入和关键观测对象，但**不能单独上升为对个股判断的唯一主变量**；个股判断必须按 `L1 -> L2 -> L3` 的顺序读取，不得用单一全市场状态替代个股与板块语义。
+- 全 A 股正式中期验证（artifact 已落于 `.runtime_outputs`）当前给出的最小客观结论是：`L1 stock_only` 的 `20D/40D/60D` 中期分层能力已获得支持；`stock_theme` 与 `stock_theme_market` 的当前读法尚未形成稳定增益。因此，后续主线不再继续扩散为“直接动作化”，而先围绕输出 A 的 `Durability Gate` 与正式关注名单收口。
+- 因此，当前“混沌模型专项讨论”已从抽象讨论阶段进入 **基线已冻结、对象待收口、验证待补齐** 的状态；下一步不宜继续放大范围，而应按上述顺序推进最小闭环。
+
+---
+
+## 2026-07-24 全面接管第一天（Kimi Work，owner 授权接管）
+
+- 授权：owner 于 00:26 正式授予全面接管（TRAE 侧 Agent 已停）；硬要求第一优先 = **robust 数据抓取机制**（"没有及时的数据更新，其它都是瞎扯"）。
+- 接管章程：`docs/operations/agent_takeover_audit_2026-07-24.md` 已迭代至 **v3**（commit `b82ad36`）。第 1 章（愿景/目标/日产出/方法论/混沌逻辑基础/当前阶段定位）经 owner 逐条校正确认；合作模式（五段式决策门、日报、红线）生效。
+- 六项裁决（章程 §7 有全文）：Q1 目标两档口径为准（已改写本文件 Code-Wiki §1）；Q2 rulebook 短档回填 20–60d/+30%（已执行，`RB.M2.CERTAINTY_SHORT.001` 维持 planned，代码零引用）；Q3 DATA（WD SSD 2TB）格盘 APFS + 每日增量备份（已执行，TRAE_SOLO.bak 139GB 经 owner 明确确认随格盘永删）；Q4 混沌专项讨论 = Phase 1 数据健壮性报告后同场；Q5 `_tmp_seed_test.db` 403MB 已删；Q6 章程第 1 章六条全部确认。
+- 数据链修复闭环：7/21–7/22 缺口补采完成（两日各 4819 行、11 步全 ok，02:51）；8600 万行 `chaos_factor_values` quick_check = ok（04:30）。两个一次性 Kimi Automation 均已删除。根因（tushare 未声明）已修并声明入 pyproject。
+- 备份体系落地（commit `11c4521`）：DATA 格盘 APFS；19GB 旧存档经全量 checksum 零差异封存于 `/Volumes/DATA/NeoTradeDB.bak_20260722_094708/`；新增 launchd `com.neotrade3.backup_daily`（每天 04:47，`scripts/backup_neotrade_daily.py`，fail-closed 双护栏），首次全量 33GB 镜像完成（字节一致）。坑：launchd 上下文 /bin/bash 无可移动磁盘 TCC 授权，必须经 `.venv/bin/python` 启动。生产任务注册表已更新（2→3）。
+- 本文件修订：Last Updated、Code-Wiki §1 口径（Q1）、Non-Goals 重写（NeoTrade2 清空事实、实盘红线、混沌定位衔接 2026-07-23 专项基线）。
+- 下一步（按序）：15:45 例行调度复核（tushare 修复最终证明）→ Phase 1 数据抓取 robustness 审查（owner 第一优先级，产出健壮性报告+告警方案）→ 混沌专项收口讨论（含 5 个零引用混沌脚本去留 + R-A/R-B/R-C 防御落 rulebook）。R2 待 owner 提供：Tushare token 权限等级与限流配额。
+
+---
+
 ## v1 Priorities
 
 1. data control skeleton
@@ -681,9 +732,9 @@
 
 ## Non-Goals For Current Phase
 
-- 不切换 NeoTrade2 生产写入责任
-- 不立即迁移旧 cron 或旧 dashboard
-- 不在 bootstrap 阶段实现完整业务逻辑
+- 不涉及 NeoTrade2：2026-07-23 经 owner 确认其目录为故意清空；4 个 v2 LaunchAgents 已全部卸载并移入墓园（`/Volumes/NEO/NeoTrade3_attic/20260723_launchagents/`），仅存 DATA 封存档案（`NeoTradeDB.bak_20260722_094708`）
+- 不碰实盘资金、不发起任何真实交易（接管章程 §5.5 红线）
+- 不在混沌专项收口前把混沌口径当作交易动作主链路（当前定位：状态上下文主变量体系，L1>L2>L3，见 2026-07-23 专项基线段）
 - 不把 2.0 的历史目录结构原样带入 3.0
 
 ## Session Resume Entry

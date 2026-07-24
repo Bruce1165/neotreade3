@@ -31,7 +31,7 @@ Date: 2026-07-19
 
 - 确定性（certainty）长周期目标窗口：未来 100 个交易日以内
 - 确定性（certainty）长周期目标涨幅：区间最大涨幅不少于 50%
-- 确定性（certainty）短周期目标（待补齐，RB.M2.CERTAINTY_SHORT.001）：未来 10–20 个交易日内上涨 30% 以上
+- 确定性（certainty）短周期目标（待补齐，RB.M2.CERTAINTY_SHORT.001）：未来 20–60 个交易日内上涨 30% 以上（2026-07-24 owner 裁决 Q2 回填口径；status 维持 planned）
 - 高确定性门槛：certainty_score >= 80（百分制 0–100）
 - 风控止损线：跌破买入价 5% 触发硬风控（默认值；例外见第 4 章）
 
