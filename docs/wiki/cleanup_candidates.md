@@ -10,7 +10,7 @@
 - `neotrade3-dashboard/` ≈ 194M
 - `./.venv/` ≈ 164M
 - `./.git/` ≈ 41M
-- `var/` 为符号链接：`var -> /Volumes/Data/NeoTradeDB/var`
+- `var/` 为符号链接：`var -> /Volumes/NEO/NeoTradeDB/var`（2026-07-22 起；2026-07-19 快照中的 /Volumes/Data 路径已失效）
 
 ## 候选清单
 

@@ -4,7 +4,7 @@
 
 ### SSOT（默认不清理）
 
-- `apps/`：运行入口（API/worker/部分历史壳）
+- `apps/`：运行入口（API/worker；历史 dashboard 壳已于 2026-07-23 移除）
 - `neotrade3/`：核心 Python 包（业务逻辑）
 - `config/`：配置真相源（orchestrator/labs/screeners/strategies 等）
 - `docs/`：架构/运维/迁移/交接/验收文档
@@ -26,7 +26,7 @@
 ### 运行时数据（不在 Git，清理需单独决策）
 
 - `var/`：运行时数据根目录（ledger/artifact/log/db 等）
-  - 当前环境中为外置盘符号链接：`var -> /Volumes/Data/NeoTradeDB/var`
+  - 当前环境中为外置盘符号链接：`var -> /Volumes/NEO/NeoTradeDB/var`（2026-07-22 起；此前快照为 /Volumes/Data，已失效）
   - 清理 `var/` 会直接影响可追溯性、复现与运行稳定性，不纳入本次“仓库清理候选”的默认建议范围
 
 ### 历史参考（不自动清理）

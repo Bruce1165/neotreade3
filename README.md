@@ -4,9 +4,9 @@ NeoTrade3 is the next-generation A-share research and execution operating system
 
 Current status:
 - The core NeoTrade3 worker + API are the current execution and snapshot backbone.
-- The current browser UI is `neotrade3-dashboard/` (React + Vite); the legacy Python bootstrap dashboard under `apps/dashboard/` is retired.
+- The current browser UI is `neotrade3-dashboard/` (React + Vite); the legacy Python bootstrap dashboard under `apps/dashboard/` was removed on 2026-07-23 and survives only in git history.
 - Low-frequency model (v16 advanced) can generate signals, simulate runs, and produce backtest reports.
-- NeoTrade2 remains the running baseline and migration reference.
+- NeoTrade2 was decommissioned and deliberately cleared on 2026-07-23; migration reference material survives under `docs/migration/`.
 - NeoTrade3 will become the new IDE project and the future system of record for:
   - data control
   - daily orchestration
@@ -26,7 +26,7 @@ NeoTrade3 v1 focuses on four foundation areas:
 
 - `docs/`: architecture, handoffs, operations
 - `config/`: environment, orchestrator, and lab registrations
-- `apps/`: API, dashboard, and worker entrypoints
+- `apps/`: API and worker entrypoints
 - `neotrade3/`: core Python packages
 - `scripts/`: bootstrap and maintenance helpers
 - `tests/`: unit, integration, and smoke tests
@@ -46,8 +46,6 @@ NeoTrade3 v1 focuses on four foundation areas:
   - exposes API endpoints (supports both `/api/...` and `/api/v1/...` prefixes) and projects worker snapshots into compatibility ledgers/artifacts where needed
 - `neotrade3-dashboard/`
   - current React + Vite dashboard frontend
-- `apps/dashboard/main.py`
-  - retired legacy bootstrap dashboard entrypoint; current behavior returns `410 Gone`
 
 Current API groups:
 
@@ -120,7 +118,7 @@ Current runtime boundary notes:
 Current dashboard behavior notes:
 
 - `neotrade3-dashboard/` is the active UI codebase and currently exposes `Overview` / `Screeners` / `Stock Check` / `Lowfreq`
-- the legacy Python dashboard is retired and should not be treated as the current frontend
+- the legacy Python dashboard was removed on 2026-07-23 (survives only in git history) and must not be treated as the current frontend
 
 ## Current Runbook
 
