@@ -722,7 +722,17 @@
 
 ---
 
-## v1 Priorities
+## 2026-07-24 混沌模型专项裁决（Kimi 接管首场，owner 在场逐项拍板）
+
+- 裁决项 1（TRAE 遗留 12 文件去留）= **A 方案两刀纳入**：8 份基线 specs `b22a241`；5 个代码文件经 Kimi 逐行审查后 `1dfd89f`（cleanup 删除边界仅限 `.runtime_outputs` 且需 `temporary_output` 标记、focus board 数据库只读、midterm 临时 theme 投影显式标注来源、m4 改动向后兼容；995 passed 零回归）。TRAE 遗留清零。
+- 裁决项 2（输出 A 三阻塞顺序）= **③进程非零退出 → ②解释字段误导（"净利下滑0.0%"）→ ①durable_pass 调优**。① 走 M5 治理 + 全历史回填路径，验收标准届时与 owner 商定。
+- 裁决项 3（L2/L3 定位）= **工程收缩维持 + 新增门控条件分层验证实验**：加法结合已证伪（初测无稳定增益），改测"板块人气×大盘趋势"分桶下 L1 的条件增益；有价值则 L2/L3 以"信号置信度调节器"身份进 Durability Gate 与名单门控（**非加分化**），无则证据化搁置。owner 补充意见（选股须考虑板块人气与大盘趋势）已纳入实验设计；Phase 2 资金流/指数数据将升级人气与趋势度量。
+- 裁决项 4（旧字段/旧产物退出）= 4 个契约冻结前探索脚本归档 `96da342`（含 owner 挂起名单中的 rolling_series；另 4 件保留升级：full_history_backtest=R-A 执行件、factor_health=R-B 候选、operational_readiness=运维、m6_top200=TOP200 愿景验证）；rulebook 注册表同步诚实化（EVAL_GATE_V1/EVAL_ROLLING 转 deferred，EVAL_MONITOR 证据换现役 runner）；`run_chaos_m5_tune_weights_v1*` 为现役权重配置来源，永不归档；86M 行版本分布夜间盘点 `automation_85f1cb6d`（23:47 一次性）。
+- 裁决项 5（R-A/R-B/R-C 防御落 rulebook）= 三条已入 `chaos_rulebook.md` 契约注册表（`6a9e8d9`，status=planned）：`RB.M5.CHAOS.WEIGHT_CHANGE_GOVERNANCE.001`（walk-forward + 冻结通过标准 + M5 版本化 + 全历史回填）、`RB.M3.CHAOS.FACTOR_COLLINEARITY_AUDIT.001`（定期相关性审计 + 高相关簇合并降权 + 留痕）、`RB.M5.CHAOS.LAYER_WEIGHT_PRIOR.001`（3:4:3 粗先验；单次 ≤5pp、间隔 ≥20 交易日；回填证据）。R-C 数值维持默认，后续按结果裁决调整。
+- **当前边界（防越界条款）**：混沌=状态上下文主变量体系，L1>L2>L3 顺序读；输出 A 闭环优先；L2/L3 不加码工程（门控验证除外）；大规模参数搜索冻结；任何权重/层面调整只走 M5 治理路径。
+- **执行队列（按序）**：阻塞项 ③ → ② → 门控条件分层验证实验 → ①（与 M5 治理联动）。
+
+---
 
 1. data control skeleton
 2. daily master orchestrator skeleton
