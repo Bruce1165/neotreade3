@@ -82,8 +82,47 @@ def test_score_fundamentals_fails_invalid_pe_without_growth_exception() -> None:
     assert score == 20
     assert reasons == [
         "PE无效且无高增长",
-        "净利下滑-5.0%",
+        "净利下滑5.0%",
     ]
+
+
+def test_score_fundamentals_zero_growth_is_flat_not_misleading() -> None:
+    passed, score, reasons = score_fundamentals(
+        {
+            "table_exists": True,
+            "pe_ttm": 18.0,
+            "profit_growth": 0.0,
+            "revenue_growth": 0.0,
+            "roe": 0.0,
+        },
+        max_pe=80.0,
+        min_profit_growth=15.0,
+        min_roe=8.0,
+    )
+
+    assert passed is True
+    assert score == 25
+    assert "净利同比持平" in reasons
+    assert not any("下滑" in r for r in reasons)
+
+
+def test_score_fundamentals_missing_growth_is_explicit_and_unscored() -> None:
+    passed, score, reasons = score_fundamentals(
+        {
+            "table_exists": True,
+            "pe_ttm": 18.0,
+            "profit_growth": None,
+            "revenue_growth": None,
+            "roe": 10.0,
+        },
+        max_pe=80.0,
+        min_profit_growth=15.0,
+        min_roe=8.0,
+    )
+
+    assert passed is True
+    assert score == 50
+    assert "净利增长数据缺失，未计分" in reasons
 
 
 def test_score_fundamentals_preserves_soft_score_composition() -> None:

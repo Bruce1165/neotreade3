@@ -18,16 +18,16 @@ def score_fundamentals(
     reasons: list[str] = []
     passed = True
 
-    pe = fundamentals.get("pe_ttm", 0)
+    pe = fundamentals.get("pe_ttm", 0) or 0
     profit_growth = fundamentals.get("profit_growth", 0)
     revenue_growth = fundamentals.get("revenue_growth", 0)
-    roe = fundamentals.get("roe", 0)
+    roe = fundamentals.get("roe", 0) or 0
 
     if 0 < pe < max_pe:
         score += 20
         reasons.append(f"PE{pe:.1f}合理")
     elif pe <= 0:
-        if profit_growth > 30:
+        if profit_growth is not None and profit_growth > 30:
             score += 10
             reasons.append("亏损但高增长")
         else:
@@ -37,21 +37,27 @@ def score_fundamentals(
         score += 5
         reasons.append(f"PE{pe:.1f}偏高")
 
-    if profit_growth >= min_profit_growth:
+    if profit_growth is None:
+        reasons.append("净利增长数据缺失，未计分")
+    elif profit_growth >= min_profit_growth:
         score += 30
         reasons.append(f"净利增{profit_growth:.1f}%")
     elif profit_growth > 0:
         score += 15
         reasons.append(f"净利增{profit_growth:.1f}%（偏低）")
+    elif profit_growth == 0:
+        score += 5
+        reasons.append("净利同比持平")
     else:
         score += 5
-        reasons.append(f"净利下滑{profit_growth:.1f}%")
+        reasons.append(f"净利下滑{abs(profit_growth):.1f}%")
 
-    if revenue_growth >= 10:
-        score += 20
-        reasons.append(f"营收增{revenue_growth:.1f}%")
-    elif revenue_growth > 0:
-        score += 10
+    if revenue_growth is not None:
+        if revenue_growth >= 10:
+            score += 20
+            reasons.append(f"营收增{revenue_growth:.1f}%")
+        elif revenue_growth > 0:
+            score += 10
 
     if roe >= min_roe:
         score += 30

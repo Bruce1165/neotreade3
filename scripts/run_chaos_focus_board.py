@@ -160,7 +160,7 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
-def _load_growth_map(conn: sqlite3.Connection, *, trade_date: str, codes: list[str]) -> dict[str, dict[str, float]]:
+def _load_growth_map(conn: sqlite3.Connection, *, trade_date: str, codes: list[str]) -> dict[str, dict[str, float | None]]:
     if not codes:
         return {}
     placeholders = ",".join(["?"] * len(codes))
@@ -187,8 +187,8 @@ def _load_growth_map(conn: sqlite3.Connection, *, trade_date: str, codes: list[s
             if not row or row[0] is None:
                 continue
             out[str(row[0])] = {
-                "profit_growth": float(row[1]) if isinstance(row[1], (int, float)) else 0.0,
-                "revenue_growth": float(row[2]) if isinstance(row[2], (int, float)) else 0.0,
+                "profit_growth": float(row[1]) if isinstance(row[1], (int, float)) else None,
+                "revenue_growth": float(row[2]) if isinstance(row[2], (int, float)) else None,
             }
 
     missing_codes = [code for code in codes if str(code) not in out]
@@ -206,8 +206,8 @@ def _load_growth_map(conn: sqlite3.Connection, *, trade_date: str, codes: list[s
             if not row or row[0] is None:
                 continue
             out[str(row[0])] = {
-                "profit_growth": float(row[1]) if isinstance(row[1], (int, float)) else 0.0,
-                "revenue_growth": float(row[2]) if isinstance(row[2], (int, float)) else 0.0,
+                "profit_growth": float(row[1]) if isinstance(row[1], (int, float)) else None,
+                "revenue_growth": float(row[2]) if isinstance(row[2], (int, float)) else None,
             }
     return out
 
